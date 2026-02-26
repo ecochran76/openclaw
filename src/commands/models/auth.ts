@@ -538,7 +538,7 @@ async function runProviderAuthMethod(params: {
   method: ProviderAuthMethod;
   runtime: RuntimeEnv;
   prompter: ReturnType<typeof createClackPrompter>;
-  profileId?: string;
+  requestedProfileId?: string;
   setDefault?: boolean;
 }) {
   const selectedProviderId = normalizeProviderId(params.provider.id);
@@ -570,15 +570,16 @@ async function runProviderAuthMethod(params: {
     }
   }
 
-  const profiles = resolveLoginProfiles({
-    result,
-    requestedProfileId: params.profileId,
-  });
+  const resolvedResult = {
+    ...result,
+    profiles: resolveLoginProfiles({
+      result,
+      requestedProfileId: params.requestedProfileId,
+    }),
+  };
 
   await persistProviderAuthResult({
-    result,
-    profiles,
-    config: params.config,
+    result: resolvedResult,
     agentDir: params.agentDir,
     runtime: params.runtime,
     prompter: params.prompter,
@@ -1052,7 +1053,7 @@ export async function modelsAuthLoginCommand(opts: LoginOptions, runtime: Runtim
     method: chosenMethod,
     runtime,
     prompter,
-    profileId: opts.profileId,
+    requestedProfileId: opts.profileId,
     setDefault: opts.setDefault,
   });
   maybeLogOpenAICodexNativeSearchTip(runtime, selectedProvider.id);
