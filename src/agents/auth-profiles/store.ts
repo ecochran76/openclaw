@@ -845,7 +845,10 @@ export function loadAuthProfileStoreForSecretsRuntime(
     "config" | "externalCli" | "externalCliProviderIds" | "externalCliProfileIds"
   >,
 ): AuthProfileStore {
-  return loadAuthProfileStoreForRuntime(agentDir, {
+  // Secrets runtime snapshots should store the raw per-agent auth file content.
+  // Merging main+agent happens in resolveRuntimeAuthProfileStore(), and storing
+  // pre-merged snapshots can cause stale main data to override fresher updates.
+  return loadAuthProfileStoreForAgent(agentDir, {
     ...options,
     readOnly: true,
     allowKeychainPrompt: false,
