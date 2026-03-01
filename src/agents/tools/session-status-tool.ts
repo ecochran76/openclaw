@@ -822,7 +822,10 @@ export function createSessionStatusTool(opts?: {
             }
           }
         } catch {
-          // ignore
+          const sourceProfile = resolved.entry.authProfileOverride?.trim();
+          usageLine = sourceProfile
+            ? `📊 Usage unavailable for active profile (${sourceProfile})`
+            : "📊 Usage unavailable for active profile";
         }
       }
 

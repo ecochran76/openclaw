@@ -484,6 +484,7 @@ export async function buildStatusText(params: BuildStatusTextParams): Promise<st
           agentDir: statusAgentDir,
           workspaceDir: statusWorkspaceDir,
           config: cfg,
+          profileId: sessionEntry?.authProfileOverride,
           auth: useCodexSyntheticUsage
             ? [buildCodexSyntheticUsageAuth({ authProfileId: codexUsageAuthProfileId })]
             : undefined,
@@ -511,11 +512,17 @@ export async function buildStatusText(params: BuildStatusTextParams): Promise<st
           includeResets: true,
         });
         if (summaryLine) {
-          usageLine = `📊 Usage: ${summaryLine}`;
+          const sourceProfile = sessionEntry?.authProfileOverride?.trim();
+          usageLine = sourceProfile
+            ? `📊 Usage (profile ${sourceProfile}): ${summaryLine}`
+            : `📊 Usage: ${summaryLine}`;
         }
       }
     } catch {
-      usageLine = null;
+      const sourceProfile = sessionEntry?.authProfileOverride?.trim();
+      usageLine = sourceProfile
+        ? `📊 Usage unavailable for active profile (${sourceProfile})`
+        : "📊 Usage unavailable for active profile";
     }
   }
   const { getFollowupQueueDepth, resolveQueueSettings } = await loadStatusQueueRuntime();
