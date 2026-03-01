@@ -52,6 +52,18 @@ function resolveUsageAuthStore(state: UsageAuthState): AuthStore {
   return state.store;
 }
 
+function parseGoogleUsageToken(apiKey: string): string {
+  try {
+    const parsed = JSON.parse(apiKey) as { token?: unknown };
+    if (typeof parsed?.token === "string") {
+      return parsed.token;
+    }
+  } catch {
+    // ignore
+  }
+  return apiKey;
+}
+
 function resolveProviderApiKeyFromConfig(params: {
   state: UsageAuthState;
   providerIds: string[];
@@ -213,6 +225,7 @@ function resolveUsageCredentialProviderIds(params: {
 async function resolveOAuthToken(params: {
   state: UsageAuthState;
   provider: string;
+  profileId?: string;
 }): Promise<ProviderAuth | null> {
   if (!params.state.allowAuthProfileStore) {
     return null;
@@ -224,10 +237,14 @@ async function resolveOAuthToken(params: {
     provider: params.provider,
   });
   const deduped = dedupeProfileIds(order);
+  const profileIds = params.profileId ? [params.profileId, ...deduped] : deduped;
 
-  for (const profileId of deduped) {
+  for (const profileId of dedupeProfileIds(profileIds)) {
     const cred = store.profiles[profileId];
     if (!cred || (cred.type !== "oauth" && cred.type !== "token")) {
+      continue;
+    }
+    if (normalizeProviderId(cred.provider) !== normalizeProviderId(params.provider)) {
       continue;
     }
     try {
@@ -261,6 +278,7 @@ async function resolveOAuthToken(params: {
 async function resolveProviderUsageAuthViaPlugin(params: {
   state: UsageAuthState;
   provider: UsageProviderId;
+  profileId?: string;
 }): Promise<{ handled: boolean; auth: ProviderAuth | null }> {
   const resolved = await resolveProviderUsageAuthWithPlugin({
     provider: params.provider,
@@ -283,6 +301,7 @@ async function resolveProviderUsageAuthViaPlugin(params: {
         const auth = await resolveOAuthToken({
           state: params.state,
           provider: options?.provider ?? params.provider,
+          profileId: params.profileId,
         });
         return auth
           ? {
@@ -312,29 +331,39 @@ async function resolveProviderUsageAuthViaPlugin(params: {
 async function resolveProviderUsageAuthFallback(params: {
   state: UsageAuthState;
   provider: UsageProviderId;
+  profileId?: string;
 }): Promise<ProviderAuth | null> {
   const oauthToken = await resolveOAuthToken({
     state: params.state,
     provider: params.provider,
+    profileId: params.profileId,
   });
   if (oauthToken) {
-    return oauthToken;
+    return params.provider === "google-gemini-cli"
+      ? { ...oauthToken, token: parseGoogleUsageToken(oauthToken.token) }
+      : oauthToken;
   }
   if (isOAuthOnlyUsageProvider(params.provider)) {
     return null;
   }
 
+  const providerIds = params.provider === "zai" ? ["zai", "z-ai"] : [params.provider];
+  const envDirect =
+    params.provider === "zai"
+      ? [params.state.env.ZAI_API_KEY, params.state.env.Z_AI_API_KEY]
+      : params.provider === "minimax"
+        ? [params.state.env.MINIMAX_CODE_PLAN_KEY, params.state.env.MINIMAX_API_KEY]
+        : params.provider === "xiaomi"
+          ? [params.state.env.XIAOMI_API_KEY]
+          : undefined;
   const apiKey = resolveProviderApiKeyFromConfigAndStore({
     state: params.state,
-    providerIds: [params.provider],
+    providerIds,
+    envDirect,
   });
   if (apiKey) {
-    return {
-      provider: params.provider,
-      token: apiKey,
-    };
+    return { provider: params.provider, token: apiKey };
   }
-
   return null;
 }
 
@@ -373,6 +402,7 @@ export async function resolveProviderAuths(params: {
   providers: UsageProviderId[];
   auth?: ProviderAuth[];
   agentDir?: string;
+  profileId?: string;
   config?: OpenClawConfig;
   env?: NodeJS.ProcessEnv;
   skipPluginAuthWithoutCredentialSource?: boolean;
@@ -400,6 +430,7 @@ export async function resolveProviderAuths(params: {
       const pluginAuth = await resolveProviderUsageAuthViaPlugin({
         state: authProfileSourceState,
         provider,
+        profileId: params.profileId,
       });
       if (pluginAuth.auth) {
         auths.push(pluginAuth.auth);
@@ -411,6 +442,7 @@ export async function resolveProviderAuths(params: {
       const fallbackAuth = await resolveProviderUsageAuthFallback({
         state: authProfileSourceState,
         provider,
+        profileId: params.profileId,
       });
       if (fallbackAuth) {
         auths.push(fallbackAuth);
@@ -453,6 +485,7 @@ export async function resolveProviderAuths(params: {
       const pluginAuth = await resolveProviderUsageAuthViaPlugin({
         state,
         provider,
+        profileId: params.profileId,
       });
       if (pluginAuth.auth) {
         auths.push(pluginAuth.auth);
@@ -465,6 +498,7 @@ export async function resolveProviderAuths(params: {
     const fallbackAuth = await resolveProviderUsageAuthFallback({
       state,
       provider,
+      profileId: params.profileId,
     });
     if (fallbackAuth) {
       auths.push(fallbackAuth);

@@ -797,10 +797,35 @@ export function createSessionStatusTool(opts?: {
           : resolved.entry;
       const providerOverrideForCard = statusSessionEntry.providerOverride?.trim();
       const providerForCard = providerOverrideForCard ?? defaultProviderForCard;
-      const primaryModelLabel =
-        providerForCard && defaultModelForCard
-          ? `${providerForCard}/${defaultModelForCard}`
-          : defaultModelForCard;
+      const usageProvider = resolveUsageProviderId(providerForCard);
+      let usageLine: string | undefined;
+      if (usageProvider) {
+        try {
+          const usageSummary = await loadProviderUsageSummary({
+            timeoutMs: 3500,
+            providers: [usageProvider],
+            agentDir,
+            profileId: resolved.entry.authProfileOverride,
+          });
+          const snapshot = usageSummary.providers.find((entry) => entry.provider === usageProvider);
+          if (snapshot) {
+            const formatted = formatUsageWindowSummary(snapshot, {
+              now: Date.now(),
+              maxWindows: 2,
+              includeResets: true,
+            });
+            if (formatted && !formatted.startsWith("error:")) {
+              const sourceProfile = resolved.entry.authProfileOverride?.trim();
+              usageLine = sourceProfile
+                ? `📊 Usage (profile ${sourceProfile}): ${formatted}`
+                : `📊 Usage: ${formatted}`;
+            }
+          }
+        } catch {
+          // ignore
+        }
+      }
+
       const isGroup =
         statusSessionEntry.chatType === "group" ||
         statusSessionEntry.chatType === "channel" ||
