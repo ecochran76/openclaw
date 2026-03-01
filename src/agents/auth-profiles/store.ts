@@ -879,6 +879,40 @@ export function loadAuthProfileStoreWithoutExternalProfiles(
   );
 }
 
+/** Hydrate resolved secret values from runtime snapshots into disk-fresh metadata. */
+function hydrateResolvedSecretsFromRuntime(params: {
+  target: AuthProfileStore;
+  runtime: AuthProfileStore;
+}): void {
+  for (const [profileId, runtimeCred] of Object.entries(params.runtime.profiles)) {
+    const targetCred = params.target.profiles[profileId];
+    if (!targetCred) {
+      continue;
+    }
+
+    if (targetCred.type === "api_key" && runtimeCred.type === "api_key") {
+      if (
+        targetCred.keyRef &&
+        typeof runtimeCred.key === "string" &&
+        runtimeCred.key.trim().length > 0
+      ) {
+        params.target.profiles[profileId] = { ...targetCred, key: runtimeCred.key };
+      }
+      continue;
+    }
+
+    if (targetCred.type === "token" && runtimeCred.type === "token") {
+      if (
+        targetCred.tokenRef &&
+        typeof runtimeCred.token === "string" &&
+        runtimeCred.token.trim().length > 0
+      ) {
+        params.target.profiles[profileId] = { ...targetCred, token: runtimeCred.token };
+      }
+    }
+  }
+}
+
 /** Ensure an auth store is available, including runtime/external profile overlays. */
 export function ensureAuthProfileStore(
   agentDir?: string,
@@ -924,11 +958,22 @@ export function ensureAuthProfileStoreWithoutExternalProfiles(
   };
   const runtimeStore = resolveRuntimeAuthProfileStore(agentDir, effectiveOptions);
   if (runtimeStore) {
-    return buildAuthProfileStoreWithoutExternalProfiles({
+    const runtimeWithoutExternalProfiles = buildAuthProfileStoreWithoutExternalProfiles({
       store: runtimeStore,
       agentDir,
       options: effectiveOptions,
     });
+    // Runtime snapshots hold resolved secret values but can become stale when
+    // another process mutates auth-profiles.json. Re-read disk and let disk
+    // metadata (order/usageStats/new profiles) win, then hydrate resolved
+    // secrets from the runtime snapshot.
+    const diskStore = loadAuthProfileStoreWithoutExternalProfiles(agentDir, effectiveOptions);
+    const merged = mergeAuthProfileStores(runtimeWithoutExternalProfiles, diskStore);
+    hydrateResolvedSecretsFromRuntime({
+      target: merged,
+      runtime: runtimeWithoutExternalProfiles,
+    });
+    return merged;
   }
   const store = loadAuthProfileStoreForAgent(agentDir, effectiveOptions);
   const authPath = resolveAuthStorePath(agentDir);
