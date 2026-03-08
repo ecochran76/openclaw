@@ -5,17 +5,21 @@ set -euo pipefail
 # with a backup of the currently installed global openclaw package.
 #
 # Usage:
-#   scripts/patch-live-openclaw.sh [--dry-run] [--expect-branch ec-main] [--require-expected-branch]
+#   scripts/patch-live-openclaw.sh [--dry-run] [--expect-branch ec-main] [--require-expected-branch] [--skip-restart]
 #
 # Env overrides:
 #   OPENCLAW_REPO_DIR=/path/to/openclaw.git
 #   BACKUP_DIR=/path/to/backups
 #   OPENCLAW_PATCH_EXPECT_BRANCH=ec-main
 #   OPENCLAW_PATCH_REQUIRE_EXPECTED_BRANCH=1
+#   OPENCLAW_PATCH_SKIP_RESTART=1
+#   OPENCLAW_PATCH_RESTART_FLAG_FILE=/tmp/openclaw-patch-restart-needed.flag
 
 DRY_RUN=0
 PATCH_EXPECT_BRANCH="${OPENCLAW_PATCH_EXPECT_BRANCH:-}"
 PATCH_REQUIRE_EXPECTED_BRANCH="${OPENCLAW_PATCH_REQUIRE_EXPECTED_BRANCH:-0}"
+PATCH_SKIP_RESTART="${OPENCLAW_PATCH_SKIP_RESTART:-0}"
+PATCH_RESTART_FLAG_FILE="${OPENCLAW_PATCH_RESTART_FLAG_FILE:-}"
 
 while [[ $# -gt 0 ]]; do
   case "$1" in
@@ -31,6 +35,10 @@ while [[ $# -gt 0 ]]; do
       PATCH_REQUIRE_EXPECTED_BRANCH=1
       shift
       ;;
+    --skip-restart)
+      PATCH_SKIP_RESTART=1
+      shift
+      ;;
     -h|--help)
       cat <<'EOF'
 Usage: patch-live-openclaw.sh [options]
@@ -39,6 +47,7 @@ Options:
   --dry-run                    Print actions without making changes
   --expect-branch <name>       Warn/error if current git branch differs
   --require-expected-branch    Treat branch mismatch as fatal
+  --skip-restart               Install bits but do not restart gateway service
   -h, --help                   Show help
 EOF
       exit 0
@@ -237,10 +246,19 @@ run "openclaw --version"
 GATEWAY_STATUS_JSON="$(openclaw gateway status --json 2>/dev/null || true)"
 GATEWAY_SERVICE_LOADED="$(printf '%s' "$GATEWAY_STATUS_JSON" | parse_gateway_service_loaded)"
 if [[ "$GATEWAY_SERVICE_LOADED" == "1" ]] || has_systemd_gateway_service; then
-  echo "info: gateway service is loaded; refreshing service command path + restart"
+  echo "info: gateway service is loaded; refreshing service command path"
   run "openclaw gateway install --force"
-  send_patch_notification "$PATCH_RESTART_WARNING_TEXT"
-  run "openclaw gateway restart"
+
+  if [[ -n "$PATCH_RESTART_FLAG_FILE" ]]; then
+    printf '1\n' > "$PATCH_RESTART_FLAG_FILE"
+  fi
+
+  if [[ "$PATCH_SKIP_RESTART" == "1" ]]; then
+    echo "info: restart skipped (--skip-restart / OPENCLAW_PATCH_SKIP_RESTART=1)"
+  else
+    send_patch_notification "$PATCH_RESTART_WARNING_TEXT"
+    run "openclaw gateway restart"
+  fi
 fi
 
 echo "done"
