@@ -18,7 +18,6 @@ set -Eeuo pipefail
 #     [--repo-dir /path/to/openclaw.git]
 #     [--branch ec-main]
 #     [--feature-branch feat/a2a-ingress-echo] [--feature-branch feat/profile-upgrade]
-#     [--feature-branch feat/openai-codex-oauth-profile-id]
 #     [--upstream-remote origin] [--fork-remote fork]
 #     [--channel slack] [--target C0AGFJ7D0RY]
 #     [--reply-to 1772115869.821949]
@@ -27,7 +26,7 @@ set -Eeuo pipefail
 
 REPO_DIR="${OPENCLAW_AUTO_REPO_DIR:-$(cd "$(dirname "$0")/.." && pwd)}"
 WORK_BRANCH="${OPENCLAW_AUTO_BRANCH:-ec-main}"
-FEATURE_BRANCHES_RAW="${OPENCLAW_AUTO_FEATURE_BRANCHES:-feat/a2a-ingress-echo,feat/profile-upgrade,feat/openai-codex-oauth-profile-id}"
+FEATURE_BRANCHES_RAW="${OPENCLAW_AUTO_FEATURE_BRANCHES:-feat/a2a-ingress-echo,feat/profile-upgrade}"
 UPSTREAM_REMOTE="${OPENCLAW_AUTO_UPSTREAM_REMOTE:-origin}"
 FORK_REMOTE="${OPENCLAW_AUTO_FORK_REMOTE:-fork}"
 
