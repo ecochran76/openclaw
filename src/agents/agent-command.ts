@@ -370,6 +370,8 @@ async function resolveAgentCommandDeps(deps: CliDeps | undefined): Promise<CliDe
   return createDefaultDeps();
 }
 
+export { resolveFallbackRetryPrompt } from "./command/attempt-execution.js";
+
 type PersistSessionEntryParams = {
   sessionStore: Record<string, SessionEntry>;
   sessionKey: string;
