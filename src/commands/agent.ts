@@ -139,8 +139,19 @@ async function persistSessionEntry(params: PersistSessionEntryParams): Promise<v
   params.sessionStore[params.sessionKey] = persisted;
 }
 
-function resolveFallbackRetryPrompt(params: { body: string; isFallbackRetry: boolean }): string {
+export function resolveFallbackRetryPrompt(params: {
+  body: string;
+  isFallbackRetry: boolean;
+  sourceTool?: string;
+  provenanceKind?: string;
+}): string {
   if (!params.isFallbackRetry) {
+    return params.body;
+  }
+  // Preserve deterministic message semantics for inter-session sends.
+  // A synthetic generic recovery prompt can cause context drift in the
+  // receiving session when the original payload is no longer visible.
+  if (params.provenanceKind === "inter_session" && params.sourceTool === "sessions_send") {
     return params.body;
   }
   return "Continue where you left off. The previous model attempt failed or timed out.";
@@ -348,6 +359,8 @@ function runAgentAttempt(params: {
   const effectivePrompt = resolveFallbackRetryPrompt({
     body: params.body,
     isFallbackRetry: params.isFallbackRetry,
+    provenanceKind: params.opts.inputProvenance?.kind,
+    sourceTool: params.opts.inputProvenance?.sourceTool,
   });
   const bootstrapPromptWarningSignaturesSeen = resolveBootstrapWarningSignaturesSeen(
     params.sessionEntry?.systemPromptReport,
