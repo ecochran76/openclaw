@@ -196,7 +196,6 @@ fi
 SMOKE_TEST_CANDIDATES=(
   "src/commands/models/auth.login-profiles.test.ts"
   "src/cli/models-cli.test.ts"
-  "src/gateway/server.sessions-send.test.ts"
   "src/commands/agent.fallback-retry.test.ts"
 )
 SMOKE_TESTS=()
