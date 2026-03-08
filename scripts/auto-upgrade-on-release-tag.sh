@@ -54,6 +54,7 @@ LATEST_TAG=""
 RUN_LOG=""
 PREV_BRANCH=""
 IN_ERROR_HANDLER=0
+PATCH_RESTART_FLAG_FILE=""
 
 usage() {
   cat <<'EOF'
@@ -380,7 +381,8 @@ fi
 
 PHASE="PATCH"
 log "Running patch-live-openclaw.sh"
-PATCH_WARNING="⚠️ OpenClaw auto-upgrade for tag ${LATEST_TAG} is about to restart the gateway. If no success message appears in a few minutes, please intervene."
+PATCH_WARNING="⚠️ OpenClaw auto-upgrade for tag ${LATEST_TAG} will restart the gateway after verification/state updates."
+PATCH_RESTART_FLAG_FILE="$(mktemp "$STATE_DIR/openclaw-auto-upgrade-restart.XXXXXX")"
 export OPENCLAW_PATCH_NOTIFY_CHANNEL="$NOTIFY_CHANNEL"
 export OPENCLAW_PATCH_NOTIFY_TARGET="$NOTIFY_TARGET"
 export OPENCLAW_PATCH_NOTIFY_REPLY_TO="$NOTIFY_REPLY_TO"
@@ -388,13 +390,15 @@ export OPENCLAW_PATCH_NOTIFY_ACCOUNT="$NOTIFY_ACCOUNT"
 export OPENCLAW_PATCH_RESTART_WARNING_TEXT="$PATCH_WARNING"
 export OPENCLAW_PATCH_EXPECT_BRANCH="$WORK_BRANCH"
 export OPENCLAW_PATCH_REQUIRE_EXPECTED_BRANCH=1
+export OPENCLAW_PATCH_SKIP_RESTART=1
+export OPENCLAW_PATCH_RESTART_FLAG_FILE="$PATCH_RESTART_FLAG_FILE"
 if [[ "$DRY_RUN" == "1" ]]; then
-  run "$REPO_DIR/scripts/patch-live-openclaw.sh" --dry-run
+  run "$REPO_DIR/scripts/patch-live-openclaw.sh" --dry-run --skip-restart
   PHASE="DONE"
   log "Dry-run complete (no changes applied)."
   exit 0
 else
-  run "$REPO_DIR/scripts/patch-live-openclaw.sh"
+  run "$REPO_DIR/scripts/patch-live-openclaw.sh" --skip-restart
 fi
 
 PHASE="VERIFY"
@@ -448,9 +452,35 @@ if [[ ${#SKIPPED_FEATURES[@]} -gt 0 ]]; then
   SUCCESS_MSG+="\nfeature_sync_skipped=${SKIPPED_FEATURES[*]}"
 fi
 SUCCESS_MSG+="\nrelease_sha=${TAG_SHA:0:9}"
+
+RESTART_NEEDED=0
+if [[ -n "$PATCH_RESTART_FLAG_FILE" && -f "$PATCH_RESTART_FLAG_FILE" ]]; then
+  if grep -q '^1$' "$PATCH_RESTART_FLAG_FILE"; then
+    RESTART_NEEDED=1
+  fi
+fi
+
+if [[ "$RESTART_NEEDED" == "1" ]]; then
+  SUCCESS_MSG+="\ngateway_restart=scheduled"
+fi
 send_message "$SUCCESS_MSG"
 
 log "$SUCCESS_MSG"
+
+if [[ "$RESTART_NEEDED" == "1" ]]; then
+  PHASE="RESTART"
+  log "Scheduling gateway restart after success notification"
+  if [[ "$DRY_RUN" == "1" ]]; then
+    log "[dry-run] nohup bash -lc 'sleep 2; openclaw gateway restart > /tmp/openclaw-auto-upgrade-restart.log 2>&1' &"
+  else
+    nohup bash -lc 'sleep 2; openclaw gateway restart > /tmp/openclaw-auto-upgrade-restart.log 2>&1' >/dev/null 2>&1 &
+  fi
+fi
+
+if [[ -n "$PATCH_RESTART_FLAG_FILE" ]]; then
+  rm -f "$PATCH_RESTART_FLAG_FILE" >/dev/null 2>&1 || true
+fi
+
 if [[ -n "$PREV_BRANCH" && "$PREV_BRANCH" != "$WORK_BRANCH" ]]; then
   git checkout "$PREV_BRANCH" >/dev/null 2>&1 || true
 fi
