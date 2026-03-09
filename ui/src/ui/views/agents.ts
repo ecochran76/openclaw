@@ -18,6 +18,7 @@ import { renderAgentTools, renderAgentSkills } from "./agents-panels-tools-skill
 import {
   agentBadgeText,
   buildAgentContext,
+  buildAuthProfileOptions,
   buildModelOptions,
   normalizeAgentLabel,
   normalizeModelValue,
@@ -27,6 +28,8 @@ import {
   resolveEffectiveModelFallbacks,
   resolveModelLabel,
   resolveModelPrimary,
+  resolveModelProvider,
+  resolvePrimaryAuthProfileId,
 } from "./agents-utils.ts";
 
 export type AgentsPanel = "overview" | "files" | "tools" | "skills" | "channels" | "cron";
@@ -81,6 +84,7 @@ export type AgentsProps = {
   onConfigSave: () => void;
   onModelChange: (agentId: string, modelId: string | null) => void;
   onModelFallbacksChange: (agentId: string, fallbacks: string[]) => void;
+  onPrimaryProfileChange: (provider: string, profileId: string | null) => void;
   onChannelsRefresh: () => void;
   onCronRefresh: () => void;
   onSkillsFilterChange: (next: string) => void;
@@ -184,6 +188,7 @@ export function renderAgents(props: AgentsProps) {
                         onConfigSave: props.onConfigSave,
                         onModelChange: props.onModelChange,
                         onModelFallbacksChange: props.onModelFallbacksChange,
+                        onPrimaryProfileChange: props.onPrimaryProfileChange,
                       })
                     : nothing
                 }
@@ -359,6 +364,7 @@ function renderAgentOverview(params: {
   onConfigSave: () => void;
   onModelChange: (agentId: string, modelId: string | null) => void;
   onModelFallbacksChange: (agentId: string, fallbacks: string[]) => void;
+  onPrimaryProfileChange: (provider: string, profileId: string | null) => void;
 }) {
   const {
     agent,
@@ -374,6 +380,7 @@ function renderAgentOverview(params: {
     onConfigSave,
     onModelChange,
     onModelFallbacksChange,
+    onPrimaryProfileChange,
   } = params;
   const config = resolveAgentConfig(configForm, agent.id);
   const workspaceFromFiles =
@@ -395,6 +402,9 @@ function renderAgentOverview(params: {
     config.defaults?.model,
   );
   const fallbackText = modelFallbacks ? modelFallbacks.join(", ") : "";
+  const modelProvider = resolveModelProvider(effectivePrimary);
+  const authProfileOptions = buildAuthProfileOptions(configForm, modelProvider);
+  const activePrimaryProfile = resolvePrimaryAuthProfileId(configForm, modelProvider);
   const identityName =
     agentIdentity?.name?.trim() ||
     agent.identity?.name?.trim() ||
@@ -466,6 +476,44 @@ function renderAgentOverview(params: {
               }
               ${buildModelOptions(configForm, effectivePrimary ?? undefined)}
             </select>
+          </label>
+          <label class="field" style="min-width: 260px; flex: 1;">
+            <span>Primary auth profile${modelProvider ? ` (${modelProvider})` : ""}</span>
+            <select
+              .value=${activePrimaryProfile ?? ""}
+              ?disabled=${
+                !configForm ||
+                configLoading ||
+                configSaving ||
+                !modelProvider ||
+                authProfileOptions.length === 0
+              }
+              @change=${(e: Event) => {
+                if (!modelProvider) {
+                  return;
+                }
+                const value = (e.target as HTMLSelectElement).value.trim();
+                onPrimaryProfileChange(modelProvider, value || null);
+              }}
+            >
+              <option value="">Auto / provider order</option>
+              ${authProfileOptions.map(
+                (option) => html`<option value=${option.id}>${option.label}</option>`,
+              )}
+            </select>
+            ${
+              !modelProvider
+                ? html`
+                    <div class="agent-kv-sub muted">Pick a provider/model first.</div>
+                  `
+                : authProfileOptions.length === 0
+                  ? html`
+                      <div class="agent-kv-sub muted">No auth profiles configured for this provider.</div>
+                    `
+                  : html`
+                      <div class="agent-kv-sub muted">Applies provider order globally.</div>
+                    `
+            }
           </label>
           <label class="field" style="min-width: 260px; flex: 1;">
             <span>Fallbacks (comma-separated)</span>

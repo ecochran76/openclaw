@@ -69,6 +69,7 @@ import { buildExternalLinkRel, EXTERNAL_LINK_TARGET } from "./external-link.ts";
 import { icons } from "./icons.ts";
 import { normalizeBasePath, TAB_GROUPS, subtitleForTab, titleForTab } from "./navigation.ts";
 import {
+  buildAuthOrderWithPrimary,
   resolveAgentConfig,
   resolveConfiguredCronModelSuggestions,
   resolveEffectiveModelFallbacks,
@@ -846,6 +847,27 @@ export function renderApp(state: AppViewState) {
                     return;
                   }
                   updateConfigFormValue(state, basePath, { primary, fallbacks: normalized });
+                },
+                onPrimaryProfileChange: (provider, profileId) => {
+                  const normalizedProvider = provider.trim().toLowerCase();
+                  if (!normalizedProvider) {
+                    return;
+                  }
+                  const basePath = ["auth", "order", normalizedProvider];
+                  if (!profileId) {
+                    removeConfigFormValue(state, basePath);
+                    return;
+                  }
+                  const nextOrder = buildAuthOrderWithPrimary({
+                    configForm: getCurrentConfigValue(),
+                    provider: normalizedProvider,
+                    primaryProfileId: profileId,
+                  });
+                  if (nextOrder.length === 0) {
+                    removeConfigFormValue(state, basePath);
+                    return;
+                  }
+                  updateConfigFormValue(state, basePath, nextOrder);
                 },
               })
             : nothing
