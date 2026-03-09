@@ -9,6 +9,8 @@ import {
   resolveAssistantTextAvatar,
   resolveChatAvatarRenderUrl,
   resolveEffectiveModelFallbacks,
+  resolveModelProvider,
+  resolvePrimaryAuthProfileId,
   sortLocaleStrings,
 } from "./agents-utils.ts";
 
@@ -93,6 +95,61 @@ describe("resolveConfiguredCronModelSuggestions", () => {
     expect(
       resolveConfiguredCronModelSuggestions({ agents: { defaults: { model: "" } } }),
     ).toStrictEqual([]);
+  });
+});
+
+describe("auth profile helpers", () => {
+  const config = {
+    auth: {
+      profiles: {
+        "openai-codex:default": {
+          provider: "openai-codex",
+          mode: "oauth",
+          email: "owner@example.com",
+        },
+        "openai-codex:work": {
+          provider: "openai-codex",
+          mode: "oauth",
+          email: "work@example.com",
+        },
+        "anthropic:default": {
+          provider: "anthropic",
+          mode: "api_key",
+        },
+      },
+      order: {
+        "openai-codex": ["openai-codex:default", "openai-codex:work"],
+      },
+    },
+  };
+
+  it("resolves provider from provider/model selections", () => {
+    expect(resolveModelProvider("openai-codex/gpt-5.4")).toBe("openai-codex");
+    expect(resolveModelProvider("gpt-5.4")).toBeNull();
+  });
+
+  it("builds provider-scoped auth profile options", () => {
+    expect(buildAuthProfileOptions(config, "openai-codex").map((entry) => entry.id)).toEqual([
+      "openai-codex:default",
+      "openai-codex:work",
+    ]);
+    expect(buildAuthProfileOptions(config, "anthropic").map((entry) => entry.id)).toEqual([
+      "anthropic:default",
+    ]);
+  });
+
+  it("reads first configured provider order entry as primary profile", () => {
+    expect(resolvePrimaryAuthProfileId(config, "openai-codex")).toBe("openai-codex:default");
+  });
+
+  it("moves chosen profile to the front while preserving remaining provider entries", () => {
+    expect(
+      buildAuthOrderWithPrimary({
+        configForm: config,
+        provider: "openai-codex",
+        primaryProfileId: "openai-codex:work",
+      }),
+    ).toEqual(["openai-codex:work", "openai-codex:default"]);
   });
 });
 

@@ -110,6 +110,7 @@ export type AgentsProps = {
   onConfigSave: () => void;
   onModelChange: (agentId: string, modelId: string | null) => void;
   onModelFallbacksChange: (agentId: string, fallbacks: string[]) => void;
+  onPrimaryProfileChange: (provider: string, profileId: string | null) => void;
   onChannelsRefresh: () => void;
   onCronRefresh: () => void;
   onCronRunNow: (jobId: string) => void;
@@ -343,8 +344,7 @@ export function renderAgents(props: AgentsProps) {
                     onSelectPanel: props.onSelectPanel,
                   })
                 : nothing}
-            `}
-      </section>
+            `}      </section>
     </div>
   `;
 }

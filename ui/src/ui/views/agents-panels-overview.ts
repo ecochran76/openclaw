@@ -8,6 +8,7 @@ import type {
   ModelCatalogEntry,
 } from "../types.ts";
 import {
+  buildAuthProfileOptions,
   buildModelOptions,
   normalizeModelValue,
   parseFallbackList,
@@ -16,6 +17,8 @@ import {
   resolveModelFallbacks,
   resolveModelLabel,
   resolveModelPrimary,
+  resolveModelProvider,
+  resolvePrimaryAuthProfileId,
 } from "./agents-utils.ts";
 import type { AgentsPanel } from "./agents.types.ts";
 
@@ -36,6 +39,7 @@ export function renderAgentOverview(params: {
   onConfigSave: () => void;
   onModelChange: (agentId: string, modelId: string | null) => void;
   onModelFallbacksChange: (agentId: string, fallbacks: string[]) => void;
+  onPrimaryProfileChange: (provider: string, profileId: string | null) => void;
   onSelectPanel: (panel: AgentsPanel) => void;
 }) {
   const {
@@ -49,6 +53,7 @@ export function renderAgentOverview(params: {
     onConfigSave,
     onModelChange,
     onModelFallbacksChange,
+    onPrimaryProfileChange,
     onSelectPanel,
   } = params;
   const isDefault = Boolean(params.defaultId && agent.id === params.defaultId);
@@ -81,6 +86,9 @@ export function renderAgentOverview(params: {
     resolveModelFallbacks(config.defaults?.model) ??
     (configForm ? null : resolveModelFallbacks(agentModel));
   const fallbackChips = modelFallbacks ?? [];
+  const modelProvider = resolveModelProvider(effectivePrimary);
+  const authProfileOptions = buildAuthProfileOptions(configForm, modelProvider);
+  const activePrimaryProfile = resolvePrimaryAuthProfileId(configForm, modelProvider);
   const skillFilter = Array.isArray(config.entry?.skills) ? config.entry?.skills : null;
   const skillCount = skillFilter?.length ?? null;
   const disabled = !configForm || configLoading || configSaving;
@@ -173,6 +181,34 @@ export function renderAgentOverview(params: {
                 selectedPrimary,
               )}
             </select>
+          </label>
+          <label class="field">
+            <span>Primary auth profile${modelProvider ? ` (${modelProvider})` : ""}</span>
+            <select
+              .value=${activePrimaryProfile ?? ""}
+              ?disabled=${disabled || !modelProvider || authProfileOptions.length === 0}
+              @change=${(e: Event) => {
+                if (!modelProvider) {
+                  return;
+                }
+                const value = (e.target as HTMLSelectElement).value.trim();
+                onPrimaryProfileChange(modelProvider, value || null);
+              }}
+            >
+              <option value="">Auto / provider order</option>
+              ${authProfileOptions.map(
+                (option) => html`<option value=${option.id}>${option.label}</option>`,
+              )}
+            </select>
+            ${
+              !modelProvider
+                ? html`<div class="agent-kv-sub muted">Pick a provider/model first.</div>`
+                : authProfileOptions.length === 0
+                  ? html`
+                      <div class="agent-kv-sub muted">No auth profiles configured for this provider.</div>
+                    `
+                  : html`<div class="agent-kv-sub muted">Applies provider order globally.</div>`
+            }
           </label>
           <div class="field">
             <span>Fallbacks</span>

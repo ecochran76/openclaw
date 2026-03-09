@@ -191,6 +191,10 @@ type ConfigSnapshot = {
     alsoAllow?: string[];
     deny?: string[];
   };
+  auth?: {
+    profiles?: Record<string, { provider?: string; mode?: string; email?: string }>;
+    order?: Record<string, string[]>;
+  };
 };
 
 export function normalizeAgentLabel(agent: {
@@ -464,6 +468,149 @@ export function resolveEffectiveModelFallbacks(
   defaultModel?: unknown,
 ): string[] | null {
   return resolveModelFallbacks(entryModel) ?? resolveModelFallbacks(defaultModel);
+}
+
+export type AuthProfileOption = {
+  id: string;
+  label: string;
+};
+
+function normalizeProviderForAuth(value: string): string {
+  const normalized = value.trim().toLowerCase();
+  if (normalized === "z.ai" || normalized === "z-ai") {
+    return "zai";
+  }
+  if (normalized === "opencode-zen") {
+    return "opencode";
+  }
+  if (normalized === "qwen") {
+    return "qwen-portal";
+  }
+  if (normalized === "kimi-code") {
+    return "kimi-coding";
+  }
+  if (normalized === "bedrock" || normalized === "aws-bedrock") {
+    return "amazon-bedrock";
+  }
+  if (normalized === "bytedance" || normalized === "doubao") {
+    return "volcengine";
+  }
+  return normalized;
+}
+
+function findNormalizedProviderValue<T>(
+  entries: Record<string, T> | undefined,
+  provider: string,
+): T | undefined {
+  if (!entries || typeof entries !== "object") {
+    return undefined;
+  }
+  const normalizedTarget = normalizeProviderForAuth(provider);
+  for (const [key, value] of Object.entries(entries)) {
+    if (normalizeProviderForAuth(key) === normalizedTarget) {
+      return value;
+    }
+  }
+  return undefined;
+}
+
+export function resolveModelProvider(modelId?: string | null): string | null {
+  const trimmed = modelId?.trim();
+  if (!trimmed) {
+    return null;
+  }
+  const slashIndex = trimmed.indexOf("/");
+  if (slashIndex <= 0) {
+    return null;
+  }
+  return normalizeProviderForAuth(trimmed.slice(0, slashIndex));
+}
+
+export function buildAuthProfileOptions(
+  configForm: Record<string, unknown> | null,
+  provider: string | null,
+): AuthProfileOption[] {
+  const cfg = configForm as ConfigSnapshot | null;
+  const normalizedProvider = provider ? normalizeProviderForAuth(provider) : "";
+  if (!normalizedProvider) {
+    return [];
+  }
+  const profiles = cfg?.auth?.profiles;
+  if (!profiles || typeof profiles !== "object") {
+    return [];
+  }
+  const options: AuthProfileOption[] = [];
+  const sortedProfileIds = sortLocaleStrings(Object.keys(profiles));
+  for (const profileId of sortedProfileIds) {
+    const profile = profiles[profileId];
+    const profileProvider = profile?.provider?.trim() || profileId.split(":", 1)[0] || "";
+    if (normalizeProviderForAuth(profileProvider) !== normalizedProvider) {
+      continue;
+    }
+    const details = [profile?.mode?.trim(), profile?.email?.trim()].filter(Boolean).join(" · ");
+    options.push({ id: profileId, label: details ? `${profileId} (${details})` : profileId });
+  }
+  return options;
+}
+
+export function resolvePrimaryAuthProfileId(
+  configForm: Record<string, unknown> | null,
+  provider: string | null,
+): string | null {
+  const cfg = configForm as ConfigSnapshot | null;
+  const normalizedProvider = provider ? normalizeProviderForAuth(provider) : "";
+  if (!normalizedProvider) {
+    return null;
+  }
+  const order = findNormalizedProviderValue(cfg?.auth?.order, normalizedProvider);
+  if (!Array.isArray(order)) {
+    return null;
+  }
+  for (const entry of order) {
+    if (typeof entry !== "string") {
+      continue;
+    }
+    const trimmed = entry.trim();
+    if (trimmed) {
+      return trimmed;
+    }
+  }
+  return null;
+}
+
+export function buildAuthOrderWithPrimary(params: {
+  configForm: Record<string, unknown> | null;
+  provider: string;
+  primaryProfileId: string;
+}): string[] {
+  const normalizedProvider = normalizeProviderForAuth(params.provider);
+  const options = buildAuthProfileOptions(params.configForm, normalizedProvider);
+  const available = new Set(options.map((option) => option.id));
+  const primary = params.primaryProfileId.trim();
+  const cfg = params.configForm as ConfigSnapshot | null;
+  const existingOrder = findNormalizedProviderValue(cfg?.auth?.order, normalizedProvider);
+  const ordered: string[] = [];
+  if (available.has(primary)) {
+    ordered.push(primary);
+  }
+  if (Array.isArray(existingOrder)) {
+    for (const entry of existingOrder) {
+      if (typeof entry !== "string") {
+        continue;
+      }
+      const trimmed = entry.trim();
+      if (!trimmed || trimmed === primary || !available.has(trimmed) || ordered.includes(trimmed)) {
+        continue;
+      }
+      ordered.push(trimmed);
+    }
+  }
+  for (const option of options) {
+    if (!ordered.includes(option.id)) {
+      ordered.push(option.id);
+    }
+  }
+  return ordered;
 }
 
 function addModelId(target: Set<string>, value: unknown) {
