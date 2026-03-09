@@ -254,6 +254,12 @@ GATEWAY_SERVICE_LOADED="$(printf '%s' "$GATEWAY_STATUS_JSON" | parse_gateway_ser
 if [[ "$GATEWAY_SERVICE_LOADED" == "1" ]] || has_systemd_gateway_service; then
   echo "info: gateway service is loaded; refreshing service command path"
   run "openclaw gateway install --force"
+  # `gateway install --force` resolves the runtime from the current shell and can
+  # rewrite a previously repaired systemd unit back to an nvm/fnm/volta Node path.
+  # Run doctor repair immediately after install so supported system Node 22+
+  # remains preferred when available.
+  echo "info: repairing gateway service config to keep stable runtime defaults"
+  run "openclaw doctor --repair --non-interactive --yes"
 
   if [[ -n "$PATCH_RESTART_FLAG_FILE" ]]; then
     printf '1\n' > "$PATCH_RESTART_FLAG_FILE"
