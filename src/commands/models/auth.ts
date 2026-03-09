@@ -580,6 +580,7 @@ async function runProviderAuthMethod(params: {
 
   await persistProviderAuthResult({
     result: resolvedResult,
+    config: params.config,
     agentDir: params.agentDir,
     runtime: params.runtime,
     prompter: params.prompter,
@@ -932,6 +933,18 @@ function credentialMode(credential: AuthProfileCredential): "api_key" | "oauth" 
   return "oauth";
 }
 
+/** Expands a bare requested profile label into a provider-scoped profile id. */
+export function normalizeRequestedProfileId(provider: string, raw?: string): string | undefined {
+  const requested = raw?.trim();
+  if (!requested) {
+    return undefined;
+  }
+  if (requested.includes(":")) {
+    return requested;
+  }
+  return `${provider}:${requested}`;
+}
+
 /** Applies an optional profile-id override to a single returned login profile. */
 export function resolveLoginProfiles(params: {
   result: ProviderAuthResult;
@@ -1053,7 +1066,7 @@ export async function modelsAuthLoginCommand(opts: LoginOptions, runtime: Runtim
     method: chosenMethod,
     runtime,
     prompter,
-    requestedProfileId: opts.profileId,
+    requestedProfileId: normalizeRequestedProfileId(selectedProvider.id, opts.profileId),
     setDefault: opts.setDefault,
   });
   maybeLogOpenAICodexNativeSearchTip(runtime, selectedProvider.id);
