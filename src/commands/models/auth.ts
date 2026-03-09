@@ -298,6 +298,17 @@ function credentialMode(credential: AuthProfileCredential): "api_key" | "oauth" 
   return "oauth";
 }
 
+export function normalizeRequestedProfileId(provider: string, raw?: string): string | undefined {
+  const requested = raw?.trim();
+  if (!requested) {
+    return undefined;
+  }
+  if (requested.includes(":")) {
+    return requested;
+  }
+  return `${provider}:${requested}`;
+}
+
 async function runBuiltInOpenAICodexLogin(params: {
   opts: LoginOptions;
   runtime: RuntimeEnv;
@@ -317,8 +328,10 @@ async function runBuiltInOpenAICodexLogin(params: {
     throw new Error("OpenAI Codex OAuth did not return credentials.");
   }
 
+  const requestedProfileId = normalizeRequestedProfileId("openai-codex", params.opts.profileId);
   const profileId = await writeOAuthCredentials("openai-codex", creds, params.agentDir, {
     syncSiblingAgents: true,
+    profileId: requestedProfileId,
   });
   await updateConfig((cfg) => {
     let next = applyAuthProfileConfig(cfg, {

@@ -1,5 +1,22 @@
 import { describe, expect, it } from "vitest";
-import { resolveLoginProfiles } from "./auth.js";
+import { normalizeRequestedProfileId, resolveLoginProfiles } from "./auth.js";
+
+describe("normalizeRequestedProfileId", () => {
+  it("returns undefined when no profile id is provided", () => {
+    expect(normalizeRequestedProfileId("openai-codex", undefined)).toBeUndefined();
+    expect(normalizeRequestedProfileId("openai-codex", "   ")).toBeUndefined();
+  });
+
+  it("prefixes provider when bare profile label is passed", () => {
+    expect(normalizeRequestedProfileId("openai-codex", "work")).toBe("openai-codex:work");
+  });
+
+  it("keeps explicit provider profile ids unchanged", () => {
+    expect(normalizeRequestedProfileId("openai-codex", "openai-codex:work")).toBe(
+      "openai-codex:work",
+    );
+  });
+});
 
 describe("resolveLoginProfiles", () => {
   it("returns original profiles when --profile-id is not provided", () => {
