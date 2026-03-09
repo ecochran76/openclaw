@@ -24,7 +24,6 @@ import {
   isAnnounceSkip,
   isNonDeliverableSessionsReply,
   isReplySkip,
-  type AnnounceTarget,
   type RelayPolicy,
 } from "./sessions-send-helpers.js";
 
@@ -116,7 +115,7 @@ export async function runSessionsSendA2AFlow(params: {
     });
     await Promise.all(
       relayTargets.map((target, index) =>
-        callGateway({
+        sessionsSendA2ADeps.callGateway({
           method: "send",
           params: {
             to: target.to,
@@ -265,38 +264,42 @@ export async function runSessionsSendA2AFlow(params: {
       }
     }
 
-    const announcePrompt = buildAgentToAgentAnnounceContext({
-      requesterSessionKey: params.requesterSessionKey,
-      requesterChannel: params.requesterChannel,
-      targetSessionKey: params.displayKey,
-      targetChannel,
-      originalMessage: params.message,
-      roundOneReply: primaryReply,
-      latestReply,
-    });
-    const announceReply = await runAgentStep({
-      sessionKey: params.targetSessionKey,
-      message: "Agent-to-agent announce step.",
-      extraSystemPrompt: announcePrompt,
-      timeoutMs: params.announceTimeoutMs,
-      lane: resolveNestedAgentLaneForSession(params.targetSessionKey),
-      transcriptMessage: "",
-      sourceSessionKey: params.requesterSessionKey,
-      sourceChannel: params.requesterChannel,
-      sourceTool: "sessions_send",
-    });
-    if (
-      announceTarget &&
-      announceReply &&
-      announceReply.trim() &&
-      !isAnnounceSkip(announceReply) &&
-      !isNonDeliverableSessionsReply(announceReply)
-    ) {
-      await deliverAnnounceReply({
-        announceTarget,
-        message: announceReply,
-        runContextId,
+    const suppressAnnounceForRelay =
+      params.relayPolicy?.enabled === true && params.relayPolicy.mode === "dual-channel";
+    if (!suppressAnnounceForRelay) {
+      const announcePrompt = buildAgentToAgentAnnounceContext({
+        requesterSessionKey: params.requesterSessionKey,
+        requesterChannel: params.requesterChannel,
+        targetSessionKey: params.displayKey,
+        targetChannel,
+        originalMessage: params.message,
+        roundOneReply: primaryReply,
+        latestReply,
       });
+      const announceReply = await runAgentStep({
+        sessionKey: params.targetSessionKey,
+        message: "Agent-to-agent announce step.",
+        extraSystemPrompt: announcePrompt,
+        timeoutMs: params.announceTimeoutMs,
+        lane: resolveNestedAgentLaneForSession(params.targetSessionKey),
+        transcriptMessage: "",
+        sourceSessionKey: params.requesterSessionKey,
+        sourceChannel: params.requesterChannel,
+        sourceTool: "sessions_send",
+      });
+      if (
+        announceTarget &&
+        announceReply &&
+        announceReply.trim() &&
+        !isAnnounceSkip(announceReply) &&
+        !isNonDeliverableSessionsReply(announceReply)
+      ) {
+        await deliverAnnounceReply({
+          announceTarget,
+          message: announceReply,
+          runContextId,
+        });
+      }
     }
   } catch (err) {
     log.warn("sessions_send announce flow failed", {
