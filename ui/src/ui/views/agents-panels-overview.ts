@@ -202,12 +202,16 @@ export function renderAgentOverview(params: {
             </select>
             ${
               !modelProvider
-                ? html`<div class="agent-kv-sub muted">Pick a provider/model first.</div>`
+                ? html`
+                    <div class="agent-kv-sub muted">Pick a provider/model first.</div>
+                  `
                 : authProfileOptions.length === 0
                   ? html`
                       <div class="agent-kv-sub muted">No auth profiles configured for this provider.</div>
                     `
-                  : html`<div class="agent-kv-sub muted">Applies provider order globally.</div>`
+                  : html`
+                      <div class="agent-kv-sub muted">Applies provider order globally.</div>
+                    `
             }
           </label>
           <div class="field">

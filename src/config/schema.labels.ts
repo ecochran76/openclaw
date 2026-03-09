@@ -839,6 +839,10 @@ export const FIELD_LABELS: Record<string, string> = {
   "session.writeLock.maxHoldMs": "Session Write Lock Max Hold",
   "session.agentToAgent": "Session Agent-to-Agent",
   "session.agentToAgent.maxPingPongTurns": "Agent-to-Agent Ping-Pong Turns",
+  "session.agentToAgent.ingressEcho": "Agent-to-Agent Ingress Echo",
+  "session.agentToAgent.ingressEcho.enabled": "Agent-to-Agent Ingress Echo Enabled",
+  "session.agentToAgent.ingressEcho.requireDelivery":
+    "Agent-to-Agent Ingress Echo Require Delivery",
   "session.threadBindings": "Session Thread Bindings",
   "session.threadBindings.enabled": "Thread Binding Enabled",
   "session.threadBindings.idleHours": "Thread Binding Idle Timeout (hours)",

@@ -57,7 +57,13 @@ import {
   resolveSessionToolContext,
   resolveVisibleSessionReference,
 } from "./sessions-helpers.js";
-import { buildAgentToAgentMessageContext, resolvePingPongTurns } from "./sessions-send-helpers.js";
+import { resolveAnnounceTarget } from "./sessions-announce-target.js";
+import {
+  buildAgentToAgentIngressEchoText,
+  buildAgentToAgentMessageContext,
+  resolveIngressEchoPolicy,
+  resolvePingPongTurns,
+} from "./sessions-send-helpers.js";
 import { runSessionsSendA2AFlow } from "./sessions-send-tool.a2a.js";
 
 const SessionsSendToolSchema = Type.Object({
@@ -93,6 +99,18 @@ function normalizeSessionsSendArguments(args: unknown): Record<string, unknown> 
   }
   return params;
 }
+
+type SessionsSendIngressEchoResult =
+  | {
+      status: "sent";
+      channel: string;
+      to: string;
+      accountId?: string;
+      threadId?: string;
+      messageId?: string;
+    }
+  | { status: "skipped"; reason: string }
+  | { status: "failed" | "blocked"; error: string };
 
 function resolveConfiguredAgentMainSessionKey(params: {
   cfg: OpenClawConfig;
@@ -337,6 +355,59 @@ async function startAgentRun(params: {
         sessionKey: params.sessionKey,
       }),
     };
+  }
+}
+
+async function deliverA2AIngressEcho(params: {
+  callGateway: GatewayCaller;
+  displayKey: string;
+  message: string;
+  requireDelivery: boolean;
+  requesterChannel?: GatewayMessageChannel;
+  requesterSessionKey?: string;
+  targetSessionKey: string;
+}): Promise<SessionsSendIngressEchoResult> {
+  const target = await resolveAnnounceTarget({
+    sessionKey: params.targetSessionKey,
+    displayKey: params.displayKey,
+  });
+  if (!target) {
+    const error = "No deliverable target found for A2A ingress echo.";
+    return params.requireDelivery
+      ? { status: "blocked", error }
+      : { status: "skipped", reason: error };
+  }
+  try {
+    const response = await params.callGateway<{ messageId?: string }>({
+      method: "send",
+      params: {
+        to: target.to,
+        message: buildAgentToAgentIngressEchoText({
+          requesterSessionKey: params.requesterSessionKey,
+          requesterChannel: params.requesterChannel,
+          targetSessionKey: params.displayKey,
+          message: params.message,
+        }),
+        channel: target.channel,
+        accountId: target.accountId,
+        threadId: target.threadId,
+        idempotencyKey: crypto.randomUUID(),
+      },
+      timeoutMs: 10_000,
+    });
+    return {
+      status: "sent",
+      channel: target.channel,
+      to: target.to,
+      ...(target.accountId ? { accountId: target.accountId } : {}),
+      ...(target.threadId ? { threadId: target.threadId } : {}),
+      ...(typeof response?.messageId === "string" && response.messageId
+        ? { messageId: response.messageId }
+        : {}),
+    };
+  } catch (err) {
+    const error = formatErrorMessage(err);
+    return params.requireDelivery ? { status: "blocked", error } : { status: "failed", error };
   }
 }
 
@@ -600,6 +671,7 @@ export function createSessionsSendTool(opts?: {
         inputProvenance,
       };
       const maxPingPongTurns = resolvePingPongTurns(cfg);
+      const ingressEchoPolicy = resolveIngressEchoPolicy(cfg);
 
       // Skip the A2A ping-pong + announce flow when the current caller is the
       // parent of a parent-owned child session it spawned itself and another
@@ -643,6 +715,28 @@ export function createSessionsSendTool(opts?: {
       const delivery = skipA2AFlow
         ? ({ status: "skipped", mode: "announce" } as const)
         : ({ status: "pending", mode: "announce" } as const);
+
+      const ingressEcho =
+        !skipA2AFlow && ingressEchoPolicy.enabled
+          ? await deliverA2AIngressEcho({
+              callGateway: gatewayCall,
+              displayKey,
+              message,
+              requireDelivery: ingressEchoPolicy.requireDelivery,
+              requesterSessionKey,
+              requesterChannel,
+              targetSessionKey: resolvedKey,
+            })
+          : undefined;
+      if (ingressEcho?.status === "blocked") {
+        return jsonResult({
+          runId,
+          status: "error",
+          error: ingressEcho.error,
+          sessionKey: displayKey,
+          ingressEcho,
+        });
+      }
 
       const startA2AFlow = (
         roundOneReply?: string,
@@ -688,6 +782,7 @@ export function createSessionsSendTool(opts?: {
           status: "accepted",
           sessionKey: displayKey,
           delivery,
+          ...(ingressEcho ? { ingressEcho } : {}),
         });
       }
 
@@ -730,6 +825,7 @@ export function createSessionsSendTool(opts?: {
             status: "accepted",
             sessionKey: displayKey,
             delivery,
+            ...(ingressEcho ? { ingressEcho } : {}),
           });
         }
         return jsonResult({
@@ -738,6 +834,7 @@ export function createSessionsSendTool(opts?: {
           error: result.error,
           sentBeforeError: true,
           sessionKey: displayKey,
+          ...(ingressEcho ? { ingressEcho } : {}),
         });
       }
       if (result.status === "error") {
@@ -747,6 +844,7 @@ export function createSessionsSendTool(opts?: {
           error: result.error ?? "agent error",
           sentBeforeError: true,
           sessionKey: displayKey,
+          ...(ingressEcho ? { ingressEcho } : {}),
         });
       }
       const reply = result.replyText;
@@ -758,6 +856,7 @@ export function createSessionsSendTool(opts?: {
         reply,
         sessionKey: displayKey,
         delivery,
+        ...(ingressEcho ? { ingressEcho } : {}),
       });
     },
   };

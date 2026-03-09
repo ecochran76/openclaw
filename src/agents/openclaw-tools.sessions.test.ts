@@ -16,21 +16,31 @@ vi.mock("./subagent-announce-delivery.js", () => ({
   loadSessionEntryByKey: (sessionKey: string) => loadSessionEntryByKeyMock(sessionKey),
 }));
 
-vi.mock("../config/config.js", () => ({
-  getRuntimeConfig: () => ({
-    session: {
-      mainKey: "main",
-      scope: "per-sender",
-      agentToAgent: { maxPingPongTurns: 2 },
+const testConfig = {
+  session: {
+    mainKey: "main",
+    scope: "per-sender",
+    agentToAgent: {
+      maxPingPongTurns: 2,
+      ingressEcho: { enabled: false, requireDelivery: false },
     },
-    tools: {
-      // Keep sessions tools permissive in this suite; dedicated visibility tests cover defaults.
-      sessions: { visibility: "all" },
-      agentToAgent: { enabled: true },
-    },
-  }),
-  resolveGatewayPort: () => 18789,
-}));
+  },
+  tools: {
+    // Keep sessions tools permissive in this suite; dedicated visibility tests cover defaults.
+    sessions: { visibility: "all" },
+    agentToAgent: { enabled: true },
+  },
+};
+
+vi.mock("../config/config.js", async () => {
+  const actual = await vi.importActual<typeof import("../config/config.js")>("../config/config.js");
+  return {
+    ...actual,
+    getRuntimeConfig: () => structuredClone(testConfig),
+    loadConfig: () => structuredClone(testConfig),
+    resolveGatewayPort: () => 18789,
+  };
+});
 
 import "./test-helpers/fast-openclaw-tools-sessions.js";
 import { setActivePluginRegistry } from "../plugins/runtime.js";
@@ -39,6 +49,7 @@ import {
   setActiveEmbeddedRun,
 } from "./embedded-agent-runner/runs.js";
 import { testing as agentStepTesting } from "./tools/agent-step.js";
+import { __testing as subagentControlTesting } from "./subagent-control.js";
 import { createSessionsHistoryTool } from "./tools/sessions-history-tool.js";
 import { createSessionsListTool } from "./tools/sessions-list-tool.js";
 import { testing as sessionsResolutionTesting } from "./tools/sessions-resolution.js";
@@ -49,13 +60,16 @@ const TEST_CONFIG = {
   session: {
     mainKey: "main",
     scope: "per-sender",
-    agentToAgent: { maxPingPongTurns: 2 },
+    agentToAgent: {
+      maxPingPongTurns: 2,
+      ingressEcho: { enabled: false, requireDelivery: false },
+    },
   },
   tools: {
     sessions: { visibility: "all" },
     agentToAgent: { enabled: true },
   },
-} as OpenClawConfig;
+} satisfies OpenClawConfig;
 
 function countMatching<T>(items: readonly T[], predicate: (item: T) => boolean) {
   let count = 0;
@@ -252,6 +266,13 @@ describe("sessions tools", () => {
     sessionsSendA2ATesting.setDepsForTest({
       callGateway: (opts: unknown) => callGatewayMock(opts),
     });
+    subagentControlTesting.setDepsForTest({
+      callGateway: (opts: unknown) => callGatewayMock(opts),
+    });
+    testConfig.session.agentToAgent.ingressEcho.enabled = false;
+    testConfig.session.agentToAgent.ingressEcho.requireDelivery = false;
+    TEST_CONFIG.session.agentToAgent.ingressEcho.enabled = false;
+    TEST_CONFIG.session.agentToAgent.ingressEcho.requireDelivery = false;
   });
 
   it("uses integer schemas for session count and window parameters", () => {
@@ -1275,6 +1296,122 @@ describe("sessions tools", () => {
     );
     const request = requireGatewayCall(agentCall?.[0], "agent");
     expect(request.params?.sessionKey).toBe(targetKey);
+  });
+
+  it("sessions_send includes ingressEcho when pre-run echo succeeds", async () => {
+    const calls: Array<{ method?: string; params?: unknown }> = [];
+    let agentCallCount = 0;
+    let lastWaitedRunId: string | undefined;
+    const replyByRunId = new Map<string, string>();
+    callGatewayMock.mockImplementation(async (opts: unknown) => {
+      const request = opts as { method?: string; params?: unknown };
+      calls.push(request);
+      if (request.method === "send") {
+        const params = request.params as { message?: string } | undefined;
+        if ((params?.message ?? "").includes("A2A ingress echo:")) {
+          return { messageId: "m-ingress" };
+        }
+        return { messageId: "m-announce" };
+      }
+      if (request.method === "agent") {
+        agentCallCount += 1;
+        const runId = `run-${agentCallCount}`;
+        const params = request.params as { extraSystemPrompt?: string } | undefined;
+        let reply = "done";
+        if (params?.extraSystemPrompt?.includes("Agent-to-agent reply step")) {
+          reply = "REPLY_SKIP";
+        }
+        if (params?.extraSystemPrompt?.includes("Agent-to-agent announce step")) {
+          reply = "ANNOUNCE_SKIP";
+        }
+        replyByRunId.set(runId, reply);
+        return { runId, status: "accepted", acceptedAt: 5000 + agentCallCount };
+      }
+      if (request.method === "agent.wait") {
+        const params = request.params as { runId?: string } | undefined;
+        lastWaitedRunId = params?.runId;
+        return { runId: params?.runId ?? "run-1", status: "ok" };
+      }
+      if (request.method === "chat.history") {
+        const text = (lastWaitedRunId && replyByRunId.get(lastWaitedRunId)) ?? "done";
+        return {
+          messages: [{ role: "assistant", content: [{ type: "text", text }], timestamp: 20 }],
+        };
+      }
+      return {};
+    });
+
+    testConfig.session.agentToAgent.ingressEcho.enabled = true;
+    const tool = createOpenClawTools({
+      agentSessionKey: "discord:group:req",
+      agentChannel: "discord",
+      config: testConfig,
+    }).find((candidate) => candidate.name === "sessions_send");
+    expect(tool).toBeDefined();
+    if (!tool) {
+      throw new Error("missing sessions_send tool");
+    }
+
+    const result = await tool.execute("call-ingress-ok", {
+      sessionKey: "discord:group:target",
+      message: "ping",
+      timeoutSeconds: 1,
+    });
+
+    expect(result.details).toMatchObject({
+      status: "ok",
+      ingressEcho: {
+        status: "sent",
+        channel: "discord",
+        to: "group:target",
+        messageId: "m-ingress",
+      },
+    });
+    const firstSendIndex = calls.findIndex((call) => call.method === "send");
+    const firstAgentIndex = calls.findIndex((call) => call.method === "agent");
+    expect(firstSendIndex).toBeGreaterThanOrEqual(0);
+    expect(firstAgentIndex).toBeGreaterThan(firstSendIndex);
+  });
+
+  it("sessions_send blocks target run when strict ingress echo delivery fails", async () => {
+    testConfig.session.agentToAgent.ingressEcho.enabled = true;
+    testConfig.session.agentToAgent.ingressEcho.requireDelivery = true;
+    callGatewayMock.mockImplementation(async (opts: unknown) => {
+      const request = opts as { method?: string };
+      if (request.method === "send") {
+        throw new Error("send failed");
+      }
+      if (request.method === "agent") {
+        throw new Error("agent should not run");
+      }
+      return {};
+    });
+
+    const tool = createOpenClawTools({
+      agentSessionKey: "discord:group:req",
+      agentChannel: "discord",
+      config: testConfig,
+    }).find((candidate) => candidate.name === "sessions_send");
+    expect(tool).toBeDefined();
+    if (!tool) {
+      throw new Error("missing sessions_send tool");
+    }
+
+    const result = await tool.execute("call-ingress-blocked", {
+      sessionKey: "discord:group:target",
+      message: "ping",
+      timeoutSeconds: 1,
+    });
+
+    expect(result.details).toMatchObject({
+      status: "error",
+      ingressEcho: { status: "blocked" },
+    });
+    expect(
+      callGatewayMock.mock.calls.some(
+        (call) => (call[0] as { method?: string }).method === "agent",
+      ),
+    ).toBe(false);
   });
 
   it("sessions_send runs ping-pong then announces", async () => {
