@@ -1432,7 +1432,6 @@ describe("classifyFailoverReason provider messages", () => {
       ),
     ).toBe("auth_permanent");
   });
-
   it("classifies Chinese provider error messages correctly", () => {
     // ZhipuAI/GLM error code 1234: "网络错误" (network error) — real production error
     // from https://github.com/openclaw/openclaw/issues/56242
@@ -1489,6 +1488,14 @@ describe("classifyFailoverReason provider messages", () => {
     // Overloaded errors
     expect(classifyFailoverReason("服务过载，请稍后重试")).toBe("overloaded");
     expect(classifyFailoverReason("当前负载过高")).toBe("overloaded");
+  });
+
+  it("classifies provider-prefixed JSON server_error failures as timeout", () => {
+    expect(
+      classifyFailoverReason(
+        'Codex error: {"type":"error","error":{"type":"server_error","message":"An error occurred while processing your request."},"request_id":"req_123"}',
+      ),
+    ).toBe("timeout");
   });
 });
 

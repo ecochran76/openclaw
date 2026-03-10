@@ -10,6 +10,7 @@ const HTTP_STATUS_CODE_PREFIX_RE = new RegExp(
   `^(?:http\\s*)?(\\d{3})(?:${HTTP_STATUS_DELIMITER_RE.source}([\\s\\S]+))?$`,
   "i",
 );
+const PROVIDER_ERROR_PREFIX_RE = /^(?:[a-z][a-z0-9_-]*\s+error)[:\s-]+/i;
 const HTML_ERROR_PREFIX_RE = /^\s*(?:<!doctype\s+html\b|<html\b)/i;
 const HTML_CLOSE_RE = /<\/html>/i;
 const CLOUDFLARE_HTML_ERROR_CODES = new Set([521, 522, 523, 524, 525, 526, 530]);
@@ -76,6 +77,9 @@ export function parseApiErrorPayload(raw?: string): ErrorPayload | null {
   const candidates = [trimmed];
   if (ERROR_PAYLOAD_PREFIX_RE.test(trimmed)) {
     candidates.push(trimmed.replace(ERROR_PAYLOAD_PREFIX_RE, "").trim());
+  }
+  if (PROVIDER_ERROR_PREFIX_RE.test(trimmed)) {
+    candidates.push(trimmed.replace(PROVIDER_ERROR_PREFIX_RE, "").trim());
   }
   for (const candidate of candidates) {
     if (!candidate.startsWith("{") || !candidate.endsWith("}")) {
@@ -203,6 +207,26 @@ export function parseApiErrorInfo(raw?: string): ApiErrorInfo | null {
   };
 }
 
+function isGenericProviderServerError(info: ApiErrorInfo): boolean {
+  const type = info.type?.trim().toLowerCase();
+  const message = info.message?.trim().toLowerCase() ?? "";
+  if (!type) {
+    return false;
+  }
+  if (type === "server_error") {
+    return (
+      message.length === 0 ||
+      message.includes("an error occurred while processing your request") ||
+      message.includes("internal server error") ||
+      message === "internal error"
+    );
+  }
+  if (type === "api_error") {
+    return message.includes("internal server error") || message === "internal error";
+  }
+  return false;
+}
+
 export function formatRawAssistantErrorForUi(raw?: string): string {
   const trimmed = (raw ?? "").trim();
   if (!trimmed) {
@@ -241,6 +265,9 @@ export function formatRawAssistantErrorForUi(raw?: string): string {
 
   const info = parseApiErrorInfo(trimmed);
   if (info?.message) {
+    if (isGenericProviderServerError(info)) {
+      return "The AI service hit a temporary server error. Please try again in a moment.";
+    }
     const prefix = info.httpCode ? `HTTP ${info.httpCode}` : "LLM error";
     const type = info.type ? ` ${info.type}` : "";
     return `${prefix}${type}: ${info.message}`;

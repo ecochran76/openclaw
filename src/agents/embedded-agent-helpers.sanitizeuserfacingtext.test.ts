@@ -127,7 +127,7 @@ describe("sanitizeUserFacingText", () => {
     expect(sanitizeUserFacingText(raw)).toBe(raw);
   });
 
-  it("sanitizes Codex error-prefixed API payloads", () => {
+  it("sanitizes provider-prefixed raw API error payloads", () => {
     const raw =
       'Codex error: {"type":"error","error":{"type":"server_error","message":"Something exploded"},"sequence_number":2}';
     expect(sanitizeUserFacingText(raw, { errorContext: true })).toBe(
@@ -135,7 +135,7 @@ describe("sanitizeUserFacingText", () => {
     );
   });
 
-  it("sanitizes Codex error-prefixed API payloads without explicit errorContext", () => {
+  it("sanitizes provider-prefixed API payloads without explicit errorContext", () => {
     const raw =
       'Codex error: {"type":"error","error":{"type":"server_error","message":"Something exploded"},"sequence_number":2}';
     expect(sanitizeUserFacingText(raw)).toBe("LLM error server_error: Something exploded");
@@ -154,11 +154,19 @@ describe("sanitizeUserFacingText", () => {
     );
   });
 
-  it("preserves specialized context overflow guidance for Codex-prefixed API payloads", () => {
+  it("preserves specialized context overflow guidance for provider-prefixed API payloads", () => {
     const raw =
       'Codex error: {"type":"error","error":{"type":"invalid_request_error","message":"Request size exceeds model context window"}}';
     expect(sanitizeUserFacingText(raw, { errorContext: true })).toContain(
       "Context overflow: prompt too large for the model.",
+    );
+  });
+
+  it("rewrites generic provider server errors to friendly copy", () => {
+    const raw =
+      'Codex error: {"type":"error","error":{"message":"An error occurred while processing your request.","type":"server_error"}}';
+    expect(sanitizeUserFacingText(raw, { errorContext: true })).toBe(
+      "The AI service hit a temporary server error. Please try again in a moment.",
     );
   });
 

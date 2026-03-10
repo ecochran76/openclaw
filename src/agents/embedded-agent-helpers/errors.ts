@@ -1634,22 +1634,35 @@ function isJsonApiInternalServerError(raw: string): boolean {
   if (!raw) {
     return false;
   }
-  const value = normalizeLowercaseStringOrEmpty(raw);
-  // Providers wrap transient 5xx errors in JSON payloads like:
-  // {"type":"error","error":{"type":"api_error","message":"Internal server error"}}
-  // Non-standard providers (e.g. MiniMax) may use different message text:
-  // {"type":"api_error","message":"unknown error, 520 (1000)"}
-  if (!value.includes('"type":"api_error"')) {
-    return false;
-  }
-  // Billing and auth errors can also carry "type":"api_error". Exclude them so
-  // the more specific classifiers further down the chain handle them correctly.
+  const info = parseApiErrorInfo(raw);
+  // Billing and auth errors can also carry api_error/server_error wrappers.
+  // Let the more specific classifiers handle those instead of treating them as
+  // transient infrastructure failures.
   if (isBillingErrorMessage(raw) || isAuthErrorMessage(raw) || isAuthPermanentErrorMessage(raw)) {
     return false;
   }
-  // Only match when the message contains a transient signal. api_error payloads
-  // with non-transient messages (e.g. context overflow, schema validation) should
-  // fall through to more specific classifiers or remain unclassified.
+  if (info) {
+    const type = info.type?.toLowerCase();
+    const message = info.message ?? "";
+    // Providers often wrap transient 5xx failures in JSON payloads like:
+    // {"type":"error","error":{"type":"api_error","message":"Internal server error"}}
+    // {"type":"error","error":{"type":"server_error","message":"An error occurred ..."}}
+    // Non-standard providers (e.g. MiniMax) may use broader text such as:
+    // {"type":"api_error","message":"unknown error, 520 (1000)"}
+    if (type === "server_error") {
+      return true;
+    }
+    if (type === "api_error") {
+      return (
+        /internal server error|internal error/i.test(message) ||
+        API_ERROR_TRANSIENT_SIGNALS_RE.test(message)
+      );
+    }
+  }
+  const value = raw.toLowerCase();
+  if (!value.includes('"type":"api_error"')) {
+    return false;
+  }
   return API_ERROR_TRANSIENT_SIGNALS_RE.test(raw);
 }
 
