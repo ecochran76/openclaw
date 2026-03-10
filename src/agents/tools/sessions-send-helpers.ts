@@ -19,6 +19,7 @@ export type RelayPolicy = {
   enabled: boolean;
   mode: "target-only" | "dual-channel";
   mirrorTurns: "round1" | "all";
+  verbosity: "none" | "sender-message" | "full-payload";
   requireDelivery: boolean;
 };
 
@@ -191,6 +192,10 @@ export function resolveRelayPolicy(cfg?: OpenClawConfig): RelayPolicy {
     enabled: raw?.enabled === true,
     mode: raw?.mode === "dual-channel" ? "dual-channel" : "target-only",
     mirrorTurns: raw?.mirrorTurns === "all" ? "all" : "round1",
+    verbosity:
+      raw?.verbosity === "none" || raw?.verbosity === "full-payload"
+        ? raw.verbosity
+        : "sender-message",
     requireDelivery: raw?.requireDelivery === true,
   };
 }
@@ -217,6 +222,13 @@ export function buildAgentToAgentRelayText(params: {
   fromAgent: string;
   toAgent: string;
   text: string;
+  verbosity: RelayPolicy["verbosity"];
 }) {
+  if (params.verbosity === "none") {
+    return "";
+  }
+  if (params.verbosity === "sender-message") {
+    return `${params.fromAgent} -> ${params.toAgent}\n${params.text}`.trim();
+  }
   return `[A2A handoff:${params.handoffId}] ${params.fromAgent} -> ${params.toAgent}\n${params.text}`.trim();
 }

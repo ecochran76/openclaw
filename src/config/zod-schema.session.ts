@@ -76,6 +76,9 @@ export const SessionSchema = z
             enabled: z.boolean().optional(),
             mode: z.union([z.literal("target-only"), z.literal("dual-channel")]).optional(),
             mirrorTurns: z.union([z.literal("round1"), z.literal("all")]).optional(),
+            verbosity: z
+              .union([z.literal("none"), z.literal("sender-message"), z.literal("full-payload")])
+              .optional(),
             requireDelivery: z.boolean().optional(),
           })
           .strict()

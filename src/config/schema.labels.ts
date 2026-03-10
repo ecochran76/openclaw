@@ -548,6 +548,7 @@ export const FIELD_LABELS: Record<string, string> = {
   "session.agentToAgent.relay.enabled": "Agent-to-Agent Relay Enabled",
   "session.agentToAgent.relay.mode": "Agent-to-Agent Relay Mode",
   "session.agentToAgent.relay.mirrorTurns": "Agent-to-Agent Relay Mirror Turns",
+  "session.agentToAgent.relay.verbosity": "Agent-to-Agent Relay Verbosity",
   "session.agentToAgent.relay.requireDelivery": "Agent-to-Agent Relay Require Delivery",
   "session.threadBindings": "Session Thread Bindings",
   "session.threadBindings.enabled": "Thread Binding Enabled",

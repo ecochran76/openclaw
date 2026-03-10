@@ -55,7 +55,11 @@ export async function runSessionsSendA2AFlow(params: {
       fromAgent,
       toAgent,
       text,
+      verbosity: params.relayPolicy?.verbosity ?? "sender-message",
     });
+    if (!relayText.trim()) {
+      return;
+    }
     await Promise.all(
       relayTargets.map((target, index) =>
         callGateway({
