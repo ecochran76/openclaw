@@ -74,6 +74,22 @@ describe("sanitizeUserFacingText", () => {
     );
   });
 
+  it("sanitizes provider-prefixed raw API error payloads", () => {
+    const raw =
+      'Codex error: {"type":"error","error":{"message":"Something exploded","type":"server_error"}}';
+    expect(sanitizeUserFacingText(raw, { errorContext: true })).toBe(
+      "LLM error server_error: Something exploded",
+    );
+  });
+
+  it("rewrites generic provider server errors to friendly copy", () => {
+    const raw =
+      'Codex error: {"type":"error","error":{"message":"An error occurred while processing your request.","type":"server_error"}}';
+    expect(sanitizeUserFacingText(raw, { errorContext: true })).toBe(
+      "The AI service hit a temporary server error. Please try again in a moment.",
+    );
+  });
+
   it("returns a friendly message for rate limit errors in Error: prefixed payloads", () => {
     expect(sanitizeUserFacingText("Error: 429 Rate limit exceeded", { errorContext: true })).toBe(
       "⚠️ API rate limit reached. Please try again later.",

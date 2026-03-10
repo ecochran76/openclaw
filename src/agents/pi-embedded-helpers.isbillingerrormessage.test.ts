@@ -728,4 +728,11 @@ describe("classifyFailoverReason", () => {
       ),
     ).toBe("timeout");
   });
+  it("classifies provider-prefixed JSON server_error failures as timeout", () => {
+    expect(
+      classifyFailoverReason(
+        'Codex error: {"type":"error","error":{"type":"server_error","message":"An error occurred while processing your request."},"request_id":"req_123"}',
+      ),
+    ).toBe("timeout");
+  });
 });

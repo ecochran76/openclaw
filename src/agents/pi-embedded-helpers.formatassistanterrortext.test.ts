@@ -74,6 +74,20 @@ describe("formatAssistantErrorText", () => {
     );
     expect(formatAssistantErrorText(msg)).toBe("LLM error server_error: Something exploded");
   });
+  it("suppresses provider-prefixed raw error JSON payloads", () => {
+    const msg = makeAssistantError(
+      'Codex error: {"type":"error","error":{"message":"Something exploded","type":"server_error"}}',
+    );
+    expect(formatAssistantErrorText(msg)).toBe("LLM error server_error: Something exploded");
+  });
+  it("returns friendly copy for provider-prefixed generic server errors", () => {
+    const msg = makeAssistantError(
+      'Codex error: {"type":"error","error":{"message":"An error occurred while processing your request.","type":"server_error"}}',
+    );
+    expect(formatAssistantErrorText(msg)).toBe(
+      "The AI service hit a temporary server error. Please try again in a moment.",
+    );
+  });
   it("returns a friendly billing message for credit balance errors", () => {
     const msg = makeAssistantError("Your credit balance is too low to access the Anthropic API.");
     const result = formatAssistantErrorText(msg);
@@ -133,6 +147,14 @@ describe("formatRawAssistantErrorForUi", () => {
 
   it("renders a generic unknown error message when raw is empty", () => {
     expect(formatRawAssistantErrorForUi("")).toContain("unknown error");
+  });
+
+  it("rewrites generic provider server errors to friendly copy", () => {
+    expect(
+      formatRawAssistantErrorForUi(
+        'Codex error: {"type":"error","error":{"type":"server_error","message":"An error occurred while processing your request."},"request_id":"req_123"}',
+      ),
+    ).toBe("The AI service hit a temporary server error. Please try again in a moment.");
   });
 
   it("formats plain HTTP status lines", () => {

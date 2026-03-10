@@ -180,6 +180,7 @@ export function isCompactionFailureError(errorMessage?: string): boolean {
 
 const ERROR_PAYLOAD_PREFIX_RE =
   /^(?:error|api\s*error|apierror|openai\s*error|anthropic\s*error|gateway\s*error)[:\s-]+/i;
+const PROVIDER_ERROR_PREFIX_RE = /^(?:[a-z][a-z0-9_-]*\s+error)[:\s-]+/i;
 const FINAL_TAG_RE = /<\s*\/?\s*final\s*>/gi;
 const ERROR_PREFIX_RE =
   /^(?:error|api\s*error|openai\s*error|anthropic\s*error|gateway\s*error|request failed|failed|exception)[:\s-]+/i;
@@ -503,6 +504,9 @@ function parseApiErrorPayload(raw: string): ErrorPayload | null {
   if (ERROR_PAYLOAD_PREFIX_RE.test(trimmed)) {
     candidates.push(trimmed.replace(ERROR_PAYLOAD_PREFIX_RE, "").trim());
   }
+  if (PROVIDER_ERROR_PREFIX_RE.test(trimmed)) {
+    candidates.push(trimmed.replace(PROVIDER_ERROR_PREFIX_RE, "").trim());
+  }
   for (const candidate of candidates) {
     if (!candidate.startsWith("{") || !candidate.endsWith("}")) {
       continue;
@@ -540,6 +544,26 @@ export type ApiErrorInfo = {
   message?: string;
   requestId?: string;
 };
+
+function isGenericProviderServerError(info: ApiErrorInfo): boolean {
+  const type = info.type?.trim().toLowerCase();
+  const message = info.message?.trim().toLowerCase() ?? "";
+  if (!type) {
+    return false;
+  }
+  if (type === "server_error") {
+    return (
+      message.length === 0 ||
+      message.includes("an error occurred while processing your request") ||
+      message.includes("internal server error") ||
+      message === "internal error"
+    );
+  }
+  if (type === "api_error") {
+    return message.includes("internal server error") || message === "internal error";
+  }
+  return false;
+}
 
 export function parseApiErrorInfo(raw?: string): ApiErrorInfo | null {
   if (!raw) {
@@ -618,6 +642,9 @@ export function formatRawAssistantErrorForUi(raw?: string): string {
 
   const info = parseApiErrorInfo(trimmed);
   if (info?.message) {
+    if (isGenericProviderServerError(info)) {
+      return "The AI service hit a temporary server error. Please try again in a moment.";
+    }
     const prefix = info.httpCode ? `HTTP ${info.httpCode}` : "LLM error";
     const type = info.type ? ` ${info.type}` : "";
     const requestId = info.requestId ? ` (request_id: ${info.requestId})` : "";
@@ -806,10 +833,21 @@ function isJsonApiInternalServerError(raw: string): boolean {
   if (!raw) {
     return false;
   }
-  const value = raw.toLowerCase();
-  // Anthropic often wraps transient 500s in JSON payloads like:
+  const info = parseApiErrorInfo(raw);
+  if (!info) {
+    return false;
+  }
+  const type = info.type?.toLowerCase();
+  const message = info.message?.toLowerCase() ?? "";
+  // Providers often wrap transient 5xx failures in JSON payloads like:
   // {"type":"error","error":{"type":"api_error","message":"Internal server error"}}
-  return value.includes('"type":"api_error"') && value.includes("internal server error");
+  // or:
+  // {"type":"error","error":{"type":"server_error","message":"An error occurred ..."}}
+  return (
+    type === "server_error" ||
+    (type === "api_error" &&
+      (message.includes("internal server error") || message.includes("internal error")))
+  );
 }
 
 export function parseImageDimensionError(raw: string): {
