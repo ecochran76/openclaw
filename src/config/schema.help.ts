@@ -1684,6 +1684,8 @@ export const FIELD_HELP: Record<string, string> = {
     "Relay mode: target-only mirrors only the target channel, while dual-channel mirrors both requester and target channels. Default: target-only.",
   "session.agentToAgent.relay.mirrorTurns":
     "Controls which turns are mirrored: round1 mirrors the initial request and first reply, while all mirrors ping-pong turns too. Default: round1.",
+  "session.agentToAgent.relay.verbosity":
+    "Controls how much user-facing relay text is shown: none disables mirrored text, sender-message keeps a compact speaker+message view, and full-payload includes extra trace metadata such as the handoff id. Default: sender-message.",
   "session.agentToAgent.relay.requireDelivery":
     "When true, relay delivery becomes strict: required relay delivery failures can block or abort the flow instead of continuing best-effort. Default: false.",
   "session.threadBindings":

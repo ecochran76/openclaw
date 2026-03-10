@@ -249,6 +249,8 @@ export type SessionConfig = {
       mode?: "target-only" | "dual-channel";
       /** Which conversational turns to mirror. Default: round1. */
       mirrorTurns?: "round1" | "all";
+      /** User-facing relay verbosity. none disables mirrored text, sender-message keeps a compact speaker+message view, full-payload includes trace metadata. Default: sender-message. */
+      verbosity?: "none" | "sender-message" | "full-payload";
       /** Require relay delivery before continuing. Default: false. */
       requireDelivery?: boolean;
     };

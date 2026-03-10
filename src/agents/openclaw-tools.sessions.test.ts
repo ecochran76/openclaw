@@ -24,7 +24,13 @@ const testConfig = {
       maxPingPongTurns: 2,
       ingressEcho: { enabled: false, requireDelivery: false },
       guard: { allowNestedSessionsSend: false },
-      relay: { enabled: false, mode: "target-only", mirrorTurns: "round1", requireDelivery: false },
+      relay: {
+        enabled: false,
+        mode: "target-only",
+        mirrorTurns: "round1",
+        verbosity: "sender-message",
+        requireDelivery: false,
+      },
     },
   },
   tools: {
@@ -70,6 +76,7 @@ const TEST_CONFIG = {
         enabled: false,
         mode: "target-only",
         mirrorTurns: "round1",
+        verbosity: "sender-message",
         requireDelivery: false,
       },
     },
@@ -292,6 +299,8 @@ describe("sessions tools", () => {
     TEST_CONFIG.session.agentToAgent.relay.mode = "target-only";
     TEST_CONFIG.session.agentToAgent.relay.mirrorTurns = "round1";
     TEST_CONFIG.session.agentToAgent.relay.requireDelivery = false;
+    testConfig.session.agentToAgent.relay.verbosity = "sender-message";
+    TEST_CONFIG.session.agentToAgent.relay.verbosity = "sender-message";
   });
 
   it("uses integer schemas for session count and window parameters", () => {
@@ -1726,14 +1735,162 @@ describe("sessions tools", () => {
     });
 
     await waitForCalls(() => sends.length, 4);
-    const relaySends = sends.filter((entry) => (entry.message ?? "").includes("[A2A handoff:"));
+    const relaySends = sends.filter((entry) => (entry.message ?? "").includes(" -> "));
     expect(relaySends).toHaveLength(4);
     expect(
       relaySends.map((entry) => entry.to).toSorted((a, b) => String(a).localeCompare(String(b))),
     ).toEqual(["channel:req", "channel:req", "channel:target", "channel:target"]);
+    expect(relaySends.every((entry) => (entry.message ?? "").includes(" -> "))).toBe(true);
     expect(relaySends.some((entry) => (entry.message ?? "").includes("ping"))).toBe(true);
     expect(relaySends.some((entry) => (entry.message ?? "").includes("done"))).toBe(true);
+    expect(relaySends.every((entry) => !(entry.message ?? "").includes("[A2A handoff:"))).toBe(
+      true,
+    );
     expect(sends).toHaveLength(4);
+  });
+
+  it("sessions_send relay verbosity full-payload includes handoff metadata", async () => {
+    testConfig.session.agentToAgent.relay.enabled = true;
+    testConfig.session.agentToAgent.relay.mode = "target-only";
+    testConfig.session.agentToAgent.relay.mirrorTurns = "round1";
+    testConfig.session.agentToAgent.relay.verbosity = "full-payload";
+
+    const sends: Array<{ message?: string }> = [];
+    let lastWaitedRunId: string | undefined;
+    const replyByRunId = new Map<string, string>();
+    let agentCallCount = 0;
+    callGatewayMock.mockImplementation(async (opts: unknown) => {
+      const request = opts as { method?: string; params?: Record<string, unknown> };
+      if (request.method === "send") {
+        sends.push({ message: request.params?.message as string | undefined });
+        return { messageId: `m-${sends.length}` };
+      }
+      if (request.method === "agent") {
+        agentCallCount += 1;
+        const runId = `run-${agentCallCount}`;
+        const extra = request.params?.extraSystemPrompt as string | undefined;
+        let reply = "done";
+        if (extra?.includes("Agent-to-agent reply step")) {
+          reply = "REPLY_SKIP";
+        }
+        if (extra?.includes("Agent-to-agent announce step")) {
+          reply = "ANNOUNCE_SKIP";
+        }
+        replyByRunId.set(runId, reply);
+        return { runId, status: "accepted", acceptedAt: 13000 + agentCallCount };
+      }
+      if (request.method === "agent.wait") {
+        lastWaitedRunId = request.params?.runId as string | undefined;
+        return { runId: request.params?.runId ?? "run-1", status: "ok" };
+      }
+      if (request.method === "chat.history") {
+        return {
+          messages: [
+            {
+              role: "assistant",
+              content: [
+                {
+                  type: "text",
+                  text: (lastWaitedRunId && replyByRunId.get(lastWaitedRunId)) ?? "done",
+                },
+              ],
+              timestamp: 20,
+            },
+          ],
+        };
+      }
+      return {};
+    });
+
+    const tool = createOpenClawTools({
+      agentSessionKey: "discord:group:req",
+      agentChannel: "discord",
+    }).find((candidate) => candidate.name === "sessions_send");
+    expect(tool).toBeDefined();
+    if (!tool) {
+      throw new Error("missing sessions_send tool");
+    }
+
+    await tool.execute("call-relay-full", {
+      sessionKey: "discord:group:target",
+      message: "ping",
+      timeoutSeconds: 1,
+    });
+
+    await waitForCalls(() => sends.length, 2);
+    const relaySends = sends.filter((entry) => (entry.message ?? "").includes("[A2A handoff:"));
+    expect(relaySends.length).toBeGreaterThanOrEqual(2);
+  });
+
+  it("sessions_send relay verbosity none suppresses mirrored sends", async () => {
+    testConfig.session.agentToAgent.relay.enabled = true;
+    testConfig.session.agentToAgent.relay.mode = "dual-channel";
+    testConfig.session.agentToAgent.relay.mirrorTurns = "round1";
+    testConfig.session.agentToAgent.relay.verbosity = "none";
+
+    const sends: Array<{ message?: string }> = [];
+    let agentCallCount = 0;
+    let lastWaitedRunId: string | undefined;
+    const replyByRunId = new Map<string, string>();
+    callGatewayMock.mockImplementation(async (opts: unknown) => {
+      const request = opts as { method?: string; params?: Record<string, unknown> };
+      if (request.method === "send") {
+        sends.push({ message: request.params?.message as string | undefined });
+        return { messageId: `m-${sends.length}` };
+      }
+      if (request.method === "agent") {
+        agentCallCount += 1;
+        const runId = `run-${agentCallCount}`;
+        const extra = request.params?.extraSystemPrompt as string | undefined;
+        let reply = "done";
+        if (extra?.includes("Agent-to-agent reply step")) {
+          reply = "REPLY_SKIP";
+        }
+        if (extra?.includes("Agent-to-agent announce step")) {
+          reply = "ANNOUNCE_SKIP";
+        }
+        replyByRunId.set(runId, reply);
+        return { runId, status: "accepted", acceptedAt: 14000 + agentCallCount };
+      }
+      if (request.method === "agent.wait") {
+        lastWaitedRunId = request.params?.runId as string | undefined;
+        return { runId: request.params?.runId ?? "run-1", status: "ok" };
+      }
+      if (request.method === "chat.history") {
+        return {
+          messages: [
+            {
+              role: "assistant",
+              content: [
+                {
+                  type: "text",
+                  text: (lastWaitedRunId && replyByRunId.get(lastWaitedRunId)) ?? "done",
+                },
+              ],
+              timestamp: 20,
+            },
+          ],
+        };
+      }
+      return {};
+    });
+
+    const tool = createOpenClawTools({
+      agentSessionKey: "discord:group:req",
+      agentChannel: "discord",
+    }).find((candidate) => candidate.name === "sessions_send");
+    expect(tool).toBeDefined();
+    if (!tool) {
+      throw new Error("missing sessions_send tool");
+    }
+
+    await tool.execute("call-relay-none", {
+      sessionKey: "discord:group:target",
+      message: "ping",
+      timeoutSeconds: 1,
+    });
+
+    expect(sends).toHaveLength(0);
   });
 
   it("sessions_send runs ping-pong then announces", async () => {
