@@ -781,7 +781,24 @@ describe("sessions_send gating", () => {
 
     const details = requireDetails(result);
     expect(details.status).toBe("error");
-    expect(details.error).toBe("Either sessionKey or label is required");
+    expect(details.error).toBe("Either sessionKey, label, or selector fields are required");
+    expect(callGatewayMock).not.toHaveBeenCalled();
+  });
+
+  it("returns an error when selector fields are combined with sessionKey", async () => {
+    const tool = createMainSessionsSendTool();
+
+    const result = await tool.execute("call-mixed-target-mode", {
+      sessionKey: "main",
+      search: "a2a feature dev",
+      message: "hello",
+      timeoutSeconds: 5,
+    });
+
+    expect(result.details).toMatchObject({
+      status: "error",
+      error: "Provide either sessionKey, label, or selector fields (not multiple).",
+    });
     expect(callGatewayMock).not.toHaveBeenCalled();
   });
 

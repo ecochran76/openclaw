@@ -355,6 +355,15 @@ describe("sessions tools", () => {
     const sendRequired =
       (byName("sessions_send").parameters as { required?: string[] }).required ?? [];
     expect(sendRequired).toContain("message");
+    expect(schemaProp("sessions_spawn", "thinking").type).toBe("string");
+    expect(schemaProp("sessions_spawn", "runTimeoutSeconds").type).toBe("number");
+    expect(schemaProp("sessions_spawn", "thread").type).toBe("boolean");
+    expect(schemaProp("sessions_spawn", "mode").type).toBe("string");
+    expect(schemaProp("sessions_spawn", "sandbox").type).toBe("string");
+    expect(schemaProp("sessions_spawn", "streamTo").type).toBe("string");
+    expect(schemaProp("sessions_spawn", "runtime").type).toBe("string");
+    expect(schemaProp("sessions_spawn", "cwd").type).toBe("string");
+    expect(schemaProp("subagents", "recentMinutes").type).toBe("number");
   });
 
   it.each([
@@ -1344,6 +1353,109 @@ describe("sessions tools", () => {
     );
     const request = requireGatewayCall(agentCall?.[0], "agent");
     expect(request.params?.sessionKey).toBe(targetKey);
+  });
+
+  it("sessions_send resolves selector inputs via sessions.resolve", async () => {
+    const targetKey = "agent:dev-openclaw:slack:channel:c0ag96mgjtv:thread:1773000000.222222";
+    callGatewayMock.mockImplementation(async (opts: unknown) => {
+      const request = opts as {
+        method?: string;
+        params?: Record<string, unknown>;
+      };
+      if (request.method === "sessions.resolve") {
+        return {
+          key: targetKey,
+          agentId: "dev-openclaw",
+          deliveryContext: {
+            channel: "slack",
+            to: "channel:C0AG96MGJTV",
+            threadId: "1773000000.222222",
+          },
+          resolution: {
+            matchedBy: "search",
+            threadPolicy: "prefer-thread",
+            selection: "most-recent",
+            search: "a2a feature dev",
+            searchFields: ["derivedTitle"],
+          },
+        };
+      }
+      if (request.method === "agent") {
+        return { runId: "run-selector", acceptedAt: 456 };
+      }
+      if (request.method === "agent.wait") {
+        return { status: "ok" };
+      }
+      if (request.method === "chat.history") {
+        return { messages: [] };
+      }
+      return {};
+    });
+
+    const tool = createOpenClawTools({
+      agentSessionKey: "agent:dev-openclaw:main",
+      agentChannel: "slack",
+    }).find((candidate) => candidate.name === "sessions_send");
+    expect(tool).toBeDefined();
+    if (!tool) {
+      throw new Error("missing sessions_send tool");
+    }
+
+    const result = await tool.execute("call7b", {
+      agentId: "dev-openclaw",
+      search: "a2a feature dev",
+      searchFields: ["derivedTitle"],
+      selection: "most-recent",
+      threadPolicy: "prefer-thread",
+      message: "ping",
+      timeoutSeconds: 0,
+    });
+    const details = result.details as {
+      status?: string;
+      resolvedTarget?: {
+        sessionKey?: string;
+        agentId?: string;
+        deliveryContext?: { channel?: string; to?: string; threadId?: string };
+        resolution?: { matchedBy?: string; threadPolicy?: string; selection?: string };
+      };
+    };
+    expect(details.status).toBe("accepted");
+    expect(details.resolvedTarget).toEqual({
+      sessionKey: targetKey,
+      agentId: "dev-openclaw",
+      deliveryContext: {
+        channel: "slack",
+        to: "channel:C0AG96MGJTV",
+        threadId: "1773000000.222222",
+      },
+      resolution: {
+        matchedBy: "search",
+        threadPolicy: "prefer-thread",
+        selection: "most-recent",
+        search: "a2a feature dev",
+        searchFields: ["derivedTitle"],
+      },
+    });
+    const resolveCall = callGatewayMock.mock.calls.find(
+      (call) => (call[0] as { method?: string }).method === "sessions.resolve",
+    );
+    expect(resolveCall?.[0]).toMatchObject({
+      method: "sessions.resolve",
+      params: {
+        agentId: "dev-openclaw",
+        search: "a2a feature dev",
+        searchFields: ["derivedTitle"],
+        selection: "most-recent",
+        threadPolicy: "prefer-thread",
+      },
+    });
+    const agentCall = callGatewayMock.mock.calls.find(
+      (call) => (call[0] as { method?: string }).method === "agent",
+    );
+    expect(agentCall?.[0]).toMatchObject({
+      method: "agent",
+      params: { sessionKey: targetKey },
+    });
   });
 
   it("sessions_send includes ingressEcho when pre-run echo succeeds", async () => {
