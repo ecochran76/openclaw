@@ -238,6 +238,12 @@ Choose your preferred auth method and follow the setup steps.
         ```bash
         openclaw models auth login --provider openai --device-code
         ```
+
+        To store the login under an explicit shared profile id:
+
+        ```bash
+        openclaw models auth login --provider openai-codex --profile-id work
+        ```
       </Step>
       <Step title="Use the canonical OpenAI model route">
         ```bash
@@ -383,6 +389,14 @@ Choose your preferred auth method and follow the setup steps.
     If legacy Codex model refs or stale OpenAI runtime pins remain in config or
     session state, `openclaw doctor --fix` rewrites them to `openai/*` with the
     Codex runtime unless OpenClaw is explicitly configured.
+
+    <Tip>
+    If multiple agents share the same long-lived Codex OAuth profile, you can resync just that profile from the canonical source agent (`main` by default):
+
+    ```bash
+    openclaw models auth sync --profile-id openai-codex:work
+    ```
+    </Tip>
 
     ### Context window cap
 

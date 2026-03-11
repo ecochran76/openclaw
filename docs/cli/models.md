@@ -173,6 +173,7 @@ openclaw models auth login --provider openai --profile-id openai:work
 openclaw models auth paste-api-key --provider <id>
 openclaw models auth setup-token --provider <id>
 openclaw models auth paste-token
+openclaw models auth sync --profile-id <id>
 ```
 
 `models auth add` is the interactive auth helper. It can launch a provider auth
@@ -215,9 +216,13 @@ Notes:
   `printf "%s\n" "$OPENAI_API_KEY" | openclaw models auth paste-api-key --provider openai`.
 - `setup-token` and `paste-token` remain generic token commands for providers
   that expose token auth methods.
+- `login --provider anthropic --method cli --set-default` reuses a local Claude
+  CLI login and rewrites the main Anthropic default-model path to `claude-cli/...`.
+- `login --profile-id <id>` lets single-profile OAuth flows store credentials under an explicit profile id (for example `openai-codex:work`).
 - `setup-token` requires an interactive TTY and runs the provider's token-auth
   method (defaulting to that provider's `setup-token` method when it exposes
   one).
+- `setup-token` prompts for a setup-token value (generate it with `claude setup-token` on any machine).
 - `paste-token` accepts a token string generated elsewhere or from automation.
 - `paste-token` requires `--provider`, prompts for the token value by default,
   and writes it to the default profile id `<provider>:manual` unless you pass
@@ -229,6 +234,9 @@ Notes:
 - For `openai`, OpenAI API keys and ChatGPT/OAuth token material are
   different auth shapes. Use `paste-api-key` for `sk-...` OpenAI API keys and
   `paste-token` only for token auth material.
+- `sync --profile-id <id>` copies exactly one auth profile from a source agent
+  (`main` by default) into selected agents or all agents without overwriting
+  unrelated profiles/order metadata.
 - Anthropic note: Anthropic staff told us OpenClaw-style Claude CLI usage is allowed again, so OpenClaw treats Claude CLI reuse and `claude -p` usage as sanctioned for this integration unless Anthropic publishes a new policy.
 - Anthropic `setup-token` / `paste-token` remain available as a supported OpenClaw token path, but OpenClaw now prefers Claude CLI reuse and `claude -p` when available.
 
