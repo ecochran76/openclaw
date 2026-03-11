@@ -1170,7 +1170,7 @@ export const sessionsHandlers: GatewayRequestHandlers = {
       respond(true, { ok: false }, undefined);
       return;
     }
-    respond(true, { ok: true, key: resolved.key }, undefined);
+    respond(true, resolved, undefined);
   },
   "sessions.compaction.list": ({ params, respond, context }) => {
     if (

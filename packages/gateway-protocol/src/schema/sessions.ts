@@ -223,6 +223,28 @@ export const SessionsDescribeParamsSchema = Type.Object(
 );
 
 /** Resolves a session by key, raw session id, label, or parent/agent scope. */
+const SessionsResolveSearchFieldSchema = Type.Union([
+  Type.Literal("key"),
+  Type.Literal("sessionId"),
+  Type.Literal("label"),
+  Type.Literal("displayName"),
+  Type.Literal("subject"),
+  Type.Literal("derivedTitle"),
+  Type.Literal("lastMessage"),
+]);
+
+const SessionsResolveSelectionSchema = Type.Union([
+  Type.Literal("most-recent"),
+  Type.Literal("least-recent"),
+]);
+
+const SessionsResolveThreadPolicySchema = Type.Union([
+  Type.Literal("exact"),
+  Type.Literal("prefer-thread"),
+  Type.Literal("most-recent"),
+  Type.Literal("channel-root"),
+]);
+
 export const SessionsResolveParamsSchema = Type.Object(
   {
     key: Type.Optional(NonEmptyString),
@@ -234,6 +256,18 @@ export const SessionsResolveParamsSchema = Type.Object(
     includeUnknown: Type.Optional(Type.Boolean()),
     /** Return a successful `{ ok: false }` response when the selector does not match a session. */
     allowMissing: Type.Optional(Type.Boolean()),
+    channel: Type.Optional(NonEmptyString),
+    to: Type.Optional(NonEmptyString),
+    accountId: Type.Optional(NonEmptyString),
+    threadId: Type.Optional(NonEmptyString),
+    threadPolicy: Type.Optional(SessionsResolveThreadPolicySchema),
+    allowChannelRootFallback: Type.Optional(Type.Boolean()),
+    activeMinutes: Type.Optional(Type.Integer({ minimum: 1 })),
+    search: Type.Optional(Type.String()),
+    searchFields: Type.Optional(
+      Type.Array(SessionsResolveSearchFieldSchema, { minItems: 1, uniqueItems: true }),
+    ),
+    selection: Type.Optional(SessionsResolveSelectionSchema),
   },
   { additionalProperties: false },
 );
