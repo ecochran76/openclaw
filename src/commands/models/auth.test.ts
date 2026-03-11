@@ -183,7 +183,20 @@ describe("modelsAuthLoginCommand", () => {
       "Auth profile: openai-codex:user@example.com (openai-codex/oauth)",
     );
     expect(runtime.log).toHaveBeenCalledWith(
-      "Default model available: openai-codex/gpt-5.3-codex (use --set-default to apply)",
+      "Default model available: openai-codex/gpt-5.4 (use --set-default to apply)",
+    );
+  });
+
+  it("forwards explicit openai-codex profile ids to OAuth credential writes", async () => {
+    const runtime = createRuntime();
+
+    await modelsAuthLoginCommand({ provider: "openai-codex", profileId: "work" }, runtime);
+
+    expect(mocks.writeOAuthCredentials).toHaveBeenCalledWith(
+      "openai-codex",
+      expect.any(Object),
+      "/tmp/openclaw/agents/main",
+      { syncSiblingAgents: true, profileId: "openai-codex:work" },
     );
   });
 
@@ -193,9 +206,9 @@ describe("modelsAuthLoginCommand", () => {
     await modelsAuthLoginCommand({ provider: "openai-codex", setDefault: true }, runtime);
 
     expect(lastUpdatedConfig?.agents?.defaults?.model).toEqual({
-      primary: "openai-codex/gpt-5.3-codex",
+      primary: "openai-codex/gpt-5.4",
     });
-    expect(runtime.log).toHaveBeenCalledWith("Default model set to openai-codex/gpt-5.3-codex");
+    expect(runtime.log).toHaveBeenCalledWith("Default model set to openai-codex/gpt-5.4");
   });
 
   it("keeps existing plugin error behavior for non built-in providers", async () => {

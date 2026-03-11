@@ -331,7 +331,7 @@ async function runBuiltInOpenAICodexLogin(params: {
   const requestedProfileId = normalizeRequestedProfileId("openai-codex", params.opts.profileId);
   const profileId = await writeOAuthCredentials("openai-codex", creds, params.agentDir, {
     syncSiblingAgents: true,
-    profileId: requestedProfileId,
+    ...(requestedProfileId ? { profileId: requestedProfileId } : {}),
   });
   await updateConfig((cfg) => {
     let next = applyAuthProfileConfig(cfg, {
