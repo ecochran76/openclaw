@@ -367,13 +367,18 @@ export function createSessionsSendTool(opts?: {
       });
       const maxPingPongTurns = resolvePingPongTurns(cfg);
       const delivery = { status: "pending", mode: "announce" as const };
-      const relay = {
-        status: relayPolicy.enabled ? "pending" : "disabled",
+      const defaultRelay = {
+        status: relayPolicy.enabled
+          ? timeoutSeconds === 0
+            ? "pending"
+            : "not_applicable"
+          : "disabled",
         mode: relayPolicy.mode,
         mirrorTurns: relayPolicy.mirrorTurns,
+        targets: [],
       };
-      const startA2AFlow = (roundOneReply?: string, waitRunId?: string) => {
-        void runSessionsSendA2AFlow({
+      const startA2AFlow = (roundOneReply?: string, waitRunId?: string) =>
+        runSessionsSendA2AFlow({
           targetSessionKey: resolvedKey,
           displayKey,
           message,
@@ -389,7 +394,6 @@ export function createSessionsSendTool(opts?: {
           requesterAgentId,
           targetAgentId,
         });
-      };
 
       if (timeoutSeconds === 0) {
         try {
@@ -401,14 +405,14 @@ export function createSessionsSendTool(opts?: {
           if (typeof response?.runId === "string" && response.runId) {
             runId = response.runId;
           }
-          startA2AFlow(undefined, runId);
+          void startA2AFlow(undefined, runId);
           return jsonResult({
             runId,
             status: "accepted",
             sessionKey: displayKey,
             delivery,
             ingressEcho,
-            relay,
+            relay: defaultRelay,
           });
         } catch (err) {
           const messageText =
@@ -495,7 +499,20 @@ export function createSessionsSendTool(opts?: {
       const filtered = stripToolMessages(Array.isArray(history?.messages) ? history.messages : []);
       const last = filtered.length > 0 ? filtered[filtered.length - 1] : undefined;
       const reply = last ? extractAssistantText(last) : undefined;
-      startA2AFlow(reply ?? undefined);
+      const a2aResult = await startA2AFlow(reply ?? undefined);
+      const relay = a2aResult.relay ?? defaultRelay;
+      if (relayPolicy.enabled && (relay.status === "blocked" || relay.status === "failed")) {
+        return jsonResult({
+          runId,
+          status: "error",
+          error: "Required relay delivery failed.",
+          reply,
+          sessionKey: displayKey,
+          delivery,
+          ingressEcho,
+          relay,
+        });
+      }
 
       return jsonResult({
         runId,
