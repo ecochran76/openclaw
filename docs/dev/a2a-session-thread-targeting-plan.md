@@ -152,6 +152,31 @@ That means all of the following must work:
 6. Keep follow-up turns bounded for this request
 7. Return enough metadata to explain what was targeted and why
 
+## Safety goal: bounded orchestration, not open-ended conversation drift
+
+These workflows must be **cheap by default** and resistant to accidental infinite or high-cost loops.
+
+For the purposes of this plan, "success" is **not** merely that the target agent keeps talking. Success means the system can support iterative instruction/report workflows while remaining strongly bounded in scope, target, and cost.
+
+Required invariants:
+
+1. **Single target resolution per handoff**
+   - Resolve the target session/thread once at the start of the handoff.
+   - Do **not** re-resolve "most recent thread" on every turn.
+   - Once selected, the target session is pinned for the lifetime of that bounded A2A run.
+2. **Per-call loop budget**
+   - Multi-turn orchestration must use an explicit per-call turn budget.
+   - Global config remains the hard ceiling; per-call settings may only reduce it.
+3. **Per-call wall-clock budget**
+   - Multi-turn orchestration should also have a bounded elapsed-time window so a slow turn cannot keep the workflow alive indefinitely.
+4. **No implicit escalation of scope**
+   - The run must not silently switch from one thread to another, one agent to another, or one channel-root to a different thread mid-loop.
+5. **No recursive A2A fan-out by default**
+   - Existing nested `sessions_send` guard remains the default.
+   - The new orchestration workflow must not weaken that protection.
+6. **Clear stop semantics**
+   - When the turn/time budget is exhausted, the workflow stops and reports that it hit a guardrail instead of silently continuing.
+
 ---
 
 ## Non-goals
@@ -436,31 +461,65 @@ That should not depend only on a global config knob.
 
 ### Proposed change
 
-Add **per-call** loop control to `sessions_send`, clamped by the global ceiling.
+Add **per-call** loop control to `sessions_send`, clamped by the global ceiling, and pair it with a wall-clock budget.
 
 ### Recommended params
 
 At minimum:
 
 - `maxPingPongTurns?: number`
+- `maxElapsedMs?: number`
 
 Optionally, if we want a more human-facing abstraction:
 
 - `maxFollowUpCycles?: number`
 
-Recommended first slice: add only `maxPingPongTurns` per call.
+Recommended first slice:
+
+- add `maxPingPongTurns` per call
+- add `maxElapsedMs` per call
+- keep `maxFollowUpCycles` as a later alias or caller-side translation layer
 
 Why:
 
 - it matches existing runtime concepts
 - it minimizes implementation risk
-- the calling agent can translate natural phrases like "up to 2 full cycles" into a numeric turn budget
+- it lets the caller translate natural phrases like "up to 2 full cycles" into a numeric turn budget
+- it ensures a slow/stalled workflow cannot stay alive indefinitely even when turn count is still available
 
 ### Clamp rules
 
-- per-call override cannot exceed global `session.agentToAgent.maxPingPongTurns`
-- per-call override can reduce the limit
+- per-call `maxPingPongTurns` cannot exceed global `session.agentToAgent.maxPingPongTurns`
+- per-call `maxPingPongTurns` can reduce the limit
 - zero disables follow-up ping-pong for that request
+- per-call `maxElapsedMs` cannot exceed a global config ceiling if one is later added
+- when either the turn budget or elapsed-time budget is exhausted, the loop stops immediately
+
+### Additional guardrail rules
+
+- resolve `threadPolicy: "most-recent"` once at the beginning and pin the selected session key for the rest of the run
+- do **not** re-run most-recent-thread selection between follow-up turns
+- do not allow the loop to hop between thread-bound and channel-root sessions unless a new top-level request explicitly asks for it
+- preserve existing nested-`sessions_send` blocking by default
+
+### Result semantics
+
+When a guardrail ends the workflow, return structured metadata rather than vague success text.
+
+Suggested top-level additions in the `sessions_send` result:
+
+```json
+{
+  "followUp": {
+    "status": "disabled | completed | turn_limit_reached | time_limit_reached | reply_skip | blocked",
+    "maxPingPongTurns": 4,
+    "turnsUsed": 4,
+    "maxElapsedMs": 180000,
+    "elapsedMs": 121337,
+    "targetSessionPinned": true
+  }
+}
+```
 
 ### Optional follow-up improvement
 
@@ -499,6 +558,9 @@ type A2AOrchestrationContract = {
   askForFurtherInstructions?: boolean;
   askForReport?: boolean;
   maxPingPongTurns?: number;
+  maxElapsedMs?: number;
+  pinnedTargetSessionKey?: string;
+  threadSelectionLocked?: boolean;
 };
 ```
 
@@ -629,11 +691,13 @@ Requester instruction:
 3. The initial `sessions_send` goes to that exact thread-bound session.
 4. A2A ingress/relay/announce delivery stays pinned to that same thread.
 5. The requester agent can continue the follow-up exchange without spawning a separate unrelated channel-root session.
-6. The follow-up loop stops within the configured/requested limit.
-7. Tool/result metadata explains:
+6. The follow-up loop stops within the configured/requested turn/time budget.
+7. The target session remains pinned for the life of the bounded run; "most recent thread" is not re-evaluated on every turn.
+8. Tool/result metadata explains:
    - which session was selected
    - whether a thread was selected or root fallback was used
-   - how many follow-up turns were allowed
+   - how many follow-up turns were allowed and consumed
+   - whether a turn/time guardrail ended the workflow
    - relay delivery outcomes
 
 ### Failure cases that should become explicit
@@ -643,6 +707,8 @@ Requester instruction:
 - multiple possible targets but no selection policy was given
 - relay delivery failed in strict mode
 - turn budget exhausted
+- elapsed-time budget exhausted
+- target-session pin could not be maintained
 
 These should return structured, inspectable failures rather than silent fallback or vague channel behavior.
 
@@ -674,13 +740,18 @@ These should return structured, inspectable failures rather than silent fallback
 12. relay round-1 uses resolved thread id on both sides when applicable
 13. dual-channel mode still suppresses duplicate-looking target announce
 14. per-call `maxPingPongTurns` clamps correctly
-15. `REPLY_SKIP` semantics unchanged
+15. per-call `maxElapsedMs` clamps and stops correctly
+16. target session is pinned once selected; no mid-loop re-resolution to a newer thread
+17. `REPLY_SKIP` semantics unchanged
+18. nested-`sessions_send` guard remains unchanged
 
 ### User-story e2e
 
-16. channel-bound agent + most-recent-thread resolution + bounded follow-up loop works end-to-end
-17. root fallback path works when enabled
-18. explicit failure is returned when no eligible thread exists
+19. channel-bound agent + most-recent-thread resolution + bounded follow-up loop works end-to-end
+20. root fallback path works when enabled
+21. explicit failure is returned when no eligible thread exists
+22. explicit `turn_limit_reached` result is returned when the request exhausts its loop budget
+23. explicit `time_limit_reached` result is returned when the request exhausts its elapsed-time budget
 
 ### Suggested files
 
