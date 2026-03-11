@@ -10,9 +10,14 @@ import { normalizeProviderId } from "../model-selection.js";
 import { AUTH_STORE_LOCK_OPTIONS, log } from "./constants.js";
 import { resolveTokenExpiryState } from "./credential-state.js";
 import { formatAuthDoctorHint } from "./doctor.js";
-import { ensureAuthStoreFile, resolveAuthStorePath } from "./paths.js";
+import { ensureAuthStoreFile, resolveAuthStorePath, resolveMainAgentDir } from "./paths.js";
+import { syncAuthProfile } from "./profiles.js";
 import { suggestOAuthProfileIdForLegacyDefault } from "./repair.js";
-import { ensureAuthProfileStore, saveAuthProfileStore } from "./store.js";
+import {
+  ensureAuthProfileStore,
+  loadAuthProfileStoreForAgentFile,
+  saveAuthProfileStore,
+} from "./store.js";
 import type { AuthProfileStore } from "./types.js";
 
 const OAUTH_PROVIDER_IDS = new Set<string>(getOAuthProviders().map((provider) => provider.id));
@@ -123,8 +128,15 @@ function adoptNewerMainOAuthCredential(params: {
   if (!params.agentDir) {
     return null;
   }
+  const mainAgentDir = resolveMainAgentDir();
+  if (resolveAuthStorePath(params.agentDir) === resolveAuthStorePath(mainAgentDir)) {
+    return null;
+  }
   try {
-    const mainStore = ensureAuthProfileStore(undefined);
+    const mainStore = loadAuthProfileStoreForAgentFile(mainAgentDir, {
+      readOnly: true,
+      allowKeychainPrompt: false,
+    });
     const mainCred = mainStore.profiles[params.profileId];
     if (
       mainCred?.type === "oauth" &&
@@ -133,7 +145,11 @@ function adoptNewerMainOAuthCredential(params: {
       (!Number.isFinite(params.cred.expires) || mainCred.expires > params.cred.expires)
     ) {
       params.store.profiles[params.profileId] = { ...mainCred };
-      saveAuthProfileStore(params.store, params.agentDir);
+      const localStore = loadAuthProfileStoreForAgentFile(params.agentDir, {
+        allowKeychainPrompt: false,
+      });
+      localStore.profiles[params.profileId] = { ...mainCred };
+      saveAuthProfileStore(localStore, params.agentDir);
       log.info("adopted newer OAuth credentials from main agent", {
         profileId: params.profileId,
         agentDir: params.agentDir,
@@ -158,8 +174,11 @@ async function refreshOAuthTokenWithLock(params: {
   const authPath = resolveAuthStorePath(params.agentDir);
   ensureAuthStoreFile(authPath);
 
-  return await withFileLock(authPath, AUTH_STORE_LOCK_OPTIONS, async () => {
-    const store = ensureAuthProfileStore(params.agentDir);
+  const result = await withFileLock(authPath, AUTH_STORE_LOCK_OPTIONS, async () => {
+    const store = loadAuthProfileStoreForAgentFile(params.agentDir, {
+      readOnly: true,
+      allowKeychainPrompt: false,
+    });
     const cred = store.profiles[params.profileId];
     if (!cred || cred.type !== "oauth") {
       return null;
@@ -208,6 +227,36 @@ async function refreshOAuthTokenWithLock(params: {
 
     return result;
   });
+
+  if (!result) {
+    return null;
+  }
+
+  const mainAgentDir = resolveMainAgentDir();
+  if (
+    params.agentDir &&
+    resolveAuthStorePath(params.agentDir) !== resolveAuthStorePath(mainAgentDir)
+  ) {
+    try {
+      await syncAuthProfile({
+        profileId: params.profileId,
+        sourceAgentDir: params.agentDir,
+        targetAgentDirs: [mainAgentDir],
+      });
+      log.info("promoted refreshed OAuth credentials into canonical main agent", {
+        profileId: params.profileId,
+        agentDir: params.agentDir,
+      });
+    } catch (err) {
+      log.debug("failed to promote refreshed OAuth credentials into main agent", {
+        profileId: params.profileId,
+        agentDir: params.agentDir,
+        error: err instanceof Error ? err.message : String(err),
+      });
+    }
+  }
+
+  return result;
 }
 
 async function tryResolveOAuthProfile(
@@ -427,15 +476,22 @@ export async function resolveApiKeyForProfile(
       }
     }
 
-    // Fallback: if this is a secondary agent, try using the main agent's credentials
+    // Fallback: if this is a secondary agent, try using the canonical main agent's credentials.
     if (params.agentDir) {
       try {
-        const mainStore = ensureAuthProfileStore(undefined); // main agent (no agentDir)
+        const mainAgentDir = resolveMainAgentDir();
+        const mainStore = loadAuthProfileStoreForAgentFile(mainAgentDir, {
+          readOnly: true,
+          allowKeychainPrompt: false,
+        });
         const mainCred = mainStore.profiles[profileId];
         if (mainCred?.type === "oauth" && Date.now() < mainCred.expires) {
-          // Main agent has fresh credentials - copy them to this agent and use them
+          await syncAuthProfile({
+            profileId,
+            sourceAgentDir: mainAgentDir,
+            targetAgentDirs: [params.agentDir],
+          });
           refreshedStore.profiles[profileId] = { ...mainCred };
-          saveAuthProfileStore(refreshedStore, params.agentDir);
           log.info("inherited fresh OAuth credentials from main agent", {
             profileId,
             agentDir: params.agentDir,

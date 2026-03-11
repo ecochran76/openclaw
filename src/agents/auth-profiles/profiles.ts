@@ -1,9 +1,11 @@
+import path from "node:path";
 import { normalizeStringEntries } from "../../shared/string-normalization.js";
 import { normalizeSecretInput } from "../../utils/normalize-secret-input.js";
 import { normalizeProviderId, normalizeProviderIdForAuth } from "../model-selection.js";
 import {
-  ensureAuthProfileStore,
+  loadAuthProfileStoreForAgentFile,
   saveAuthProfileStore,
+  updateAuthProfileStoreFileWithLock,
   updateAuthProfileStoreWithLock,
 } from "./store.js";
 import type { AuthProfileCredential, AuthProfileStore } from "./types.js";
@@ -58,7 +60,9 @@ export function upsertAuthProfile(params: {
       : params.credential.type === "token"
         ? { ...params.credential, token: normalizeSecretInput(params.credential.token) }
         : params.credential;
-  const store = ensureAuthProfileStore(params.agentDir);
+  const store = loadAuthProfileStoreForAgentFile(params.agentDir, {
+    allowKeychainPrompt: false,
+  });
   store.profiles[params.profileId] = credential;
   saveAuthProfileStore(store, params.agentDir);
 }
@@ -68,13 +72,68 @@ export async function upsertAuthProfileWithLock(params: {
   credential: AuthProfileCredential;
   agentDir?: string;
 }): Promise<AuthProfileStore | null> {
-  return await updateAuthProfileStoreWithLock({
+  return await updateAuthProfileStoreFileWithLock({
     agentDir: params.agentDir,
     updater: (store) => {
       store.profiles[params.profileId] = params.credential;
       return true;
     },
   });
+}
+
+export type SyncAuthProfileResult = {
+  profileId: string;
+  credential: AuthProfileCredential;
+  updatedAgentDirs: string[];
+  skippedAgentDirs: string[];
+};
+
+export async function syncAuthProfile(params: {
+  profileId: string;
+  sourceAgentDir?: string;
+  targetAgentDirs: string[];
+}): Promise<SyncAuthProfileResult> {
+  const sourceStore = loadAuthProfileStoreForAgentFile(params.sourceAgentDir, {
+    readOnly: true,
+    allowKeychainPrompt: false,
+  });
+  const credential = sourceStore.profiles[params.profileId];
+  if (!credential) {
+    throw new Error(`Auth profile "${params.profileId}" not found in source agent store.`);
+  }
+
+  const sourceDir = params.sourceAgentDir ? path.resolve(params.sourceAgentDir) : undefined;
+  const uniqueTargetAgentDirs = dedupeProfileIds(
+    params.targetAgentDirs.map((targetAgentDir) => path.resolve(targetAgentDir)),
+  );
+  const updatedAgentDirs: string[] = [];
+  const skippedAgentDirs: string[] = [];
+
+  for (const targetAgentDir of uniqueTargetAgentDirs) {
+    if (sourceDir && targetAgentDir === sourceDir) {
+      skippedAgentDirs.push(targetAgentDir);
+      continue;
+    }
+    const updated = await updateAuthProfileStoreFileWithLock({
+      agentDir: targetAgentDir,
+      updater: (store) => {
+        store.profiles[params.profileId] = structuredClone(credential);
+        return true;
+      },
+    });
+    if (updated) {
+      updatedAgentDirs.push(targetAgentDir);
+    } else {
+      skippedAgentDirs.push(targetAgentDir);
+    }
+  }
+
+  return {
+    profileId: params.profileId,
+    credential: structuredClone(credential),
+    updatedAgentDirs,
+    skippedAgentDirs,
+  };
 }
 
 export function listProfilesForProvider(store: AuthProfileStore, provider: string): string[] {

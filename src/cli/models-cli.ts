@@ -11,6 +11,7 @@ import {
   modelsAuthOrderSetCommand,
   modelsAuthPasteTokenCommand,
   modelsAuthSetupTokenCommand,
+  modelsAuthSyncCommand,
   modelsFallbacksAddCommand,
   modelsFallbacksClearCommand,
   modelsFallbacksListCommand,
@@ -374,6 +375,27 @@ export function registerModelsCli(program: Command) {
           {
             profileId: opts.profileId as string | undefined,
             yes: Boolean(opts.yes),
+          },
+          defaultRuntime,
+        );
+      });
+    });
+
+  auth
+    .command("sync")
+    .description("Sync an auth profile from one agent to others")
+    .requiredOption("--profile-id <id>", "Auth profile id to sync (e.g. openai-codex:work)")
+    .option("--from-agent <id>", "Source agent id (default: main)")
+    .option("--to-agents <ids>", "Comma-separated target agent ids or 'all' (default: all)")
+    .option("--json", "Output JSON", false)
+    .action(async (opts) => {
+      await runModelsCommand(async () => {
+        await modelsAuthSyncCommand(
+          {
+            profileId: opts.profileId as string,
+            fromAgent: opts.fromAgent as string | undefined,
+            toAgents: opts.toAgents as string | undefined,
+            json: Boolean(opts.json),
           },
           defaultRuntime,
         );

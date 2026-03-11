@@ -5,7 +5,13 @@ import { withFileLock } from "../../infra/file-lock.js";
 import { loadJsonFile, saveJsonFile } from "../../infra/json-file.js";
 import { AUTH_STORE_LOCK_OPTIONS, AUTH_STORE_VERSION, log } from "./constants.js";
 import { syncExternalCliCredentials } from "./external-cli-sync.js";
-import { ensureAuthStoreFile, resolveAuthStorePath, resolveLegacyAuthStorePath } from "./paths.js";
+import {
+  ensureAuthStoreFile,
+  resolveAuthStorePath,
+  resolveLegacyAuthStorePath,
+  resolveMainAgentDir,
+  resolveMainAuthStorePath,
+} from "./paths.js";
 import type { AuthProfileCredential, AuthProfileStore, ProfileUsageStats } from "./types.js";
 
 type LegacyAuthStore = Record<string, AuthProfileCredential>;
@@ -90,6 +96,30 @@ export async function updateAuthProfileStoreWithLock(params: {
       // (for example, CLI commands in another process) are not overwritten by
       // stale in-memory runtime snapshots.
       const store = loadAuthProfileStoreForRuntime(params.agentDir, {
+        readOnly: true,
+        allowKeychainPrompt: false,
+      });
+      const shouldSave = params.updater(store);
+      if (shouldSave) {
+        saveAuthProfileStore(store, params.agentDir);
+      }
+      return store;
+    });
+  } catch {
+    return null;
+  }
+}
+
+export async function updateAuthProfileStoreFileWithLock(params: {
+  agentDir?: string;
+  updater: (store: AuthProfileStore) => boolean;
+}): Promise<AuthProfileStore | null> {
+  const authPath = resolveAuthStorePath(params.agentDir);
+  ensureAuthStoreFile(authPath);
+
+  try {
+    return await withFileLock(authPath, AUTH_STORE_LOCK_OPTIONS, async () => {
+      const store = loadAuthProfileStoreForAgentFile(params.agentDir, {
         readOnly: true,
         allowKeychainPrompt: false,
       });
@@ -377,7 +407,7 @@ export function loadAuthProfileStore(): AuthProfileStore {
   return store;
 }
 
-function loadAuthProfileStoreForAgent(
+export function loadAuthProfileStoreForAgentFile(
   agentDir?: string,
   options?: LoadAuthProfileStoreOptions,
 ): AuthProfileStore {
@@ -394,9 +424,9 @@ function loadAuthProfileStoreForAgent(
     return asStore;
   }
 
-  // Fallback: inherit auth-profiles from main agent if subagent has none
+  // Fallback: inherit auth-profiles from canonical main agent if a subagent has none.
   if (agentDir && !readOnly) {
-    const mainAuthPath = resolveAuthStorePath(); // without agentDir = main
+    const mainAuthPath = resolveMainAuthStorePath();
     const mainRaw = loadJsonFile(mainAuthPath);
     const mainStore = coerceAuthStore(mainRaw);
     if (mainStore && Object.keys(mainStore.profiles).length > 0) {
@@ -450,14 +480,14 @@ export function loadAuthProfileStoreForRuntime(
   agentDir?: string,
   options?: LoadAuthProfileStoreOptions,
 ): AuthProfileStore {
-  const store = loadAuthProfileStoreForAgent(agentDir, options);
+  const store = loadAuthProfileStoreForAgentFile(agentDir, options);
   const authPath = resolveAuthStorePath(agentDir);
-  const mainAuthPath = resolveAuthStorePath();
+  const mainAuthPath = resolveMainAuthStorePath();
   if (!agentDir || authPath === mainAuthPath) {
     return store;
   }
 
-  const mainStore = loadAuthProfileStoreForAgent(undefined, options);
+  const mainStore = loadAuthProfileStoreForAgentFile(resolveMainAgentDir(), options);
   return mergeAuthProfileStores(mainStore, store);
 }
 
@@ -465,7 +495,10 @@ export function loadAuthProfileStoreForSecretsRuntime(agentDir?: string): AuthPr
   // Secrets runtime snapshots should store the raw per-agent auth file content.
   // Merging main+agent happens in resolveRuntimeAuthProfileStore(), and storing
   // pre-merged snapshots can cause stale main data to override fresher updates.
-  return loadAuthProfileStoreForAgent(agentDir, { readOnly: true, allowKeychainPrompt: false });
+  return loadAuthProfileStoreForAgentFile(agentDir, {
+    readOnly: true,
+    allowKeychainPrompt: false,
+  });
 }
 
 function hydrateResolvedSecretsFromRuntime(params: {
@@ -520,14 +553,14 @@ export function ensureAuthProfileStore(
     return merged;
   }
 
-  const store = loadAuthProfileStoreForAgent(agentDir, options);
+  const store = loadAuthProfileStoreForAgentFile(agentDir, options);
   const authPath = resolveAuthStorePath(agentDir);
-  const mainAuthPath = resolveAuthStorePath();
+  const mainAuthPath = resolveMainAuthStorePath();
   if (!agentDir || authPath === mainAuthPath) {
     return store;
   }
 
-  const mainStore = loadAuthProfileStoreForAgent(undefined, options);
+  const mainStore = loadAuthProfileStoreForAgentFile(resolveMainAgentDir(), options);
   const merged = mergeAuthProfileStores(mainStore, store);
 
   return merged;

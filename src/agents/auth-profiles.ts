@@ -8,12 +8,18 @@ export { resolveAuthProfileDisplayLabel } from "./auth-profiles/display.js";
 export { formatAuthDoctorHint } from "./auth-profiles/doctor.js";
 export { resolveApiKeyForProfile } from "./auth-profiles/oauth.js";
 export { resolveAuthProfileEligibility, resolveAuthProfileOrder } from "./auth-profiles/order.js";
-export { resolveAuthStorePathForDisplay } from "./auth-profiles/paths.js";
+export {
+  resolveAuthStorePathForDisplay,
+  resolveCanonicalAgentDir,
+  resolveMainAgentDir,
+  resolveMainAuthStorePath,
+} from "./auth-profiles/paths.js";
 export {
   dedupeProfileIds,
   listProfilesForProvider,
   markAuthProfileGood,
   setAuthProfileOrder,
+  syncAuthProfile,
   upsertAuthProfile,
   upsertAuthProfileWithLock,
 } from "./auth-profiles/profiles.js";
@@ -40,6 +46,7 @@ export type {
   ProfileUsageStats,
   TokenCredential,
 } from "./auth-profiles/types.js";
+export type { SyncAuthProfileResult } from "./auth-profiles/profiles.js";
 export {
   calculateAuthProfileCooldownMs,
   clearAuthProfileCooldown,

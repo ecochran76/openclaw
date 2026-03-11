@@ -15,6 +15,7 @@ export {
   modelsAuthOrderGetCommand,
   modelsAuthOrderSetCommand,
 } from "./models/auth-order.js";
+export { modelsAuthSyncCommand } from "./models/auth-sync.js";
 export {
   modelsFallbacksAddCommand,
   modelsFallbacksClearCommand,
