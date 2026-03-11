@@ -50,6 +50,15 @@ openclaw onboard --auth-choice openai-codex
 
 # Or run OAuth directly
 openclaw models auth login --provider openai-codex
+
+# Store under an explicit shared profile id
+openclaw models auth login --provider openai-codex --profile-id work
+```
+
+If multiple agents share the same long-lived Codex OAuth profile, you can resync just that profile from the canonical source agent (`main` by default):
+
+```bash
+openclaw models auth sync --profile-id openai-codex:work
 ```
 
 ### Config snippet (Codex subscription)

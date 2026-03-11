@@ -96,6 +96,8 @@ Behavior:
 - If `session.agentToAgent.relay.enabled=true`, OpenClaw can mirror A2A conversation turns into channel targets.
 - `session.agentToAgent.relay.mode="target-only"` mirrors only the target channel; `"dual-channel"` mirrors both requester and target channels.
 - `session.agentToAgent.relay.mirrorTurns="round1"` mirrors the initial request + first reply; `"all"` also mirrors ping-pong turns.
+- `session.agentToAgent.relay.requireDelivery=true` makes required relay delivery strict for synchronous waits: if required relay delivery fails, the tool returns an error instead of silently continuing best-effort.
+- Relay results are returned as structured metadata (`relay.status`, mode/mirror settings, and per-target delivery outcomes). Common statuses are `disabled`, `not_applicable`, `sent`, `partial`, `failed`, `blocked`, and `pending`.
 - In dual-channel relay mode, OpenClaw suppresses the extra target-side announce step to reduce duplicate-looking channel messages.
 - Announce delivery runs after the primary run completes and is best-effort when announce is active; `status: "ok"` does not guarantee the announce was delivered.
 - Waits via gateway `agent.wait` (server-side) so reconnects don't drop the wait.

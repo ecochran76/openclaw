@@ -69,6 +69,7 @@ openclaw models auth add
 openclaw models auth login --provider <id>
 openclaw models auth setup-token
 openclaw models auth paste-token
+openclaw models auth sync --profile-id <id>
 ```
 
 `models auth login` runs a provider plugin’s auth flow (OAuth/API key). Use
@@ -76,6 +77,8 @@ openclaw models auth paste-token
 
 Notes:
 
+- `login --profile-id <id>` lets single-profile OAuth flows store credentials under an explicit profile id (for example `openai-codex:work`).
 - `setup-token` prompts for a setup-token value (generate it with `claude setup-token` on any machine).
 - `paste-token` accepts a token string generated elsewhere or from automation.
+- `sync --profile-id <id>` copies exactly one auth profile from a source agent (`main` by default) into selected agents or all agents without overwriting unrelated profiles/order metadata.
 - Anthropic policy note: setup-token support is technical compatibility. Anthropic has blocked some subscription usage outside Claude Code in the past, so verify current terms before using it broadly.

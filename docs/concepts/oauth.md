@@ -25,6 +25,12 @@ flows. Run them via:
 openclaw models auth login --provider <id>
 ```
 
+Single-profile login flows can also take an explicit profile id override:
+
+```bash
+openclaw models auth login --provider openai-codex --profile-id work
+```
+
 ## The token sink (why it exists)
 
 OAuth providers commonly mint a **new refresh token** during login/refresh flows. Some providers (or OAuth clients) can invalidate older refresh tokens when a new one is issued for the same user/app.
@@ -37,6 +43,7 @@ To reduce that, OpenClaw treats `auth-profiles.json` as a **token sink**:
 
 - the runtime reads credentials from **one place**
 - we can keep multiple profiles and route them deterministically
+- shared long-lived profiles can be resynced across agents without overwriting unrelated auth metadata
 
 ## Storage (where tokens live)
 

@@ -157,6 +157,24 @@ openclaw models auth order clear --provider anthropic
 
 Use `--agent <id>` to target a specific agent; omit it to use the configured default agent.
 
+### Shared OAuth profile sync across agents
+
+When multiple agents share a long-lived OAuth profile (for example `openai-codex:work`), one agent can refresh to a newer refresh token while sibling agents still hold stale copies. That can surface as provider errors such as `refresh_token_reused`.
+
+To resync one profile from the canonical source agent (`main` by default):
+
+```bash
+openclaw models auth sync --profile-id openai-codex:work
+```
+
+To sync from a different source agent into selected targets:
+
+```bash
+openclaw models auth sync --profile-id openai-codex:work --from-agent dev-openclaw --to-agents gpod,dev-slack-export
+```
+
+This command is profile-scoped: it copies only the selected profile and preserves unrelated profiles, order overrides, and usage metadata in the target stores.
+
 ## Troubleshooting
 
 ### “No credentials found”
