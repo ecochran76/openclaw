@@ -33,6 +33,7 @@ export type ApiKeyStorageOptions = {
 
 export type WriteOAuthCredentialsOptions = {
   syncSiblingAgents?: boolean;
+  profileId?: string;
   profileName?: string;
   displayName?: string;
 };
@@ -290,10 +291,13 @@ export async function writeOAuthCredentials(
 ): Promise<string> {
   const email =
     typeof creds.email === "string" && creds.email.trim() ? creds.email.trim() : "default";
-  const profileId = buildAuthProfileId({
-    providerId: provider,
-    profileName: options?.profileName ?? email,
-  });
+  const explicitProfileId = options?.profileId?.trim();
+  const profileId =
+    explicitProfileId ||
+    buildAuthProfileId({
+      providerId: provider,
+      profileName: options?.profileName ?? email,
+    });
   const resolvedAgentDir = path.resolve(resolveAuthAgentDir(agentDir));
   const targetAgentDirs = options?.syncSiblingAgents
     ? resolveSiblingAgentDirs(resolvedAgentDir)
