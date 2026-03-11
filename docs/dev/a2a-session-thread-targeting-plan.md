@@ -102,6 +102,8 @@ That is not enough for workflows driven by:
 - delivery context
 - thread preference
 - recency selection
+- text/label/title-based session lookup
+- natural selectors like "the most recent a2a feature dev session managed by dev-openclaw"
 
 #### 3) Thread-aware routing support exists in lower layers, but is not preserved end-to-end
 
@@ -147,10 +149,12 @@ That means all of the following must work:
 1. Resolve the agent bound to Slack channel `C0AG96MGJTV`
 2. Find that agent's most recent eligible thread-bound session on that channel
 3. Fall back predictably if no thread exists
-4. Send into that exact session key
-5. Preserve the target thread for ingress/relay/announce delivery
-6. Keep follow-up turns bounded for this request
-7. Return enough metadata to explain what was targeted and why
+4. Support richer selectors like "the most recent a2a feature dev session managed by dev-openclaw"
+5. Send into that exact session key
+6. Preserve the target thread for ingress/relay/announce delivery
+7. Keep follow-up turns bounded for this request
+8. Let the user interrupt the A2A workflow at any time with a dedicated command
+9. Return enough metadata to explain what was targeted and why
 
 ## Safety goal: bounded orchestration, not open-ended conversation drift
 
@@ -176,6 +180,9 @@ Required invariants:
    - The new orchestration workflow must not weaken that protection.
 6. **Clear stop semantics**
    - When the turn/time budget is exhausted, the workflow stops and reports that it hit a guardrail instead of silently continuing.
+7. **Human interrupt always wins**
+   - A user-issued A2A stop command must take precedence over any remaining turn/time budget.
+   - After interruption is observed, no new A2A turn should begin for that handoff.
 
 ---
 
@@ -254,10 +261,12 @@ That is not enough for instructions framed around:
 - a thread selection rule like "most recent thread"
 - an agent id constraint
 - a delivery target constraint
+- a textual session descriptor like "a2a feature dev"
+- a management constraint like "managed by dev-openclaw"
 
 ### Proposed change
 
-Extend session resolution so it can target by **delivery identity + thread policy**, not only explicit session identifiers.
+Extend session resolution so it can target by **delivery identity + thread policy + bounded text search**, not only explicit session identifiers.
 
 ### Proposed API shape
 
@@ -273,6 +282,9 @@ Add optional selector fields such as:
   "to": "channel:C0AG96MGJTV",
   "accountId": "default",
   "agentId": "gpod",
+  "search": "a2a feature dev",
+  "searchFields": ["label", "displayName", "derivedTitle", "lastMessage"],
+  "selection": "most-recent",
   "threadPolicy": "most-recent",
   "allowChannelRootFallback": true,
   "activeMinutes": 10080
@@ -286,11 +298,43 @@ Possible new selector fields:
 - `accountId?: string`
 - `agentId?: string`
 - `threadId?: string`
+- `search?: string`
+- `searchFields?: Array<"label" | "displayName" | "derivedTitle" | "lastMessage">`
+- `selection?: "most-recent" | "least-recent"`
 - `threadPolicy?: "exact" | "prefer-thread" | "most-recent" | "channel-root"`
 - `allowChannelRootFallback?: boolean`
 - `activeMinutes?: number`
 
+### Natural selector translation
+
+The resolver does not need to become a giant free-text parser if the caller can translate natural language into structured selector fields.
+
+For example, the request:
+
+> the most recent a2a feature dev session managed by dev-openclaw
+
+can be normalized into something like:
+
+```json
+{
+  "agentId": "dev-openclaw",
+  "search": "a2a feature dev",
+  "searchFields": ["label", "displayName", "derivedTitle", "lastMessage"],
+  "selection": "most-recent",
+  "threadPolicy": "prefer-thread"
+}
+```
+
+That gives the runtime a deterministic contract while still supporting natural user phrasing.
+
 ### Recommended semantics
+
+#### Search / selection semantics
+
+- `search` should be bounded, cheap, and deterministic; prefer indexed/session-summary fields before any expensive transcript reads.
+- `searchFields` lets callers keep the query narrow instead of forcing broad fuzzy matching every time.
+- `selection = "most-recent"` should choose the newest matching session after all filters are applied.
+- if multiple matches remain and no explicit `selection` policy resolves them, return an ambiguity error rather than guessing.
 
 #### `threadPolicy = "exact"`
 
@@ -586,6 +630,111 @@ This is still the same A2A ping-pong engine, just with better guidance.
 
 ---
 
+## Workstream F — Add user interrupt control for active A2A runs
+
+### Problem
+
+Even a bounded multi-turn A2A workflow still needs a **human override**.
+
+If the user decides the handoff is going in the wrong direction, getting expensive, or simply no longer useful, they should be able to stop it immediately without waiting for the turn/time budget to expire.
+
+OpenClaw already has session-level stop/abort plumbing (`/stop` and related abort handling), but that is not yet a first-class A2A-specific control surface.
+
+### Proposed change
+
+Add a dedicated slash/native command for active A2A handoffs.
+
+Recommended first command:
+
+- `/a2a stop`
+
+Optional later commands:
+
+- `/a2a status`
+- `/a2a stop <handoff-id>`
+- `/a2a stop latest`
+
+### Semantics
+
+#### Default targeting behavior
+
+When the user runs `/a2a stop` from:
+
+- the requester thread/session, or
+- the target thread/session
+
+OpenClaw should locate the currently active A2A handoff associated with that conversation context and mark it interrupted.
+
+#### Explicit targeting behavior
+
+If the user provides a handoff id (or later, a stable alias like `latest`), OpenClaw should stop that specific active handoff even if the command is issued from elsewhere.
+
+#### What stop means
+
+Stopping an A2A handoff should:
+
+1. prevent any further ping-pong turns
+2. prevent any additional relay/announce steps for that handoff
+3. best-effort abort any currently waiting/in-flight nested A2A step when the runtime supports it
+4. return a clear acknowledgment that the workflow was interrupted by the user
+
+If immediate low-level abort of an in-flight model step is not always available, the stop flag should still be honored **before any subsequent turn or delivery step**.
+
+### Required runtime support
+
+To make `/a2a stop` reliable, the runtime needs an active handoff registry with entries like:
+
+```ts
+type ActiveA2AHandoff = {
+  handoffId: string;
+  requesterSessionKey: string;
+  targetSessionKey: string;
+  requesterRunId?: string;
+  targetRunId?: string;
+  requesterDeliveryContext?: {
+    channel?: string;
+    to?: string;
+    accountId?: string;
+    threadId?: string | number;
+  };
+  targetDeliveryContext?: {
+    channel?: string;
+    to?: string;
+    accountId?: string;
+    threadId?: string | number;
+  };
+  status: "active" | "stop-requested" | "stopped" | "completed";
+  stopRequestedAt?: number;
+};
+```
+
+The A2A loop should consult this state before each new turn and before post-run announce delivery.
+
+### Why a dedicated command is still worthwhile when `/stop` exists
+
+- `/stop` is session-scoped and should keep its current semantics.
+- `/a2a stop` is handoff-scoped and should stop the bounded A2A workflow without creating ambiguity about which side/session is being stopped.
+- Internally, the implementation can reuse existing abort/command infrastructure where practical.
+
+### Acceptance criteria
+
+- the user can interrupt an active A2A workflow from either participating side
+- repeated `/a2a stop` is idempotent
+- no additional follow-up turn is started after stop is observed
+- post-stop result metadata clearly reports `interrupted_by_user`
+- target pinning and loop budget metadata remain inspectable after interruption
+
+### Primary files
+
+- `src/auto-reply/reply/commands-slash-parse.ts`
+- `src/auto-reply/reply/commands-session-abort.ts`
+- `src/auto-reply/reply/commands.ts`
+- `src/agents/tools/sessions-send-tool.ts`
+- `src/agents/tools/sessions-send-tool.a2a.ts`
+- new active-handoff registry/helper module as needed
+
+---
+
 ## Recommended implementation slices
 
 ## Slice 1 — Finish the control surface + preserve threadId in session metadata
@@ -609,22 +758,38 @@ This is the smallest high-value slice and improves correctness immediately witho
 
 ---
 
-## Slice 2 — Add delivery-target / thread-policy session resolution
+## Slice 2 — Add delivery-target / thread-policy / search-based session resolution
 
 ### Scope
 
 - extend `sessions.resolve` schema + runtime
 - support delivery-target-based lookup
 - support `threadPolicy`
+- support bounded text selectors like `search` + `searchFields`
+- support deterministic match selection like `selection = "most-recent"`
 - return richer resolution metadata
 
 ### Why second
 
-This is the core enabler for "agent in `<#channel>`" + "most recent thread" workflows.
+This is the core enabler for both:
+
+- "agent in `<#channel>`"
+- "the most recent a2a feature dev session managed by dev-openclaw"
 
 ### Acceptance
 
 A caller can resolve:
+
+```json
+{
+  "agentId": "dev-openclaw",
+  "search": "a2a feature dev",
+  "selection": "most-recent",
+  "threadPolicy": "prefer-thread"
+}
+```
+
+into a concrete session key with metadata, and can also resolve:
 
 ```json
 {
@@ -643,12 +808,13 @@ into a concrete thread-bound session key with metadata.
 ### Scope
 
 - allow per-call `maxPingPongTurns`
-- clamp against global config ceiling
+- allow per-call `maxElapsedMs`
+- clamp against global config ceiling(s)
 - expose behavior in docs/tests
 
 ### Why third
 
-This is what makes bounded workflows like "repeat for up to 2 full cycles" deterministic.
+This is what makes bounded workflows like "repeat for up to 2 full cycles" deterministic and cheap.
 
 ### Acceptance
 
@@ -656,7 +822,26 @@ A requester can issue a targeted `sessions_send` and deliberately bound follow-u
 
 ---
 
-## Slice 4 — Strengthen orchestration contract in the reply loop
+## Slice 4 — Add user interrupt control for active A2A workflows
+
+### Scope
+
+- add `/a2a stop` command behavior
+- maintain active handoff registry/state
+- stop future turns/relay/announce when interrupted
+- report `interrupted_by_user` in result metadata
+
+### Why fourth
+
+Bounded automation still needs a human kill switch.
+
+### Acceptance
+
+A user can stop an active A2A workflow from either participating side without waiting for the natural turn/time budget to expire.
+
+---
+
+## Slice 5 — Strengthen orchestration contract in the reply loop
 
 ### Scope
 
@@ -664,9 +849,9 @@ A requester can issue a targeted `sessions_send` and deliberately bound follow-u
 - improve follow-up prompts for instruction/report workflows
 - keep `REPLY_SKIP` semantics unchanged
 
-### Why fourth
+### Why fifth
 
-This is behavior polish after targeting and limits are in place.
+This is behavior polish after targeting, bounds, and interruption are in place.
 
 ### Acceptance
 
@@ -693,11 +878,14 @@ Requester instruction:
 5. The requester agent can continue the follow-up exchange without spawning a separate unrelated channel-root session.
 6. The follow-up loop stops within the configured/requested turn/time budget.
 7. The target session remains pinned for the life of the bounded run; "most recent thread" is not re-evaluated on every turn.
-8. Tool/result metadata explains:
+8. The user can issue `/a2a stop` from either participating side and the workflow halts cleanly.
+9. Tool/result metadata explains:
    - which session was selected
    - whether a thread was selected or root fallback was used
+   - whether search/selection criteria were used (for example `search + selection=most-recent`)
    - how many follow-up turns were allowed and consumed
    - whether a turn/time guardrail ended the workflow
+   - whether the workflow was interrupted by the user
    - relay delivery outcomes
 
 ### Failure cases that should become explicit
@@ -705,10 +893,12 @@ Requester instruction:
 - no agent/session bound to the referenced channel
 - no thread exists and fallback is not allowed
 - multiple possible targets but no selection policy was given
+- search criteria matched nothing
 - relay delivery failed in strict mode
 - turn budget exhausted
 - elapsed-time budget exhausted
 - target-session pin could not be maintained
+- the workflow was interrupted by the user
 
 These should return structured, inspectable failures rather than silent fallback or vague channel behavior.
 
@@ -727,31 +917,39 @@ These should return structured, inspectable failures rather than silent fallback
 5. prefer-thread fallback to root
 6. no thread found without fallback => error
 7. ambiguous channel target => error unless selection policy narrows it
+8. resolve by `agentId + search + selection=most-recent`
+9. resolve natural selector translation for cases like `"the most recent a2a feature dev session managed by dev-openclaw"`
+10. search miss returns explicit not-found/ambiguity result rather than guessing
 
 ### Metadata
 
-8. `sessions_list` includes `deliveryContext.threadId`
-9. `sessions.resolve` returns richer resolution metadata without breaking `key`
-10. announce target resolution preserves thread id from session metadata
+11. `sessions_list` includes `deliveryContext.threadId`
+12. `sessions.resolve` returns richer resolution metadata without breaking `key`
+13. announce target resolution preserves thread id from session metadata
 
 ### A2A behavior
 
-11. ingress echo uses resolved thread id
-12. relay round-1 uses resolved thread id on both sides when applicable
-13. dual-channel mode still suppresses duplicate-looking target announce
-14. per-call `maxPingPongTurns` clamps correctly
-15. per-call `maxElapsedMs` clamps and stops correctly
-16. target session is pinned once selected; no mid-loop re-resolution to a newer thread
-17. `REPLY_SKIP` semantics unchanged
-18. nested-`sessions_send` guard remains unchanged
+14. ingress echo uses resolved thread id
+15. relay round-1 uses resolved thread id on both sides when applicable
+16. dual-channel mode still suppresses duplicate-looking target announce
+17. per-call `maxPingPongTurns` clamps correctly
+18. per-call `maxElapsedMs` clamps and stops correctly
+19. target session is pinned once selected; no mid-loop re-resolution to a newer thread
+20. `/a2a stop` interrupts an active handoff from the requester side
+21. `/a2a stop` interrupts an active handoff from the target side
+22. repeated `/a2a stop` is idempotent
+23. `REPLY_SKIP` semantics unchanged
+24. nested-`sessions_send` guard remains unchanged
 
 ### User-story e2e
 
-19. channel-bound agent + most-recent-thread resolution + bounded follow-up loop works end-to-end
-20. root fallback path works when enabled
-21. explicit failure is returned when no eligible thread exists
-22. explicit `turn_limit_reached` result is returned when the request exhausts its loop budget
-23. explicit `time_limit_reached` result is returned when the request exhausts its elapsed-time budget
+25. channel-bound agent + most-recent-thread resolution + bounded follow-up loop works end-to-end
+26. natural selector (`agentId + search + most-recent`) works end-to-end
+27. root fallback path works when enabled
+28. explicit failure is returned when no eligible thread exists
+29. explicit `turn_limit_reached` result is returned when the request exhausts its loop budget
+30. explicit `time_limit_reached` result is returned when the request exhausts its elapsed-time budget
+31. explicit `interrupted_by_user` result is returned when the user stops the workflow mid-run
 
 ### Suggested files
 
@@ -768,9 +966,11 @@ These should return structured, inspectable failures rather than silent fallback
 1. Land Slice 1 on `ec-main`
 2. Land Slice 2 on `ec-main`
 3. Land Slice 3 on `ec-main`
-4. Validate live using the existing `dev-openclaw -> gpod` path
-5. Validate a real channel-bound thread continuation workflow on Slack
-6. Land Slice 4 only after targeting/limits prove stable
+4. Land Slice 4 on `ec-main`
+5. Validate live using the existing `dev-openclaw -> gpod` path
+6. Validate a real channel-bound thread continuation workflow on Slack
+7. Validate `/a2a stop` from both requester and target sides on a live bounded handoff
+8. Land Slice 5 only after targeting, limits, and interruption prove stable
 
 ---
 
@@ -795,6 +995,6 @@ To make A2A truly useful for real agent orchestration, OpenClaw needs to move fr
 
 to:
 
-- "resolve and continue a specific session, possibly a specific thread, with explicit follow-up bounds"
+- "resolve and continue a specific session, possibly a specific thread, with explicit follow-up bounds and a human interrupt path"
 
 That is the difference between a neat relay feature and a reliable agent-to-agent work coordination tool.
