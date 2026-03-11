@@ -1731,7 +1731,7 @@ describe("sessions tools", () => {
 
     expect(result.details).toMatchObject({
       status: "ok",
-      relay: { status: "pending", mode: "dual-channel", mirrorTurns: "round1" },
+      relay: { status: "sent", mode: "dual-channel", mirrorTurns: "round1" },
     });
 
     await waitForCalls(() => sends.length, 4);
@@ -1747,6 +1747,185 @@ describe("sessions tools", () => {
       true,
     );
     expect(sends).toHaveLength(4);
+  });
+
+  it("sessions_send blocks sync result when strict target-only relay delivery fails", async () => {
+    testConfig.session.agentToAgent.relay.enabled = true;
+    testConfig.session.agentToAgent.relay.mode = "target-only";
+    testConfig.session.agentToAgent.relay.mirrorTurns = "round1";
+    testConfig.session.agentToAgent.relay.requireDelivery = true;
+
+    let agentCallCount = 0;
+    let lastWaitedRunId: string | undefined;
+    const replyByRunId = new Map<string, string>();
+    callGatewayMock.mockImplementation(async (opts: unknown) => {
+      const request = opts as { method?: string; params?: Record<string, unknown> };
+      if (request.method === "send") {
+        throw new Error("relay send failed");
+      }
+      if (request.method === "agent") {
+        agentCallCount += 1;
+        const runId = `run-${agentCallCount}`;
+        const extra = request.params?.extraSystemPrompt as string | undefined;
+        let reply = "done";
+        if (extra?.includes("Agent-to-agent reply step")) {
+          reply = "REPLY_SKIP";
+        }
+        if (extra?.includes("Agent-to-agent announce step")) {
+          reply = "ANNOUNCE_SKIP";
+        }
+        replyByRunId.set(runId, reply);
+        return { runId, status: "accepted", acceptedAt: 12500 + agentCallCount };
+      }
+      if (request.method === "agent.wait") {
+        lastWaitedRunId = request.params?.runId as string | undefined;
+        return { runId: request.params?.runId ?? "run-1", status: "ok" };
+      }
+      if (request.method === "chat.history") {
+        return {
+          messages: [
+            {
+              role: "assistant",
+              content: [
+                {
+                  type: "text",
+                  text: (lastWaitedRunId && replyByRunId.get(lastWaitedRunId)) ?? "done",
+                },
+              ],
+              timestamp: 20,
+            },
+          ],
+        };
+      }
+      return {};
+    });
+
+    const tool = createOpenClawTools({
+      agentSessionKey: "discord:group:req",
+      agentChannel: "discord",
+    }).find((candidate) => candidate.name === "sessions_send");
+    expect(tool).toBeDefined();
+    if (!tool) {
+      throw new Error("missing sessions_send tool");
+    }
+
+    const result = await tool.execute("call-relay-strict-target", {
+      sessionKey: "discord:group:target",
+      message: "ping",
+      timeoutSeconds: 1,
+    });
+
+    expect(result.details).toMatchObject({
+      status: "error",
+      error: "Required relay delivery failed.",
+      relay: {
+        status: "blocked",
+        mode: "target-only",
+        mirrorTurns: "round1",
+        targets: [
+          {
+            role: "target",
+            status: "blocked",
+            error: "relay send failed",
+          },
+        ],
+      },
+    });
+  });
+
+  it("sessions_send reports partial relay success in dual-channel best-effort mode", async () => {
+    testConfig.session.agentToAgent.relay.enabled = true;
+    testConfig.session.agentToAgent.relay.mode = "dual-channel";
+    testConfig.session.agentToAgent.relay.mirrorTurns = "round1";
+    testConfig.session.agentToAgent.relay.requireDelivery = false;
+
+    const sends: Array<{ to?: string; channel?: string; message?: string }> = [];
+    let agentCallCount = 0;
+    let lastWaitedRunId: string | undefined;
+    const replyByRunId = new Map<string, string>();
+    callGatewayMock.mockImplementation(async (opts: unknown) => {
+      const request = opts as { method?: string; params?: Record<string, unknown> };
+      if (request.method === "send") {
+        const to = request.params?.to as string | undefined;
+        if (to === "channel:req") {
+          throw new Error("source relay failed");
+        }
+        sends.push({
+          to,
+          channel: request.params?.channel as string | undefined,
+          message: request.params?.message as string | undefined,
+        });
+        return { messageId: `m-${sends.length}` };
+      }
+      if (request.method === "agent") {
+        agentCallCount += 1;
+        const runId = `run-${agentCallCount}`;
+        const extra = request.params?.extraSystemPrompt as string | undefined;
+        let reply = "done";
+        if (extra?.includes("Agent-to-agent reply step")) {
+          reply = "REPLY_SKIP";
+        }
+        if (extra?.includes("Agent-to-agent announce step")) {
+          reply = "ANNOUNCE_SKIP";
+        }
+        replyByRunId.set(runId, reply);
+        return { runId, status: "accepted", acceptedAt: 12700 + agentCallCount };
+      }
+      if (request.method === "agent.wait") {
+        lastWaitedRunId = request.params?.runId as string | undefined;
+        return { runId: request.params?.runId ?? "run-1", status: "ok" };
+      }
+      if (request.method === "chat.history") {
+        return {
+          messages: [
+            {
+              role: "assistant",
+              content: [
+                {
+                  type: "text",
+                  text: (lastWaitedRunId && replyByRunId.get(lastWaitedRunId)) ?? "done",
+                },
+              ],
+              timestamp: 20,
+            },
+          ],
+        };
+      }
+      return {};
+    });
+
+    const tool = createOpenClawTools({
+      agentSessionKey: "discord:group:req",
+      agentChannel: "discord",
+    }).find((candidate) => candidate.name === "sessions_send");
+    expect(tool).toBeDefined();
+    if (!tool) {
+      throw new Error("missing sessions_send tool");
+    }
+
+    const result = await tool.execute("call-relay-partial", {
+      sessionKey: "discord:group:target",
+      message: "ping",
+      timeoutSeconds: 1,
+    });
+
+    expect(result.details).toMatchObject({
+      status: "ok",
+      relay: {
+        status: "partial",
+        mode: "dual-channel",
+        mirrorTurns: "round1",
+      },
+    });
+    expect(
+      (result.details as { relay?: { targets?: Array<{ role?: string; status?: string }> } }).relay
+        ?.targets,
+    ).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({ role: "source", status: "failed" }),
+        expect.objectContaining({ role: "target", status: "sent" }),
+      ]),
+    );
   });
 
   it("sessions_send relay verbosity full-payload includes handoff metadata", async () => {
