@@ -21,7 +21,11 @@ import {
   shouldPersistRuntimeExternalOAuthProfile,
   type RuntimeExternalOAuthProfile,
 } from "./oauth-shared.js";
-import { resolveAuthStorePath } from "./paths.js";
+import {
+  resolveAuthStorePath,
+  resolveMainAgentDir,
+  resolveMainAuthStorePath,
+} from "./paths.js";
 import {
   buildPersistedAuthProfileSecretsStore,
   loadPersistedAuthProfileStore,
@@ -222,7 +226,7 @@ function resolveRuntimeAuthProfileStore(
     });
   }
   if (requestedStore) {
-    const persistedMainStore = loadAuthProfileStoreForAgent(undefined, {
+    const persistedMainStore = loadAuthProfileStoreForAgentFile(undefined, {
       readOnly: true,
       syncExternalCli: false,
       ...resolvePersistedLoadOptions(options),
@@ -747,7 +751,7 @@ export async function updateAuthProfileStoreWithLock(params: {
 }): Promise<AuthProfileStore | null> {
   try {
     return runAuthProfileWriteTransaction(params.agentDir, (database) => {
-      const store = loadAuthProfileStoreForAgent(params.agentDir, {
+      const store = loadAuthProfileStoreForAgentFile(params.agentDir, {
         database,
         readOnly: true,
         syncExternalCli: false,
@@ -763,6 +767,15 @@ export async function updateAuthProfileStoreWithLock(params: {
   }
 }
 
+/** Apply an auth store file update inside the SQLite write lock. */
+export async function updateAuthProfileStoreFileWithLock(params: {
+  agentDir?: string;
+  saveOptions?: SaveAuthProfileStoreOptions;
+  updater: (store: AuthProfileStore) => boolean;
+}): Promise<AuthProfileStore | null> {
+  return await updateAuthProfileStoreWithLock(params);
+}
+
 /** Load the main auth profile store with runtime external profiles overlaid. */
 export function loadAuthProfileStore(): AuthProfileStore {
   const asStore = loadPersistedAuthProfileStore();
@@ -774,7 +787,7 @@ export function loadAuthProfileStore(): AuthProfileStore {
   return overlayExternalAuthProfiles(markRuntimePersistedProfiles(store));
 }
 
-function loadAuthProfileStoreForAgent(
+export function loadAuthProfileStoreForAgentFile(
   agentDir?: string,
   options?: LoadAuthProfileStoreOptions,
 ): AuthProfileStore {
@@ -814,9 +827,9 @@ export function loadAuthProfileStoreForRuntime(
   agentDir?: string,
   options?: LoadAuthProfileStoreOptions,
 ): AuthProfileStore {
-  const store = loadAuthProfileStoreForAgent(agentDir, options);
+  const store = loadAuthProfileStoreForAgentFile(agentDir, options);
   const authPath = resolveAuthStorePath(agentDir);
-  const mainAuthPath = resolveAuthStorePath();
+  const mainAuthPath = resolveMainAuthStorePath();
   const externalCli = resolveExternalCliOverlayOptions(options);
   if (!agentDir || authPath === mainAuthPath) {
     return overlayExternalAuthProfiles(store, {
@@ -825,7 +838,7 @@ export function loadAuthProfileStoreForRuntime(
     });
   }
 
-  const mainStore = loadAuthProfileStoreForAgent(undefined, options);
+  const mainStore = loadAuthProfileStoreForAgentFile(resolveMainAgentDir(), options);
   return overlayExternalAuthProfiles(
     mergeAuthProfileStores(mainStore, store, {
       preserveBaseRuntimeExternalProfiles: true,
@@ -846,9 +859,8 @@ export function loadAuthProfileStoreForSecretsRuntime(
   >,
 ): AuthProfileStore {
   // Secrets runtime snapshots should store the raw per-agent auth file content.
-  // Merging main+agent happens in resolveRuntimeAuthProfileStore(), and storing
-  // pre-merged snapshots can cause stale main data to override fresher updates.
-  return loadAuthProfileStoreForAgent(agentDir, {
+  // Merging main+agent happens in resolveRuntimeAuthProfileStore().
+  return loadAuthProfileStoreForAgentFile(agentDir, {
     ...options,
     readOnly: true,
     allowKeychainPrompt: false,
@@ -864,14 +876,14 @@ export function loadAuthProfileStoreWithoutExternalProfiles(
     readOnly: true,
     allowKeychainPrompt: loadOptions?.allowKeychainPrompt ?? false,
   };
-  const store = loadAuthProfileStoreForAgent(agentDir, options);
+  const store = loadAuthProfileStoreForAgentFile(agentDir, options);
   const authPath = resolveAuthStorePath(agentDir);
-  const mainAuthPath = resolveAuthStorePath();
+  const mainAuthPath = resolveMainAuthStorePath();
   if (!agentDir || authPath === mainAuthPath) {
     return stripRuntimeExternalProfileMetadata(store);
   }
 
-  const mainStore = loadAuthProfileStoreForAgent(undefined, options);
+  const mainStore = loadAuthProfileStoreForAgentFile(resolveMainAgentDir(), options);
   return stripRuntimeExternalProfileMetadata(
     mergeAuthProfileStores(mainStore, store, {
       preserveBaseRuntimeExternalProfiles: true,
@@ -975,14 +987,14 @@ export function ensureAuthProfileStoreWithoutExternalProfiles(
     });
     return merged;
   }
-  const store = loadAuthProfileStoreForAgent(agentDir, effectiveOptions);
+  const store = loadAuthProfileStoreForAgentFile(agentDir, effectiveOptions);
   const authPath = resolveAuthStorePath(agentDir);
-  const mainAuthPath = resolveAuthStorePath();
+  const mainAuthPath = resolveMainAuthStorePath();
   if (!agentDir || authPath === mainAuthPath) {
     return stripRuntimeExternalProfileMetadata(store);
   }
 
-  const mainStore = loadAuthProfileStoreForAgent(undefined, effectiveOptions);
+  const mainStore = loadAuthProfileStoreForAgentFile(resolveMainAgentDir(), effectiveOptions);
   return stripRuntimeExternalProfileMetadata(
     mergeAuthProfileStores(mainStore, store, {
       preserveBaseRuntimeExternalProfiles: true,
@@ -1042,14 +1054,14 @@ export function resolvePersistedAuthProfileOwnerAgentDir(params: {
 /** Load the store shape used when applying local-only auth updates. */
 export function ensureAuthProfileStoreForLocalUpdate(agentDir?: string): AuthProfileStore {
   const options: LoadAuthProfileStoreOptions = { syncExternalCli: false };
-  const store = loadAuthProfileStoreForAgent(agentDir, options);
+  const store = loadAuthProfileStoreForAgentFile(agentDir, options);
   const authPath = resolveAuthStorePath(agentDir);
-  const mainAuthPath = resolveAuthStorePath();
+  const mainAuthPath = resolveMainAuthStorePath();
   if (!agentDir || authPath === mainAuthPath) {
     return store;
   }
 
-  const mainStore = loadAuthProfileStoreForAgent(undefined, {
+  const mainStore = loadAuthProfileStoreForAgentFile(resolveMainAgentDir(), {
     readOnly: true,
     syncExternalCli: false,
   });

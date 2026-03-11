@@ -16,6 +16,7 @@ import { loadPersistedAuthProfileStore } from "./persisted.js";
 import {
   clearLastGoodProfileWithLock,
   promoteAuthProfileInOrder,
+  syncAuthProfile,
   upsertAuthProfileWithLock,
 } from "./profiles.js";
 import {
@@ -600,5 +601,105 @@ describe("promoteAuthProfileInOrder", () => {
 
       expect(loadAuthProfileStoreForRuntime(agentDir).lastGood?.["openai"]).toBe(goodProfileId);
     });
+  });
+});
+
+describe("syncAuthProfile", () => {
+  function writeStore(agentDir: string, store: AuthProfileStore) {
+    fs.writeFileSync(path.join(agentDir, "auth-profiles.json"), JSON.stringify(store));
+  }
+
+  function readStore(agentDir: string): AuthProfileStore {
+    return JSON.parse(fs.readFileSync(path.join(agentDir, "auth-profiles.json"), "utf8"));
+  }
+
+  it("syncs one profile without clobbering unrelated target metadata", async () => {
+    const tempRoot = fs.mkdtempSync(path.join(os.tmpdir(), "openclaw-auth-profile-sync-"));
+    const mainAgentDir = path.join(tempRoot, "agents", "main", "agent");
+    const kidAgentDir = path.join(tempRoot, "agents", "kid", "agent");
+    const previousStateDir = process.env.OPENCLAW_STATE_DIR;
+    const previousAgentDir = process.env.OPENCLAW_AGENT_DIR;
+    const previousPiAgentDir = process.env.PI_CODING_AGENT_DIR;
+    try {
+      fs.mkdirSync(mainAgentDir, { recursive: true });
+      fs.mkdirSync(kidAgentDir, { recursive: true });
+      process.env.OPENCLAW_STATE_DIR = tempRoot;
+      process.env.OPENCLAW_AGENT_DIR = mainAgentDir;
+      process.env.PI_CODING_AGENT_DIR = mainAgentDir;
+
+      writeStore(mainAgentDir, {
+        version: 1,
+        profiles: {
+          "openai-codex:work": {
+            type: "oauth",
+            provider: "openai-codex",
+            access: "fresh-access",
+            refresh: "fresh-refresh",
+            expires: Date.now() + 60_000,
+          },
+        },
+        lastGood: { "openai-codex": "openai-codex:work" },
+      });
+
+      writeStore(kidAgentDir, {
+        version: 1,
+        profiles: {
+          "anthropic:default": {
+            type: "api_key",
+            provider: "anthropic",
+            key: "anthropic-key",
+          },
+        },
+        order: { anthropic: ["anthropic:default"] },
+        lastGood: { anthropic: "anthropic:default" },
+        usageStats: {
+          "anthropic:default": { lastUsed: 1234 },
+        },
+      });
+
+      const result = await syncAuthProfile({
+        profileId: "openai-codex:work",
+        sourceAgentDir: mainAgentDir,
+        targetAgentDirs: [kidAgentDir, mainAgentDir],
+      });
+
+      expect(result.updatedAgentDirs).toEqual([path.resolve(kidAgentDir)]);
+      expect(result.skippedAgentDirs).toEqual([path.resolve(mainAgentDir)]);
+
+      const updatedKid = loadAuthProfileStoreForRuntime(kidAgentDir);
+      expect(updatedKid.profiles["openai-codex:work"]).toMatchObject({
+        type: "oauth",
+        provider: "openai-codex",
+        access: "fresh-access",
+        refresh: "fresh-refresh",
+      });
+      expect(updatedKid.profiles["anthropic:default"]).toMatchObject({
+        type: "api_key",
+        provider: "anthropic",
+        key: "anthropic-key",
+      });
+      expect(updatedKid.order).toEqual({ anthropic: ["anthropic:default"] });
+      expect(updatedKid.lastGood).toMatchObject({ anthropic: "anthropic:default" });
+      expect(updatedKid.usageStats).toMatchObject({
+        "anthropic:default": { lastUsed: 1234 },
+      });
+    } finally {
+      if (previousStateDir === undefined) {
+        delete process.env.OPENCLAW_STATE_DIR;
+      } else {
+        process.env.OPENCLAW_STATE_DIR = previousStateDir;
+      }
+      if (previousAgentDir === undefined) {
+        delete process.env.OPENCLAW_AGENT_DIR;
+      } else {
+        process.env.OPENCLAW_AGENT_DIR = previousAgentDir;
+      }
+      if (previousPiAgentDir === undefined) {
+        delete process.env.PI_CODING_AGENT_DIR;
+      } else {
+        process.env.PI_CODING_AGENT_DIR = previousPiAgentDir;
+      }
+      fs.rmSync(tempRoot, { recursive: true, force: true });
+    }
   });
 });

@@ -32,6 +32,9 @@ export {
 export {
   resolveAuthStatePathForDisplay,
   resolveAuthStorePathForDisplay,
+  resolveCanonicalAgentDir,
+  resolveMainAgentDir,
+  resolveMainAuthStorePath,
 } from "./auth-profiles/paths.js";
 export {
   dedupeProfileIds,
@@ -40,6 +43,7 @@ export {
   removeProviderAuthProfilesWithLock,
   resolveSubscriptionAuthModeForProfiles,
   setAuthProfileOrder,
+  syncAuthProfile,
   upsertAuthProfile,
   upsertAuthProfileWithLock,
 } from "./auth-profiles/profiles.js";
@@ -83,6 +87,7 @@ export type {
   ProfileUsageStats,
   TokenCredential,
 } from "./auth-profiles/types.js";
+export type { SyncAuthProfileResult } from "./auth-profiles/profiles.js";
 export {
   calculateAuthProfileCooldownMs,
   clearAuthProfileCooldown,
