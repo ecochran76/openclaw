@@ -80,6 +80,17 @@ function readSessionRunStatus(value: unknown): SessionRunStatus | undefined {
     : undefined;
 }
 
+function normalizeThreadId(value: unknown): string | undefined {
+  if (typeof value === "number" && Number.isFinite(value)) {
+    return String(Math.trunc(value));
+  }
+  if (typeof value === "string") {
+    const trimmed = value.trim();
+    return trimmed || undefined;
+  }
+  return undefined;
+}
+
 /** Creates the sessions-list tool with gateway-backed listing and local transcript enrichment. */
 export function createSessionsListTool(opts?: {
   agentSessionKey?: string;
@@ -219,12 +230,7 @@ export function createSessionsListTool(opts?: {
         const deliveryChannel = readStringValue(deliveryContext?.channel);
         const deliveryTo = readStringValue(deliveryContext?.to);
         const deliveryAccountId = readStringValue(deliveryContext?.accountId);
-        const deliveryThreadId =
-          typeof deliveryContext?.threadId === "string" ||
-          (typeof deliveryContext?.threadId === "number" &&
-            Number.isFinite(deliveryContext.threadId))
-            ? deliveryContext.threadId
-            : undefined;
+        const deliveryThreadId = normalizeThreadId(deliveryContext?.threadId);
         const lastChannel = deliveryChannel ?? readStringValue(entry.lastChannel);
         const lastAccountId = deliveryAccountId ?? readStringValue(entry.lastAccountId);
         const derivedChannel = deriveChannel({

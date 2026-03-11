@@ -487,6 +487,11 @@ describe("sessions tools", () => {
               childSessions: ["agent:main:subagent:worker"],
               derivedTitle: "Dev room",
               lastMessagePreview: "Need review on the patch",
+              deliveryContext: {
+                channel: "discord",
+                to: "channel:dev",
+                threadId: 999,
+              },
             },
             {
               key: "agent:main:dashboard:child",
@@ -569,6 +574,7 @@ describe("sessions tools", () => {
         estimatedCostUsd?: number;
         childSessions?: string[];
         parentSessionKey?: string;
+        deliveryContext?: { channel?: string; threadId?: string; to?: string };
         messages?: Array<{ role?: string }>;
       }>;
     };
@@ -589,6 +595,11 @@ describe("sessions tools", () => {
     expect(group?.childSessions).toEqual(["agent:main:subagent:worker"]);
     expect(group?.derivedTitle).toBe("Dev room");
     expect(group?.lastMessagePreview).toBe("Need review on the patch");
+    expect(group?.deliveryContext).toEqual({
+      channel: "discord",
+      to: "channel:dev",
+      threadId: "999",
+    });
 
     const dashboardChild = details.sessions?.find((s) => s.key === "agent:main:dashboard:child");
     expect(dashboardChild?.parentSessionKey).toBe("agent:main:main");

@@ -349,7 +349,7 @@ describe("resolveAnnounceTarget", () => {
     expect(callGatewayMock).not.toHaveBeenCalled();
   });
 
-  it("hydrates WhatsApp accountId from sessions.list when available", async () => {
+  it("hydrates WhatsApp accountId and threadId from sessions.list when available", async () => {
     callGatewayMock.mockResolvedValueOnce({
       sessions: [
         {
