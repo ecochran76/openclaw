@@ -224,7 +224,14 @@ Validation run on the rebased branch:
 
 - ✅ `ui/src/ui/views/agents-utils.test.ts` — 15 passed
 - ✅ `src/gateway/server.sessions.gateway-server-sessions-a.test.ts` — 22 passed
-- ⚠️ `src/agents/tools/sessions.test.ts` and `src/agents/openclaw-tools.sessions.test.ts` currently fail on the rebased branch in transcript-path/session-list assertions; these failures are outside the UI conflict fix and should be handled as separate session-tool follow-up work
+- ✅ `src/agents/tools/sessions.test.ts` — 18 passed after fixing explicit test-config injection for the cross-agent transcript-path cases
+- ✅ `src/agents/openclaw-tools.sessions.test.ts` — 33 passed after threading explicit config into session tools created via `createOpenClawTools(...)`
+
+Follow-up fixes made after the initial UI rebase repair:
+
+- fixed a `sessions_send` cross-agent allowlist check typo (`requesterResolutionAgentId` vs an out-of-scope requester variable)
+- allowed `sessions_list`, `sessions_history`, and `sessions_send` to use an explicitly injected config when constructed via `createOpenClawTools(...)`
+- updated the focused session-tool tests to stop depending on brittle global mock ordering for config state
 
 Net result:
 

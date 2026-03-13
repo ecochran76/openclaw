@@ -5,6 +5,7 @@ import path from "node:path";
 import { MAX_TIMER_TIMEOUT_MS } from "@openclaw/normalization-core/number-coercion";
 import { beforeAll, beforeEach, describe, expect, it, vi } from "vitest";
 import type { ChannelMessagingAdapter } from "../../channels/plugins/types.js";
+import type { OpenClawConfig } from "../../config/config.js";
 import { createTestRegistry } from "../../test-utils/channel-plugins.js";
 import { withEnvAsync } from "../../test-utils/env.js";
 import { extractAssistantText, sanitizeTextContent } from "./chat-history-text.js";
@@ -14,13 +15,7 @@ vi.mock("../../gateway/call.js", () => ({
   callGateway: (opts: unknown) => callGatewayMock(opts),
 }));
 
-type SessionsToolTestConfig = {
-  session: { scope: "per-sender"; mainKey: string };
-  tools: {
-    agentToAgent: { enabled: boolean };
-    sessions?: { visibility: "self" | "tree" | "agent" | "all" };
-  };
-};
+type SessionsToolTestConfig = Pick<OpenClawConfig, "session" | "tools">;
 
 const loadConfigMock = vi.fn<() => SessionsToolTestConfig>(() => ({
   session: { scope: "per-sender", mainKey: "main" },
@@ -191,18 +186,19 @@ const installRegistry = async () => {
   );
 };
 
-function createMainSessionsListTool() {
-  return createSessionsListTool({ agentSessionKey: MAIN_AGENT_SESSION_KEY });
+function createMainSessionsListTool(config?: SessionsToolTestConfig) {
+  return createSessionsListTool({ agentSessionKey: MAIN_AGENT_SESSION_KEY, config });
 }
 
-async function executeMainSessionsList() {
-  return createMainSessionsListTool().execute("call1", {});
+async function executeMainSessionsList(config?: SessionsToolTestConfig) {
+  return createMainSessionsListTool(config).execute("call1", {});
 }
 
-function createMainSessionsSendTool() {
+function createMainSessionsSendTool(config?: SessionsToolTestConfig) {
   return createSessionsSendTool({
     agentSessionKey: MAIN_AGENT_SESSION_KEY,
     agentChannel: MAIN_AGENT_CHANNEL,
+    config,
   });
 }
 
@@ -621,16 +617,17 @@ describe("sessions_list gating", () => {
   });
 });
 
+const crossAgentVisibleConfig: SessionsToolTestConfig = {
+  session: { scope: "per-sender", mainKey: "main" },
+  tools: {
+    agentToAgent: { enabled: true },
+    sessions: { visibility: "all" },
+  },
+};
+
 describe("sessions_list transcriptPath resolution", () => {
   beforeEach(() => {
     callGatewayMock.mockClear();
-    loadConfigMock.mockReturnValue({
-      session: { scope: "per-sender", mainKey: "main" },
-      tools: {
-        agentToAgent: { enabled: true },
-        sessions: { visibility: "all" },
-      },
-    });
   });
 
   it("resolves cross-agent transcript paths from agent defaults when gateway store path is relative", async () => {
@@ -645,7 +642,7 @@ describe("sessions_list transcriptPath resolution", () => {
           },
         ],
       });
-      const result = await executeMainSessionsList();
+      const result = await executeMainSessionsList(crossAgentVisibleConfig);
       expectWorkerTranscriptPath(result, {
         containsPath: path.join("agents", "worker", "sessions"),
         sessionId: "sess-worker",
@@ -664,7 +661,7 @@ describe("sessions_list transcriptPath resolution", () => {
           },
         ],
       });
-      const result = await executeMainSessionsList();
+      const result = await executeMainSessionsList(crossAgentVisibleConfig);
       expectWorkerTranscriptPath(result, {
         containsPath: path.join("agents", "worker", "sessions"),
         sessionId: "sess-worker-no-path",
@@ -684,7 +681,7 @@ describe("sessions_list transcriptPath resolution", () => {
           },
         ],
       });
-      const result = await executeMainSessionsList();
+      const result = await executeMainSessionsList(crossAgentVisibleConfig);
       expectWorkerTranscriptPath(result, {
         containsPath: path.join("agents", "worker", "sessions"),
         sessionId: "sess-worker-shape",
@@ -704,7 +701,7 @@ describe("sessions_list transcriptPath resolution", () => {
           },
         ],
       });
-      const result = await executeMainSessionsList();
+      const result = await executeMainSessionsList(crossAgentVisibleConfig);
       expectWorkerTranscriptPath(result, {
         containsPath: path.join(stateDir, "agents", "worker", "sessions"),
         sessionId: "sess-worker-multiple",
@@ -725,7 +722,7 @@ describe("sessions_list transcriptPath resolution", () => {
         },
       ],
     });
-    const result = await executeMainSessionsList();
+    const result = await executeMainSessionsList(crossAgentVisibleConfig);
     const expectedSessionsDir = path.dirname(templateStorePath.replace("{agentId}", "worker"));
     expectWorkerTranscriptPath(result, {
       containsPath: expectedSessionsDir,
