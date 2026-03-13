@@ -17,8 +17,10 @@ export {
   isReplySkip,
 } from "./sessions-send-tokens.js";
 
-const DEFAULT_AGENTNG_PONG_TURNS = 5;
+const DEFAULT_PING_PONG_TURNS = 5;
 const MAX_PING_PONG_TURNS = 20;
+const MAX_A2A_TIMEOUT_SECONDS = 300;
+const DEFAULT_A2A_TIMEOUT_SECONDS = 30;
 
 export type IngressEchoPolicy = {
   enabled: boolean;
@@ -143,15 +145,28 @@ export function buildAgentToAgentAnnounceContext(params: {
   return lines.join("\n");
 }
 
-/** Resolves the configured A2A ping-pong turn limit with a hard runtime cap. */
-export function resolvePingPongTurns(cfg?: OpenClawConfig) {
-  const raw = cfg?.session?.agentToAgent?.maxPingPongTurns;
-  const fallback = DEFAULT_AGENTNG_PONG_TURNS;
+/** Clamps an A2A ping-pong turn limit with a hard runtime cap. */
+export function clampPingPongTurns(raw: number | undefined, fallback = DEFAULT_PING_PONG_TURNS) {
   if (typeof raw !== "number" || !Number.isFinite(raw)) {
     return fallback;
   }
   const rounded = Math.floor(raw);
   return Math.max(0, Math.min(MAX_PING_PONG_TURNS, rounded));
+}
+
+export function resolvePingPongTurns(cfg?: OpenClawConfig) {
+  return clampPingPongTurns(cfg?.session?.agentToAgent?.maxPingPongTurns, DEFAULT_PING_PONG_TURNS);
+}
+
+export function clampA2ATimeoutSeconds(
+  raw: number | undefined,
+  fallback = DEFAULT_A2A_TIMEOUT_SECONDS,
+) {
+  if (typeof raw !== "number" || !Number.isFinite(raw)) {
+    return fallback;
+  }
+  const rounded = Math.floor(raw);
+  return Math.max(1, Math.min(MAX_A2A_TIMEOUT_SECONDS, rounded));
 }
 
 export function resolveIngressEchoPolicy(cfg?: OpenClawConfig): IngressEchoPolicy {

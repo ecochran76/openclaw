@@ -124,10 +124,11 @@ export const handleStopCommand: CommandHandler = async (params, allowTextCommand
   if (!allowTextCommands) {
     return null;
   }
-  if (params.command.commandBodyNormalized !== "/stop") {
+  const normalized = params.command.commandBodyNormalized;
+  if (normalized !== "/stop" && normalized !== "/a2a stop") {
     return null;
   }
-  const unauthorizedStop = rejectUnauthorizedCommand(params, "/stop");
+  const unauthorizedStop = rejectUnauthorizedCommand(params, normalized);
   if (unauthorizedStop) {
     return unauthorizedStop;
   }

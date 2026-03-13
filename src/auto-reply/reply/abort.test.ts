@@ -44,6 +44,9 @@ const subagentRegistryMocks = vi.hoisted(() => ({
   listSubagentRunsForRequester: vi.fn<(requesterSessionKey: string) => SubagentRunRecord[]>(
     () => [],
   ),
+  listSubagentRunsForController: vi.fn<(requesterSessionKey: string) => SubagentRunRecord[]>(
+    () => [],
+  ),
   getLatestSubagentRunByChildSessionKey: vi.fn<
     (childSessionKey: string) => SubagentRunRecord | null
   >(() => null),
@@ -54,7 +57,7 @@ vi.mock("../../agents/subagent-registry.js", () => ({
   getLatestSubagentRunByChildSessionKey:
     subagentRegistryMocks.getLatestSubagentRunByChildSessionKey,
   listSubagentRunsForRequester: subagentRegistryMocks.listSubagentRunsForRequester,
-  listSubagentRunsForController: subagentRegistryMocks.listSubagentRunsForRequester,
+  listSubagentRunsForController: subagentRegistryMocks.listSubagentRunsForController,
   markSubagentRunTerminated: subagentRegistryMocks.markSubagentRunTerminated,
 }));
 
@@ -128,11 +131,13 @@ describe("abort detection", () => {
     targetSessionKey?: string;
     messageSid?: string;
     timestamp?: number;
+    commandBody?: string;
   }) {
+    const commandBody = params.commandBody ?? "/stop";
     return tryFastAbortFromMessage({
       ctx: buildTestCtx({
-        CommandBody: "/stop",
-        RawBody: "/stop",
+        CommandBody: commandBody,
+        RawBody: commandBody,
         CommandAuthorized: true,
         Provider: "telegram",
         Surface: "telegram",
@@ -198,7 +203,7 @@ describe("abort detection", () => {
       resolveActiveEmbeddedRunSessionId: runtimeAbortMocks.resolveActiveEmbeddedRunSessionId,
       getLatestSubagentRunByChildSessionKey:
         subagentRegistryMocks.getLatestSubagentRunByChildSessionKey,
-      listSubagentRunsForController: subagentRegistryMocks.listSubagentRunsForRequester,
+      listSubagentRunsForController: subagentRegistryMocks.listSubagentRunsForController,
       markSubagentRunTerminated: subagentRegistryMocks.markSubagentRunTerminated,
     });
     queueCleanupTesting.setDepsForTests({
@@ -219,6 +224,8 @@ describe("abort detection", () => {
     acpManagerMocks.cancelSession.mockReset().mockResolvedValue(undefined);
     runtimeAbortMocks.abortEmbeddedAgentRun.mockReset().mockReturnValue(true);
     runtimeAbortMocks.resolveActiveEmbeddedRunSessionId.mockReset().mockReturnValue(undefined);
+    subagentRegistryMocks.listSubagentRunsForRequester.mockReset().mockReturnValue([]);
+    subagentRegistryMocks.listSubagentRunsForController.mockReset().mockReturnValue([]);
     subagentRegistryMocks.getLatestSubagentRunByChildSessionKey.mockReset().mockReturnValue(null);
   });
 
@@ -1112,6 +1119,27 @@ describe("abort detection", () => {
     expect(entry.abortCutoffTimestamp).toBeUndefined();
   });
 
+  it("treats /a2a stop as a stop alias", async () => {
+    const sessionKey = "telegram:123";
+    const sessionId = "session-123";
+    const { storePath, cfg } = await createAbortConfig({
+      sessionIdsByKey: { [sessionKey]: sessionId },
+    });
+
+    const result = await runStopCommand({
+      cfg,
+      sessionKey,
+      from: "telegram:123",
+      to: "telegram:123",
+      commandBody: "/a2a stop",
+    });
+
+    expect(result.handled).toBe(true);
+    const store = JSON.parse(await fs.readFile(storePath, "utf8")) as Record<string, unknown>;
+    const entry = store[sessionKey] as { abortedLastRun?: boolean };
+    expect(entry.abortedLastRun).toBe(true);
+  });
+
   it("fast-abort stops active subagent runs for requester session", async () => {
     const sessionKey = "telegram:parent";
     const childKey = "agent:main:subagent:child-1";
@@ -1124,7 +1152,7 @@ describe("abort detection", () => {
       },
     });
 
-    subagentRegistryMocks.listSubagentRunsForRequester.mockReturnValueOnce([
+    subagentRegistryMocks.listSubagentRunsForController.mockReturnValueOnce([
       {
         runId: "run-1",
         childSessionKey: childKey,
@@ -1165,7 +1193,7 @@ describe("abort detection", () => {
     // First call: main session lists depth-1 children
     // Second call (cascade): depth-1 session lists depth-2 children
     // Third call (cascade from depth-2): no further children
-    subagentRegistryMocks.listSubagentRunsForRequester
+    subagentRegistryMocks.listSubagentRunsForController
       .mockReturnValueOnce([
         {
           runId: "run-1",
@@ -1204,7 +1232,7 @@ describe("abort detection", () => {
   });
 
   it("cascade stop traverses ended depth-1 parents to stop active depth-2 children", async () => {
-    subagentRegistryMocks.listSubagentRunsForRequester.mockClear();
+    subagentRegistryMocks.listSubagentRunsForController.mockClear();
     subagentRegistryMocks.markSubagentRunTerminated.mockClear();
     const sessionKey = "telegram:parent";
     const depth1Key = "agent:main:subagent:child-ended";
@@ -1222,7 +1250,7 @@ describe("abort detection", () => {
     // main -> ended depth-1 parent
     // depth-1 parent -> active depth-2 child
     // depth-2 child -> none
-    subagentRegistryMocks.listSubagentRunsForRequester
+    subagentRegistryMocks.listSubagentRunsForController
       .mockReturnValueOnce([
         {
           runId: "run-1",

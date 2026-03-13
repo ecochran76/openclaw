@@ -80,7 +80,9 @@ export function isAbortRequestText(text?: string, options?: CommandNormalizeOpti
   const normalizedLower = normalizeLowercaseStringOrEmpty(normalized);
   return (
     normalizedLower === "/stop" ||
+    normalizedLower === "/a2a stop" ||
     normalizeAbortTriggerText(normalizedLower) === "/stop" ||
+    normalizeAbortTriggerText(normalizedLower) === "/a2a stop" ||
     isAbortTrigger(normalizedLower)
   );
 }

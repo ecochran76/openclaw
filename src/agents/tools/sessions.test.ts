@@ -15,7 +15,13 @@ vi.mock("../../gateway/call.js", () => ({
   callGateway: (opts: unknown) => callGatewayMock(opts),
 }));
 
-type SessionsToolTestConfig = Pick<OpenClawConfig, "session" | "tools">;
+type SessionsToolTestConfig = {
+  session: { scope: "per-sender"; mainKey: string };
+  tools: {
+    agentToAgent: { enabled: boolean };
+    sessions?: { visibility: "all" | "self" | "tree" | "agent" };
+  };
+};
 
 const loadConfigMock = vi.fn<() => SessionsToolTestConfig>(() => ({
   session: { scope: "per-sender", mainKey: "main" },

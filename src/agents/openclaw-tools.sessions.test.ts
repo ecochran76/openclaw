@@ -44,7 +44,30 @@ vi.mock("./subagent-announce-delivery.js", () => ({
   loadSessionEntryByKey: (sessionKey: string) => loadSessionEntryByKeyMock(sessionKey),
 }));
 
-const testConfig = {
+type SessionsToolsTestConfig = {
+  session: {
+    mainKey: string;
+    scope: "per-sender";
+    agentToAgent: {
+      maxPingPongTurns: number;
+      ingressEcho: { enabled: boolean; requireDelivery: boolean };
+      guard: { allowNestedSessionsSend: boolean };
+      relay: {
+        enabled: boolean;
+        mode: "target-only" | "dual-channel";
+        mirrorTurns: "round1" | "all";
+        verbosity: "none" | "sender-message" | "full-payload";
+        requireDelivery: boolean;
+      };
+    };
+  };
+  tools: {
+    sessions: { visibility: "all" | "self" | "tree" | "agent" };
+    agentToAgent: { enabled: boolean; allow: string[] };
+  };
+};
+
+const testConfig: SessionsToolsTestConfig = {
   session: {
     mainKey: "main",
     scope: "per-sender",
@@ -1333,6 +1356,77 @@ describe("sessions tools", () => {
     await vi.waitFor(() =>
       expect(calls.filter((call) => call.method === "agent.wait").length).toBeGreaterThanOrEqual(2),
     );
+  });
+
+  it("sessions_send supports per-call a2a turn and timeout bounds", async () => {
+    const calls: Array<{ method?: string; params?: Record<string, unknown> }> = [];
+    let agentCallCount = 0;
+    let lastWaitedRunId: string | undefined;
+    const replyByRunId = new Map<string, string>([
+      ["run-1", "done"],
+      ["run-2", "ANNOUNCE_SKIP"],
+    ]);
+
+    callGatewayMock.mockImplementation(async (opts: unknown) => {
+      const request = opts as { method?: string; params?: Record<string, unknown> };
+      calls.push(request);
+      if (request.method === "agent") {
+        agentCallCount += 1;
+        return {
+          runId: `run-${agentCallCount}`,
+          status: "accepted",
+          acceptedAt: 2000 + agentCallCount,
+        };
+      }
+      if (request.method === "agent.wait") {
+        lastWaitedRunId =
+          typeof request.params?.runId === "string" ? request.params.runId : undefined;
+        return { runId: lastWaitedRunId ?? "run-1", status: "ok" };
+      }
+      if (request.method === "chat.history") {
+        const text = (lastWaitedRunId && replyByRunId.get(lastWaitedRunId)) ?? "";
+        return {
+          messages: [
+            {
+              role: "assistant",
+              content: [{ type: "text", text }],
+              timestamp: 20,
+            },
+          ],
+        };
+      }
+      return {};
+    });
+
+    const tool = createTestTools({
+      agentSessionKey: "discord:group:req",
+      agentChannel: "discord",
+    }).find((candidate) => candidate.name === "sessions_send");
+    expect(tool).toBeDefined();
+    if (!tool) {
+      throw new Error("missing sessions_send tool");
+    }
+
+    const result = await tool.execute("call-bounds", {
+      sessionKey: "main",
+      message: "wait",
+      timeoutSeconds: 30,
+      maxPingPongTurns: 0,
+      a2aTimeoutSeconds: 7,
+    });
+
+    expect(result.details).toMatchObject({ status: "ok", reply: "done" });
+    const agentCalls = calls.filter((call) => call.method === "agent");
+    const waitCalls = calls.filter((call) => call.method === "agent.wait");
+    expect(agentCalls).toHaveLength(2);
+    expect(waitCalls).toEqual([
+      expect.objectContaining({
+        params: expect.objectContaining({ runId: "run-1", timeoutMs: 30000 }),
+      }),
+      expect.objectContaining({
+        params: expect.objectContaining({ runId: "run-2", timeoutMs: 7000 }),
+      }),
+    ]);
   });
 
   it("sessions_send resolves sessionId inputs", async () => {
