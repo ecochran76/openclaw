@@ -1,6 +1,6 @@
 # A2A Upgrade Conflict Resolution Plan
 
-Status: proposed
+Status: implemented on `ec-main` rebased onto `v2026.3.12`
 Owner: agent working on A2A feature branch
 Date: 2026-03-13
 Baseline: resolve rebase of `ec-main` onto `v2026.3.12` without regressing existing A2A session/thread targeting work
@@ -206,3 +206,28 @@ Relevant prior decisions already on record:
 - `ec-main` is the integration truth and must stay rebase-friendly. Source: `MEMORY.md`
 - features that must survive live patch/install need to be integrated into `ec-main`, not left only on a feature branch. Source: `memory/2026-03-08.md`
 - A2A session/thread targeting work already landed on `ec-main` in focused slices and should be preserved while fixing integration drift. Source: `memory/2026-03-11.md`
+
+## Implementation update (2026-03-13)
+
+The fix has now been implemented during the successful `ec-main -> v2026.3.12` rebase.
+
+What changed in the actual resolution:
+
+- kept the upstream `agents-panels-overview.ts` split instead of reviving the old inline overview renderer
+- threaded `onPrimaryProfileChange(...)` through `ui/src/ui/views/agents.ts`
+- restored the primary auth profile picker inside `ui/src/ui/views/agents-panels-overview.ts`
+- kept provider/profile helper logic in `ui/src/ui/views/agents-utils.ts`
+- merged `ui/src/ui/views/agents-utils.test.ts` so both the newer avatar/logo coverage and the auth-profile helper coverage remain
+- updated `ui/src/ui/app-render.ts` so auth profile changes still rewrite `auth.order.<provider>` through the existing config editing path
+
+Validation run on the rebased branch:
+
+- ✅ `ui/src/ui/views/agents-utils.test.ts` — 15 passed
+- ✅ `src/gateway/server.sessions.gateway-server-sessions-a.test.ts` — 22 passed
+- ⚠️ `src/agents/tools/sessions.test.ts` and `src/agents/openclaw-tools.sessions.test.ts` currently fail on the rebased branch in transcript-path/session-list assertions; these failures are outside the UI conflict fix and should be handled as separate session-tool follow-up work
+
+Net result:
+
+- the rebase blocker is fixed
+- `ec-main` now rebases cleanly onto `v2026.3.12`
+- the auth-profile-picker behavior survives on the newer upstream UI structure
