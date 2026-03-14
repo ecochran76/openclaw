@@ -284,6 +284,14 @@ export function buildBuiltinChatCommands(
       tier: "standard",
     }),
     defineChatCommand({
+      key: "turn-status",
+      nativeName: "turn-status",
+      description: "Show the active or recent tracked turn for this session.",
+      textAliases: ["/turn-status", "/turnstatus"],
+      category: "status",
+      tier: "standard",
+    }),
+    defineChatCommand({
       key: "allowlist",
       description: "List/add/remove allowlist entries.",
       textAlias: "/allowlist",

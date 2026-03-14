@@ -1,0 +1,275 @@
+import crypto from "node:crypto";
+import { formatDurationCompact } from "../infra/format-time/format-duration.js";
+
+export type TrackedTurnPhase =
+  | "received"
+  | "reasoning"
+  | "tool_wait"
+  | "compaction"
+  | "delivery_prepare"
+  | "done"
+  | "error";
+
+export type TrackedTurnStatus = "active" | "done" | "error";
+
+export type TrackedTurnDurationClass = "instant" | "short" | "medium" | "long";
+
+export type TrackedTurnSnapshot = {
+  turnId: string;
+  runId?: string;
+  sessionKey: string;
+  channel?: string;
+  threadId?: string | number;
+  startedAt: number;
+  updatedAt: number;
+  completedAt?: number;
+  durationClass: TrackedTurnDurationClass;
+  phase: TrackedTurnPhase;
+  status: TrackedTurnStatus;
+  steerable: boolean;
+  lastProgressAt: number;
+  lastUserVisibleUpdateAt?: number;
+  activeTool?: string;
+  deliveryState?: "pending" | "block" | "final" | "none";
+  lastError?: string;
+};
+
+const activeBySession = new Map<string, TrackedTurnSnapshot>();
+const recentBySession = new Map<string, TrackedTurnSnapshot>();
+const turnIdToSession = new Map<string, string>();
+const runIdToTurnId = new Map<string, string>();
+
+function clone(snapshot: TrackedTurnSnapshot): TrackedTurnSnapshot {
+  return { ...snapshot };
+}
+
+export function classifyTurnDuration(elapsedMs: number): TrackedTurnDurationClass {
+  if (elapsedMs < 5_000) {
+    return "instant";
+  }
+  if (elapsedMs < 20_000) {
+    return "short";
+  }
+  if (elapsedMs < 90_000) {
+    return "medium";
+  }
+  return "long";
+}
+
+function applyElapsed(snapshot: TrackedTurnSnapshot, now = Date.now()): TrackedTurnSnapshot {
+  const end = snapshot.completedAt ?? now;
+  return {
+    ...snapshot,
+    durationClass: classifyTurnDuration(Math.max(0, end - snapshot.startedAt)),
+  };
+}
+
+export function startTrackedTurn(params: {
+  sessionKey: string;
+  channel?: string;
+  threadId?: string | number;
+  startedAt?: number;
+  phase?: TrackedTurnPhase;
+  steerable?: boolean;
+}): TrackedTurnSnapshot {
+  const startedAt = params.startedAt ?? Date.now();
+  const snapshot: TrackedTurnSnapshot = {
+    turnId: crypto.randomUUID(),
+    sessionKey: params.sessionKey,
+    channel: params.channel,
+    threadId: params.threadId,
+    startedAt,
+    updatedAt: startedAt,
+    durationClass: "instant",
+    phase: params.phase ?? "received",
+    status: "active",
+    steerable: params.steerable ?? true,
+    lastProgressAt: startedAt,
+    deliveryState: "pending",
+  };
+  activeBySession.set(params.sessionKey, snapshot);
+  turnIdToSession.set(snapshot.turnId, params.sessionKey);
+  return clone(snapshot);
+}
+
+export function attachTrackedTurnRunId(turnId: string, runId: string): void {
+  const sessionKey = turnIdToSession.get(turnId);
+  if (!sessionKey) {
+    return;
+  }
+  const current = activeBySession.get(sessionKey);
+  if (!current || current.turnId !== turnId) {
+    return;
+  }
+  current.runId = runId;
+  current.updatedAt = Date.now();
+  runIdToTurnId.set(runId, turnId);
+}
+
+export function updateTrackedTurn(
+  turnId: string,
+  patch: Partial<
+    Pick<
+      TrackedTurnSnapshot,
+      "phase" | "activeTool" | "lastError" | "steerable" | "deliveryState" | "status"
+    >
+  > & { markProgress?: boolean; markVisible?: boolean; at?: number },
+): TrackedTurnSnapshot | undefined {
+  const sessionKey = turnIdToSession.get(turnId);
+  if (!sessionKey) {
+    return undefined;
+  }
+  const current = activeBySession.get(sessionKey);
+  if (!current || current.turnId !== turnId) {
+    return undefined;
+  }
+  const at = patch.at ?? Date.now();
+  if (patch.phase) {
+    current.phase = patch.phase;
+  }
+  if (patch.activeTool !== undefined) {
+    current.activeTool = patch.activeTool || undefined;
+  }
+  if (patch.lastError !== undefined) {
+    current.lastError = patch.lastError || undefined;
+  }
+  if (patch.steerable !== undefined) {
+    current.steerable = patch.steerable;
+  }
+  if (patch.deliveryState !== undefined) {
+    current.deliveryState = patch.deliveryState;
+  }
+  if (patch.status) {
+    current.status = patch.status;
+  }
+  if (patch.markProgress) {
+    current.lastProgressAt = at;
+  }
+  if (patch.markVisible) {
+    current.lastUserVisibleUpdateAt = at;
+    if (current.deliveryState === "pending") {
+      current.deliveryState = "block";
+    }
+  }
+  current.updatedAt = at;
+  activeBySession.set(sessionKey, current);
+  return clone(applyElapsed(current, at));
+}
+
+export function finishTrackedTurn(params: {
+  turnId: string;
+  status?: TrackedTurnStatus;
+  phase?: TrackedTurnPhase;
+  error?: string;
+  deliveryState?: TrackedTurnSnapshot["deliveryState"];
+  completedAt?: number;
+}): TrackedTurnSnapshot | undefined {
+  const sessionKey = turnIdToSession.get(params.turnId);
+  if (!sessionKey) {
+    return undefined;
+  }
+  const current = activeBySession.get(sessionKey);
+  if (!current || current.turnId !== params.turnId) {
+    return undefined;
+  }
+  const completedAt = params.completedAt ?? Date.now();
+  current.status = params.status ?? (params.error ? "error" : "done");
+  current.phase = params.phase ?? (current.status === "error" ? "error" : "done");
+  current.lastError = params.error ?? current.lastError;
+  current.completedAt = completedAt;
+  current.updatedAt = completedAt;
+  current.lastProgressAt = completedAt;
+  if (params.deliveryState !== undefined) {
+    current.deliveryState = params.deliveryState;
+  }
+  const finalized = applyElapsed(current, completedAt);
+  activeBySession.delete(sessionKey);
+  recentBySession.set(sessionKey, finalized);
+  if (current.runId) {
+    runIdToTurnId.delete(current.runId);
+  }
+  turnIdToSession.delete(params.turnId);
+  return clone(finalized);
+}
+
+export function getActiveTrackedTurn(sessionKey: string): TrackedTurnSnapshot | undefined {
+  const current = activeBySession.get(sessionKey);
+  return current ? clone(applyElapsed(current)) : undefined;
+}
+
+export function getRecentTrackedTurn(sessionKey: string): TrackedTurnSnapshot | undefined {
+  const recent = recentBySession.get(sessionKey);
+  return recent ? clone(applyElapsed(recent)) : undefined;
+}
+
+export function formatTrackedTurnAgo(at?: number, now = Date.now()): string {
+  if (!at) {
+    return "n/a";
+  }
+  const delta = Math.max(0, now - at);
+  return formatDurationCompact(delta, { spaced: true }) ?? "0s";
+}
+
+function describePhase(phase: TrackedTurnPhase): string {
+  switch (phase) {
+    case "received":
+      return "received";
+    case "reasoning":
+      return "reasoning";
+    case "tool_wait":
+      return "tool wait";
+    case "compaction":
+      return "compacting context";
+    case "delivery_prepare":
+      return "preparing reply";
+    case "done":
+      return "done";
+    case "error":
+      return "error";
+  }
+}
+
+export function buildTurnProgressLine(snapshot: TrackedTurnSnapshot): string {
+  const toolSuffix = snapshot.activeTool ? ` (${snapshot.activeTool})` : "";
+  return `working: ${describePhase(snapshot.phase)}${toolSuffix}`;
+}
+
+export function buildTurnStatusText(params: {
+  active?: TrackedTurnSnapshot;
+  recent?: TrackedTurnSnapshot;
+  now?: number;
+}): string {
+  const now = params.now ?? Date.now();
+  const snapshot = params.active ?? params.recent;
+  if (!snapshot) {
+    return "🧭 Turn status\nNo active turn for this session.";
+  }
+  const elapsed = Math.max(0, (snapshot.completedAt ?? now) - snapshot.startedAt);
+  const elapsedText = formatDurationCompact(elapsed, { spaced: true }) ?? "0s";
+  const lines = ["🧭 Turn status"];
+  lines.push(`State: ${params.active ? "active" : snapshot.status}`);
+  lines.push(`Phase: ${describePhase(snapshot.phase)}`);
+  lines.push(`Duration: ${elapsedText} (${snapshot.durationClass})`);
+  lines.push(`Steerable: ${snapshot.steerable ? "yes" : "no"}`);
+  if (snapshot.activeTool) {
+    lines.push(`Tool: ${snapshot.activeTool}`);
+  }
+  lines.push(`Last progress: ${formatTrackedTurnAgo(snapshot.lastProgressAt, now)} ago`);
+  lines.push(
+    `Last visible update: ${snapshot.lastUserVisibleUpdateAt ? `${formatTrackedTurnAgo(snapshot.lastUserVisibleUpdateAt, now)} ago` : "none"}`,
+  );
+  if (snapshot.runId) {
+    lines.push(`Run: ${snapshot.runId.slice(0, 8)}`);
+  }
+  if (snapshot.lastError) {
+    lines.push(`Error: ${snapshot.lastError}`);
+  }
+  return lines.join("\n");
+}
+
+export function resetTrackedTurnsForTests(): void {
+  activeBySession.clear();
+  recentBySession.clear();
+  turnIdToSession.clear();
+  runIdToTurnId.clear();
+}

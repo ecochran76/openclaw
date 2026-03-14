@@ -13,6 +13,11 @@ import {
   buildHelpMessage,
   buildToolsMessage,
 } from "../status.js";
+import {
+  buildTurnStatusText,
+  getActiveTrackedTurn,
+  getRecentTrackedTurn,
+} from "../turn-tracker.js";
 import { buildThreadingToolContext } from "./agent-runner-utils.js";
 import { resolveChannelAccountId } from "./channel-context.js";
 import { rejectUnauthorizedCommand } from "./command-gates.js";
@@ -254,6 +259,23 @@ export const handleStatusCommand: CommandHandler = async (params, allowTextComma
     return null;
   }
   const normalizedStatusCommand = params.command.commandBodyNormalized.trim();
+  if (normalizedStatusCommand === "/turn-status" || normalizedStatusCommand === "/turnstatus") {
+    if (!params.command.isAuthorizedSender) {
+      logVerbose(
+        `Ignoring /turn-status from unauthorized sender: ${params.command.senderId || "<unknown>"}`,
+      );
+      return { shouldContinue: false };
+    }
+    return {
+      shouldContinue: false,
+      reply: {
+        text: buildTurnStatusText({
+          active: getActiveTrackedTurn(params.sessionKey),
+          recent: getRecentTrackedTurn(params.sessionKey),
+        }),
+      },
+    };
+  }
   const statusRequested =
     params.directives.hasStatusDirective ||
     normalizedStatusCommand === "/status" ||
