@@ -26,6 +26,7 @@ import { handleNameCommand } from "./commands-name.js";
 import { handlePluginCommand } from "./commands-plugin.js";
 import { handlePluginsCommand } from "./commands-plugins.js";
 import { handleProfileCommand, handleProfilesCommand } from "./commands-profiles.js";
+import { handlePendingReauthInput, handleReauthCommand } from "./commands-reauth.js";
 import {
   handleAbortTrigger,
   handleActivationCommand,
@@ -45,6 +46,7 @@ import { handleWhoamiCommand } from "./commands-whoami.js";
 
 export function loadCommandHandlers(): CommandHandler[] {
   return [
+    handlePendingReauthInput,
     handlePluginCommand,
     handleDockCommand,
     handleBtwCommand,
@@ -84,6 +86,7 @@ export function loadCommandHandlers(): CommandHandler[] {
     handleModelsCommand,
     handleProfilesCommand,
     handleProfileCommand,
+    handleReauthCommand,
     handleStopCommand,
     handleCompactCommand,
     handleAbortTrigger,

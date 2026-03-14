@@ -967,6 +967,15 @@ export function buildBuiltinChatCommands(
       category: "options",
     }),
     defineChatCommand({
+      key: "reauth",
+      nativeName: "reauth",
+      description: "Start or inspect a Slack OAuth re-auth flow for the current session.",
+      textAlias: "/reauth",
+      argsParsing: "none",
+      acceptsArgs: true,
+      category: "options",
+    }),
+    defineChatCommand({
       key: "queue",
       nativeName: "queue",
       description: "Adjust queue settings.",

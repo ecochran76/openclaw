@@ -2,6 +2,7 @@
 import { afterEach, describe, expect, it } from "vitest";
 import { testing as cliBackendsTesting } from "../agents/cli-backends.js";
 import {
+  buildAuthFailureNotice,
   buildFallbackNotice,
   resolveActiveFallbackState,
   resolveFallbackTransition,
@@ -246,5 +247,47 @@ describe("fallback-state", () => {
         attempts: [],
       }),
     ).toContain("selected openai/gpt-5.5");
+  });
+
+  it("builds a Slack reauth notice for OpenAI auth fallback", () => {
+    const notice = buildAuthFailureNotice({
+      selectedProvider: "openai",
+      selectedModel: "gpt-5.4",
+      activeProvider: "openrouter",
+      activeModel: "moonshotai/kimi-k2.5",
+      attempts: [
+        {
+          provider: "openai",
+          model: "gpt-5.4",
+          error: "OAuth token refresh failed",
+          reason: "auth",
+        },
+      ],
+      authProfileId: "openai:dillan",
+    });
+
+    expect(notice).toContain("openai:dillan");
+    expect(notice).toContain("/reauth openai:dillan");
+    expect(notice).toContain("openrouter/moonshotai/kimi-k2.5");
+  });
+
+  it("returns null for non-auth fallback reasons", () => {
+    const notice = buildAuthFailureNotice({
+      selectedProvider: "openai",
+      selectedModel: "gpt-5.4",
+      activeProvider: "openrouter",
+      activeModel: "moonshotai/kimi-k2.5",
+      attempts: [
+        {
+          provider: "openai",
+          model: "gpt-5.4",
+          error: "rate limit",
+          reason: "rate_limit",
+        },
+      ],
+      authProfileId: "openai:dillan",
+    });
+
+    expect(notice).toBeNull();
   });
 });

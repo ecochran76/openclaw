@@ -52,6 +52,7 @@ import {
   resolveModelCostConfig,
 } from "../../utils/usage-format.js";
 import {
+  buildAuthFailureNotice,
   buildFallbackClearedNotice,
   buildFallbackNotice,
   resolveFallbackTransition,
@@ -2047,6 +2048,22 @@ export async function runReplyAgent(params: {
         fallbackNoticePayloads.push(
           markReplyPayloadForSourceSuppressionDelivery({
             text: fallbackNotice,
+            isFallbackNotice: true,
+          }),
+        );
+      }
+      const authFailureNotice = buildAuthFailureNotice({
+        selectedProvider,
+        selectedModel,
+        activeProvider: providerUsed,
+        activeModel: modelUsed,
+        attempts: fallbackAttempts,
+        authProfileId: followupRun.run.authProfileId,
+      });
+      if (authFailureNotice) {
+        fallbackNoticePayloads.push(
+          markReplyPayloadForSourceSuppressionDelivery({
+            text: authFailureNotice,
             isFallbackNotice: true,
           }),
         );

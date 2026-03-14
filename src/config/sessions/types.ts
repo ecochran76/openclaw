@@ -46,6 +46,18 @@ export type {
   SessionAcpMeta,
 };
 
+export type PendingOAuthReauth = {
+  kind: "openai";
+  provider: "openai";
+  profileId: string;
+  state: string;
+  verifier: string;
+  authorizationUrl: string;
+  redirectUri: string;
+  createdAt: number;
+  expiresAt: number;
+};
+
 export type CliSessionBinding = {
   sessionId: string;
   /** Trust an explicitly attached CLI session even when auth, prompt, or MCP fingerprints drift. */
@@ -332,6 +344,7 @@ export type SessionEntry = {
    * flag, so they are never mistaken for user-initiated switches.
    */
   liveModelSwitchPending?: boolean;
+  pendingOAuthReauth?: PendingOAuthReauth;
   groupActivation?: "mention" | "always";
   groupActivationNeedsSystemIntro?: boolean;
   sendPolicy?: "allow" | "deny";

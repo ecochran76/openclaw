@@ -237,6 +237,7 @@ export function buildEmbeddedRunPayloads(params: {
   model?: string;
   /** Credential auth mode for billing copy (#80877). */
   authMode?: string;
+  authProfileId?: string;
   verboseLevel?: VerboseLevel;
   reasoningLevel?: ReasoningLevel;
   thinkingLevel?: ThinkLevel;
@@ -345,6 +346,7 @@ export function buildEmbeddedRunPayloads(params: {
               provider: params.provider,
               model: params.model,
               authMode: params.authMode,
+              authProfileId: params.authProfileId,
             })
           : formatAssistantErrorText(assistantForPayload, {
               cfg: params.config,
@@ -352,6 +354,7 @@ export function buildEmbeddedRunPayloads(params: {
               provider: params.provider,
               model: params.model,
               authMode: params.authMode,
+              authProfileId: params.authProfileId,
             })
       : undefined;
   const rawErrorFingerprint = rawErrorMessage

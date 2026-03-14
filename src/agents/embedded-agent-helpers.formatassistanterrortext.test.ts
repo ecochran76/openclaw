@@ -343,6 +343,30 @@ describe("formatAssistantErrorText", () => {
     );
   });
 
+  it("returns a Slack reauth hint for openai-codex auth failures", () => {
+    const msg = makeAssistantError(
+      "OAuth token refresh failed for openai-codex: refresh_token_reused. Please try again or re-authenticate.",
+    );
+    expect(
+      formatAssistantErrorText(msg, {
+        provider: "openai-codex",
+        model: "gpt-5.4",
+        authProfileId: "openai-codex:dillan",
+      }),
+    ).toContain("/reauth openai-codex:dillan");
+  });
+
+  it("returns a CLI reauth hint for non-codex auth failures", () => {
+    const msg = makeAssistantError("401 Unauthorized");
+    expect(
+      formatAssistantErrorText(msg, {
+        provider: "anthropic",
+        model: "claude-sonnet-4",
+        authProfileId: "anthropic:work",
+      }),
+    ).toContain("openclaw models auth login --provider anthropic --profile-id anthropic:work");
+  });
+
   it("returns a friendly message for empty stream chunk errors", () => {
     const msg = makeAssistantError("request ended without sending any chunks");
     expect(formatAssistantErrorText(msg)).toBe("LLM request timed out.");

@@ -2374,6 +2374,7 @@ async function runEmbeddedAgentInternal(
                 authMode: lastProfileId
                   ? attemptAuthProfileStore.profiles?.[lastProfileId]?.type
                   : undefined,
+                authProfileId: lastProfileId,
               })
             : undefined;
           const assistantErrorText =
@@ -3549,6 +3550,7 @@ async function runEmbeddedAgentInternal(
             authMode: lastProfileId
               ? attemptAuthProfileStore.profiles?.[lastProfileId]?.type
               : undefined,
+            authProfileId: lastProfileId,
             verboseLevel: params.verboseLevel,
             reasoningLevel: params.reasoningLevel,
             thinkingLevel: params.thinkLevel,

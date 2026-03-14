@@ -5,6 +5,7 @@ import {
   normalizeLowercaseStringOrEmpty,
   normalizeOptionalLowercaseString,
 } from "@openclaw/normalization-core/string-coerce";
+import { formatCliCommand } from "../../cli/command-format.js";
 import type { OpenClawConfig } from "../../config/types.openclaw.js";
 import type { AssistantMessage } from "../../llm/types.js";
 import { createSubsystemLogger } from "../../logging/subsystem.js";
@@ -86,6 +87,44 @@ const MODEL_NOT_FOUND_USER_TEXT =
 const MAX_FAILOVER_DETAIL_CANDIDATES = 12;
 const MAX_FAILOVER_DETAIL_CHARS = 1_000;
 
+function formatAuthFailureMessage(params: {
+  provider?: string;
+  model?: string;
+  authProfileId?: string;
+}): string {
+  const provider = params.provider?.trim();
+  const model = params.model?.trim();
+  const profileId = params.authProfileId?.trim();
+  const target = provider && model ? `${provider}/${model}` : provider || "the selected model";
+  const loginProvider = provider === "openai-codex" ? "openai" : provider;
+
+  if (provider === "openai" || provider === "openai-codex") {
+    if (profileId) {
+      return [
+        `🔐 Auth failed for ${profileId} on ${target}.`,
+        `Reply /reauth ${profileId} in this thread to refresh it here, or run ${formatCliCommand(`openclaw models auth login --provider openai --profile-id ${profileId}`)}.`,
+      ].join(" ");
+    }
+    return [
+      `🔐 Auth failed for ${target}.`,
+      "Reply /reauth <profile-id> in this thread to refresh an OpenAI ChatGPT/Codex profile here.",
+    ].join(" ");
+  }
+
+  if (provider && profileId) {
+    return [
+      `🔐 Auth failed for ${profileId} on ${target}.`,
+      `Re-authenticate with ${formatCliCommand(`openclaw models auth login --provider ${loginProvider} --profile-id ${profileId}`)} and try again.`,
+    ].join(" ");
+  }
+  if (provider) {
+    return [
+      `🔐 Auth failed for ${target}.`,
+      `Re-authenticate with ${formatCliCommand(`openclaw models auth login --provider ${loginProvider}`)} and try again.`,
+    ].join(" ");
+  }
+  return "🔐 Authentication failed. Re-authenticate and try again.";
+}
 /** Detect provider errors that require reasoning to stay enabled. */
 export function isReasoningConstraintErrorMessage(raw: string): boolean {
   if (!raw) {
@@ -1336,6 +1375,7 @@ export function formatAssistantErrorText(
     /** Credential auth mode (e.g. "oauth", "token", "api_key", "aws-sdk").
      * When "oauth" or "token", billing copy omits API-key language (#80877). */
     authMode?: string;
+    authProfileId?: string;
   },
 ): string | undefined {
   // Also format errors if errorMessage is present, even if stopReason isn't "error"
@@ -1377,6 +1417,13 @@ export function formatAssistantErrorText(
   }
 
   if (providerRuntimeFailureKind === "auth_refresh") {
+    if (opts?.provider || opts?.authProfileId) {
+      return formatAuthFailureMessage({
+        provider: opts?.provider,
+        model: opts?.model ?? msg.model,
+        authProfileId: opts?.authProfileId,
+      });
+    }
     return "Authentication refresh failed. Re-authenticate this provider and try again.";
   }
 
@@ -1528,6 +1575,14 @@ export function formatAssistantErrorText(
     );
   }
 
+  if (isAuthPermanentErrorMessage(raw) || isAuthErrorMessage(raw)) {
+    return formatAuthFailureMessage({
+      provider: opts?.provider,
+      model: opts?.model ?? msg.model,
+      authProfileId: opts?.authProfileId,
+    });
+  }
+
   if (isLikelyHttpErrorText(raw) || isRawApiErrorPayload(raw)) {
     return formatRawAssistantErrorForUi(raw);
   }
@@ -1575,6 +1630,7 @@ export function formatUserFacingAssistantErrorText(
     model?: string;
     /** Credential auth mode for billing copy (#80877). */
     authMode?: string;
+    authProfileId?: string;
   },
 ): string {
   const friendlyError = formatAssistantErrorText(msg, opts);
