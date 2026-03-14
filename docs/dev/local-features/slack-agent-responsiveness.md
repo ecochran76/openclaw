@@ -10,19 +10,26 @@ The core belief is simple:
 
 ## Status
 
-- Slice 1 landed on `ec-main`:
+- Slice 1 landed on `ec-main` in `498f59a1c`:
   - turn-state timeline foundation
   - one silent-turn watcher
   - `/turn-status`
   - automatic medium/long-turn progress nudges
-- Slice 2 is planned next:
-  - delivery attribution
-  - reply-stranded watcher
-  - clearer Slack failure/status messages
-  - compact turn visibility in `/status`
+- Slice 2 landed on `ec-main` as a series:
+  - `05571e149` — delivery attribution in runtime + `/status`
+  - `987865f7c` — machine-generated undelivered-reply notices
+  - `5f9754034` — suppressed replies distinguished from delivery failures
+  - `f8523c896` — `/why-silent`
+  - `1f104770f` — explicit `reply_stranded` finalization
+- Slice 3 is planned next:
+  - richer turn inspection (`/turns`)
+  - explicit runtime nudging (`/nudge`)
+  - steering hooks (`/steer`)
+  - stalled-turn watcher / blocked-vs-stalled separation
 - Design docs:
   - `docs/dev/slack-turn-visibility-and-steering.md`
   - `docs/dev/slack-turn-slice-2-delivery-attribution-plan.md`
+  - `docs/dev/slack-turn-slice-3-steering-and-watchers-plan.md`
 
 ## Problem statement
 

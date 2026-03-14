@@ -123,28 +123,37 @@ Candidate commands:
 - delivery state
 - last error
 
-## Minimal implementation slice
+## Implementation status
 
-### Slice 1
+### Slice 1 — landed
+
+Shipped on `ec-main` in `498f59a1c`:
 
 - turn-state timeline
 - silent-turn watcher
 - `/turn-status`
 - automatic medium/long-turn progress nudges
 
-### Slice 2
+### Slice 2 — landed as a series
 
-- delivery attribution
-- reply-stranded watcher
-- clearer Slack failure/status messages
-- compact active-turn summary in `/status`
-- detailed plan: `docs/dev/slack-turn-slice-2-delivery-attribution-plan.md`
+Shipped on `ec-main` across:
 
-### Slice 3
+- `05571e149` — delivery attribution surfaced in runtime state and `/status`
+- `987865f7c` — machine-generated reply-delivery failure notices
+- `5f9754034` — suppressed replies distinguished from delivery failures
+- `f8523c896` — `/why-silent`
+- `1f104770f` — explicit `reply_stranded` finalization
+
+Detailed plan/history:
+
+- `docs/dev/slack-turn-slice-2-delivery-attribution-plan.md`
+
+### Slice 3 — planned next
 
 - steering hooks
 - richer turn inspection
-- stalled-turn recovery tooling
+- stalled-turn watcher / recovery tooling
+- detailed plan: `docs/dev/slack-turn-slice-3-steering-and-watchers-plan.md`
 
 ## Why this should be a first-class runtime feature
 

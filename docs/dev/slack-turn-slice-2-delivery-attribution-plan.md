@@ -1,5 +1,17 @@
 # Slack Turn Visibility — Slice 2 Plan
 
+## Status
+
+This slice is now implemented on `ec-main` as a series of commits:
+
+- `05571e149` — delivery attribution surfaced in runtime state and `/status`
+- `987865f7c` — machine-generated reply-delivery failure notices
+- `5f9754034` — suppressed replies distinguished from delivery failures
+- `f8523c896` — `/why-silent`
+- `1f104770f` — explicit `reply_stranded` finalization
+
+This document remains useful as the design/acceptance record for what Slice 2 set out to do.
+
 ## Goal
 
 Make it obvious when a Slack turn is not merely silent, but is instead:
