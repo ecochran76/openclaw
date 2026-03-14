@@ -259,6 +259,7 @@ function shouldFallbackCronRunScopedActiveDelivery(
 
 async function startAgentRun(params: {
   callGateway: GatewayCaller;
+  extraResult?: Record<string, unknown>;
   runId: string;
   sendParams: Record<string, unknown>;
   sessionKey: string;
@@ -353,6 +354,7 @@ async function startAgentRun(params: {
         status: "error",
         error: messageText,
         sessionKey: params.sessionKey,
+        ...params.extraResult,
       }),
     };
   }
