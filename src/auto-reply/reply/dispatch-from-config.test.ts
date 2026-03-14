@@ -4739,6 +4739,61 @@ describe("dispatchReplyFromConfig", () => {
     expect(recent?.deliveryState).toBe("reply_stranded");
   });
 
+  it("emits one stalled-turn notice after the stall threshold", async () => {
+    vi.useFakeTimers();
+    try {
+      setNoAbort();
+      const cfg = emptyConfig;
+      const dispatcher = createDispatcher();
+      const ctx = buildTestCtx({
+        Provider: "slack",
+        Surface: "slack",
+        SessionKey: "agent:main:main",
+      });
+      let resolveReply: (value: ReplyPayload | undefined) => void = () => {};
+
+      const dispatchPromise = dispatchReplyFromConfig({
+        ctx,
+        cfg,
+        dispatcher,
+        replyResolver: vi.fn(async (_ctx: MsgContext, opts?: GetReplyOptions) => {
+          await Promise.resolve(opts?.onAgentRunStart?.("run-stalled"));
+          return await new Promise<ReplyPayload | undefined>((resolve) => {
+            resolveReply = resolve;
+          });
+        }),
+      });
+
+      await vi.advanceTimersByTimeAsync(20_000);
+      let blockCalls = (dispatcher.sendBlockReply as ReturnType<typeof vi.fn>).mock.calls;
+      expect((blockCalls[0]?.[0] as ReplyPayload | undefined)?.text).toContain("working:");
+
+      await vi.advanceTimersByTimeAsync(100_000);
+      blockCalls = (dispatcher.sendBlockReply as ReturnType<typeof vi.fn>).mock.calls;
+      const blockTexts = blockCalls.map(
+        (call) => (call[0] as ReplyPayload | undefined)?.text ?? "",
+      );
+      expect(
+        blockTexts.filter((text) => text.includes("status: turn appears stalled")),
+      ).toHaveLength(1);
+      expect(getActiveTrackedTurn(ctx.SessionKey ?? "agent:main:main")?.phase).toBe("stalled");
+
+      await vi.advanceTimersByTimeAsync(180_000);
+      blockCalls = (dispatcher.sendBlockReply as ReturnType<typeof vi.fn>).mock.calls;
+      const laterTexts = blockCalls.map(
+        (call) => (call[0] as ReplyPayload | undefined)?.text ?? "",
+      );
+      expect(
+        laterTexts.filter((text) => text.includes("status: turn appears stalled")),
+      ).toHaveLength(1);
+
+      resolveReply(undefined);
+      await dispatchPromise;
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
   it("fast-aborts without calling the reply resolver", async () => {
     mocks.tryFastAbortFromMessage.mockResolvedValue({
       handled: true,

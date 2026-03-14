@@ -131,6 +131,7 @@ import {
   finishTrackedTurn,
   getActiveTrackedTurn,
   startTrackedTurn,
+  TRACKED_TURN_STALL_THRESHOLD_MS,
   type TrackedTurnSuppressionReason,
   updateTrackedTurn,
 } from "../turn-tracker.js";
@@ -2156,6 +2157,7 @@ export async function dispatchReplyFromConfig(
   let trackedTurnId: string | undefined;
   let turnNudgeTimer: ReturnType<typeof setTimeout> | undefined;
   let firstTurnNudgeSent = false;
+  let stalledNoticeSent = false;
   const clearTurnNudgeTimer = () => {
     if (turnNudgeTimer) {
       clearTimeout(turnNudgeTimer);
@@ -2307,6 +2309,43 @@ export async function dispatchReplyFromConfig(
     });
     trackedTurnId = snapshot.turnId;
     attachTrackedTurnRunId(snapshot.turnId, runId);
+    const sendWatcherPayload = async (payload: ReplyPayload, failureText: string) => {
+      if (trackedTurnId) {
+        updateTrackedTurn(trackedTurnId, {
+          replyProduced: true,
+          deliveryTarget,
+          lastDeliveryAttemptAt: Date.now(),
+        });
+      }
+      if (shouldRouteToOriginating) {
+        const ok = await sendPayloadAsync(payload, undefined, false);
+        if (trackedTurnId) {
+          const at = Date.now();
+          updateTrackedTurn(trackedTurnId, {
+            deliveryState: ok ? "block_sent" : "delivery_failed",
+            deliveryTarget,
+            lastDeliveryAttemptAt: at,
+            lastDeliverySuccessAt: ok ? at : undefined,
+            lastDeliveryError: ok ? undefined : failureText,
+            markVisible: ok,
+          });
+        }
+        return ok;
+      }
+      const queued = dispatcher.sendBlockReply(payload);
+      if (trackedTurnId) {
+        const at = Date.now();
+        updateTrackedTurn(trackedTurnId, {
+          deliveryState: queued ? "block_sent" : "delivery_failed",
+          deliveryTarget,
+          lastDeliveryAttemptAt: at,
+          lastDeliverySuccessAt: queued ? at : undefined,
+          lastDeliveryError: queued ? undefined : failureText,
+          markVisible: queued,
+        });
+      }
+      return queued;
+    };
     const schedule = (delayMs: number) => {
       clearTurnNudgeTimer();
       turnNudgeTimer = setTimeout(
@@ -2317,39 +2356,56 @@ export async function dispatchReplyFromConfig(
               return;
             }
             const now = Date.now();
+            if (stalledNoticeSent && active.phase !== "stalled") {
+              stalledNoticeSent = false;
+            }
             const lastVisible = active.lastUserVisibleUpdateAt ?? active.startedAt;
             const thresholdMs = firstTurnNudgeSent ? 90_000 : 20_000;
-            if (now - lastVisible < thresholdMs) {
-              schedule(thresholdMs - (now - lastVisible));
+            const timeUntilVisible = thresholdMs - (now - lastVisible);
+            const timeUntilStall = stalledNoticeSent
+              ? Number.POSITIVE_INFINITY
+              : TRACKED_TURN_STALL_THRESHOLD_MS - (now - active.lastProgressAt);
+            if (!stalledNoticeSent && active.phase === "stalled") {
+              if (trackedTurnId) {
+                updateTrackedTurn(trackedTurnId, {
+                  phase: "stalled",
+                  deliveryTarget,
+                });
+              }
+              await sendWatcherPayload(
+                {
+                  text: `status: turn appears stalled${active.activeTool ? ` (${active.activeTool})` : ""}`,
+                },
+                shouldRouteToOriginating
+                  ? "route-reply failed"
+                  : "dispatcher rejected stalled notice",
+              );
+              stalledNoticeSent = true;
+              firstTurnNudgeSent = true;
+              schedule(90_000);
+              return;
+            }
+            if (
+              timeUntilStall > 0 &&
+              (timeUntilStall < timeUntilVisible ||
+                (timeUntilVisible <= 0 && timeUntilStall <= 15_000))
+            ) {
+              schedule(timeUntilStall);
+              return;
+            }
+            if (timeUntilVisible > 0) {
+              schedule(timeUntilVisible);
+              return;
+            }
+            if (stalledNoticeSent && active.phase === "stalled") {
+              schedule(90_000);
               return;
             }
             const payload = { text: buildTurnProgressLine(active) } satisfies ReplyPayload;
-            const visibility = classifyPayloadVisibility(payload);
-            if (visibility.visibility === "visible") {
-              markTrackedTurnReplyProduced();
-              recordTrackedTurnDeliveryAttempt();
-            } else if (visibility.visibility === "suppressed") {
-              recordTrackedTurnSuppressedReply(visibility.suppressionReason);
-            }
-            if (shouldRouteToOriginating) {
-              const ok = await sendPayloadAsync(payload, undefined, false);
-              if (visibility.visibility === "visible") {
-                if (ok) {
-                  recordTrackedTurnDeliverySuccess("block_sent");
-                } else {
-                  recordTrackedTurnDeliveryFailure("route-reply failed");
-                }
-              }
-            } else {
-              const queued = dispatcher.sendBlockReply(payload);
-              if (visibility.visibility === "visible") {
-                if (queued) {
-                  recordTrackedTurnDeliverySuccess("block_sent");
-                } else {
-                  recordTrackedTurnDeliveryFailure("dispatcher rejected block reply");
-                }
-              }
-            }
+            await sendWatcherPayload(
+              payload,
+              shouldRouteToOriginating ? "route-reply failed" : "dispatcher rejected block reply",
+            );
             firstTurnNudgeSent = true;
             schedule(90_000);
           })();
