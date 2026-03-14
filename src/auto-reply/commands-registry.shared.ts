@@ -308,6 +308,20 @@ export function buildBuiltinChatCommands(
       category: "status",
     }),
     defineChatCommand({
+      key: "turns",
+      nativeName: "turns",
+      description: "List active and recent tracked turns for this session.",
+      textAlias: "/turns",
+      category: "status",
+    }),
+    defineChatCommand({
+      key: "nudge",
+      nativeName: "nudge",
+      description: "Show the next deterministic progress nudge for the active turn.",
+      textAlias: "/nudge",
+      category: "status",
+    }),
+    defineChatCommand({
       key: "allowlist",
       description: "List/add/remove allowlist entries.",
       textAlias: "/allowlist",

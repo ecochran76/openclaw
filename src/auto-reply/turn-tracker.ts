@@ -57,8 +57,9 @@ export type TrackedTurnSnapshot = {
   lastSteerText?: string;
 };
 
-const activeBySession = new Map<string, TrackedTurnSnapshot>();
 const RECENT_TURN_LIMIT = 5;
+
+const activeBySession = new Map<string, TrackedTurnSnapshot>();
 const recentListBySession = new Map<string, TrackedTurnSnapshot[]>();
 const turnIdToSession = new Map<string, string>();
 const runIdToTurnId = new Map<string, string>();
@@ -291,7 +292,6 @@ export function recordTrackedTurnSteer(
   activeBySession.set(sessionKey, current);
   return clone(applyElapsed(current, at));
 }
-
 export function formatTrackedTurnAgo(at?: number, now = Date.now()): string {
   if (!at) {
     return "n/a";

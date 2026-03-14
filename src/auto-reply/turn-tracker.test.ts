@@ -341,4 +341,69 @@ describe("turn tracker", () => {
     expect(nudge).toContain("stalled: no recent progress (exec)");
     expect(nudge).toContain("Stalled threshold:");
   });
+
+  it("lists recent turns and builds nudge text", () => {
+    const first = startTrackedTurn({
+      sessionKey: "agent:main:main",
+      startedAt: 0,
+      phase: "reasoning",
+    });
+    finishTrackedTurn({
+      turnId: first.turnId,
+      completedAt: 5_000,
+      status: "done",
+      deliveryState: "final_sent",
+    });
+    const second = startTrackedTurn({
+      sessionKey: "agent:main:main",
+      startedAt: 10_000,
+      phase: "tool_wait",
+    });
+    finishTrackedTurn({
+      turnId: second.turnId,
+      completedAt: 40_000,
+      status: "error",
+      phase: "error",
+      deliveryState: "delivery_failed",
+    });
+    const active = startTrackedTurn({
+      sessionKey: "agent:main:main",
+      startedAt: 50_000,
+      phase: "tool_wait",
+      channel: "slack",
+    });
+    updateTrackedTurn(active.turnId, { activeTool: "exec", markProgress: true, at: 60_000 });
+
+    const recent = getRecentTrackedTurns("agent:main:main");
+    expect(recent).toHaveLength(2);
+    const turnsText = buildTurnsText({
+      active: {
+        ...active,
+        activeTool: "exec",
+        lastProgressAt: 60_000,
+        durationClass: "short",
+        steerable: true,
+        status: "active",
+      },
+      recents: recent,
+    });
+    expect(turnsText).toContain("🧭 Turns");
+    expect(turnsText).toContain("active · tool wait · short · reply pending · steerable · exec");
+    expect(turnsText).toContain("error · error · medium · delivery failed");
+    expect(turnsText).toContain("done · done · short · final sent");
+
+    const nudge = buildNudgeText({
+      active: {
+        ...active,
+        activeTool: "exec",
+        lastProgressAt: 60_000,
+        durationClass: "short",
+        steerable: true,
+        status: "active",
+      },
+      now: 70_000,
+    });
+    expect(nudge).toContain("working: tool wait (exec)");
+    expect(nudge).toContain("Last progress: 10s ago");
+  });
 });

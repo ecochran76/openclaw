@@ -14,10 +14,14 @@ import {
   buildToolsMessage,
 } from "../status.js";
 import {
+  buildNudgeText,
+  buildTurnsText,
   buildTurnStatusText,
   buildWhySilentText,
   getActiveTrackedTurn,
   getRecentTrackedTurn,
+  getRecentTrackedTurns,
+  updateTrackedTurn,
 } from "../turn-tracker.js";
 import { buildThreadingToolContext } from "./agent-runner-utils.js";
 import { resolveChannelAccountId } from "./channel-context.js";
@@ -288,6 +292,44 @@ export const handleStatusCommand: CommandHandler = async (params, allowTextComma
       shouldContinue: false,
       reply: {
         text: buildWhySilentText({
+          active: getActiveTrackedTurn(params.sessionKey),
+          recent: getRecentTrackedTurn(params.sessionKey),
+        }),
+      },
+    };
+  }
+  if (normalizedStatusCommand === "/turns") {
+    if (!params.command.isAuthorizedSender) {
+      logVerbose(
+        `Ignoring /turns from unauthorized sender: ${params.command.senderId || "<unknown>"}`,
+      );
+      return { shouldContinue: false };
+    }
+    return {
+      shouldContinue: false,
+      reply: {
+        text: buildTurnsText({
+          active: getActiveTrackedTurn(params.sessionKey),
+          recents: getRecentTrackedTurns(params.sessionKey),
+        }),
+      },
+    };
+  }
+  if (normalizedStatusCommand === "/nudge") {
+    if (!params.command.isAuthorizedSender) {
+      logVerbose(
+        `Ignoring /nudge from unauthorized sender: ${params.command.senderId || "<unknown>"}`,
+      );
+      return { shouldContinue: false };
+    }
+    const active = getActiveTrackedTurn(params.sessionKey);
+    if (active) {
+      updateTrackedTurn(active.turnId, { markVisible: true, markProgress: true });
+    }
+    return {
+      shouldContinue: false,
+      reply: {
+        text: buildNudgeText({
           active: getActiveTrackedTurn(params.sessionKey),
           recent: getRecentTrackedTurn(params.sessionKey),
         }),
