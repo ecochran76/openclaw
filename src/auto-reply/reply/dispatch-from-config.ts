@@ -2206,6 +2206,26 @@ export async function dispatchReplyFromConfig(
       markProgress: true,
     });
   };
+  const recordTrackedTurnSuppressedReply = () => {
+    if (!trackedTurnId) {
+      return;
+    }
+    updateTrackedTurn(trackedTurnId, {
+      deliveryState: "suppressed",
+      deliveryTarget,
+      markProgress: true,
+    });
+  };
+  const recordTrackedTurnReplyStranded = () => {
+    if (!trackedTurnId) {
+      return;
+    }
+    updateTrackedTurn(trackedTurnId, {
+      deliveryState: "reply_stranded",
+      deliveryTarget,
+      markProgress: true,
+    });
+  };
   const startTrackedTurnRun = (runId: string) => {
     if (!sessionKey || deliveryChannel !== "slack") {
       return;
@@ -2264,6 +2284,54 @@ export async function dispatchReplyFromConfig(
     schedule(20_000);
   };
 
+  const deriveTrackedTurnDeliveryState = (
+    snapshot?: ReturnType<typeof getActiveTrackedTurn>,
+    explicit?:
+      | "pending"
+      | "block_sent"
+      | "final_sent"
+      | "reply_stranded"
+      | "delivery_failed"
+      | "suppressed"
+      | "none",
+  ) => {
+    if (explicit) {
+      return explicit;
+    }
+    if (!snapshot) {
+      return undefined;
+    }
+    if (snapshot.deliveryState === "delivery_failed") {
+      return "delivery_failed";
+    }
+    if (snapshot.lastDeliverySuccessAt) {
+      return snapshot.deliveryState;
+    }
+    if (snapshot.deliveryState === "suppressed") {
+      return "suppressed";
+    }
+    if (snapshot.replyProduced) {
+      return "reply_stranded";
+    }
+    return "none";
+  };
+  const finalizeTrackedTurnDeliveryState = (
+    explicit?:
+      | "pending"
+      | "block_sent"
+      | "final_sent"
+      | "reply_stranded"
+      | "delivery_failed"
+      | "suppressed"
+      | "none",
+  ) => {
+    const snapshot = sessionKey ? getActiveTrackedTurn(sessionKey) : undefined;
+    const derived = deriveTrackedTurnDeliveryState(snapshot, explicit);
+    if (derived === "reply_stranded") {
+      recordTrackedTurnReplyStranded();
+    }
+    return { snapshot, derived };
+  };
   const finishTrackedTurnRun = (opts?: {
     status?: "done" | "error";
     phase?: "done" | "error";
@@ -2281,34 +2349,13 @@ export async function dispatchReplyFromConfig(
     if (!trackedTurnId) {
       return;
     }
-    const snapshot = sessionKey ? getActiveTrackedTurn(sessionKey) : undefined;
-    const derivedDeliveryState = (() => {
-      if (opts?.deliveryState) {
-        return opts.deliveryState;
-      }
-      if (!snapshot) {
-        return undefined;
-      }
-      if (snapshot.deliveryState === "delivery_failed") {
-        return "delivery_failed";
-      }
-      if (snapshot.lastDeliverySuccessAt) {
-        return snapshot.deliveryState;
-      }
-      if (snapshot.replyProduced) {
-        return "reply_stranded";
-      }
-      if (snapshot.deliveryState === "suppressed") {
-        return "suppressed";
-      }
-      return "none";
-    })();
+    const { derived } = finalizeTrackedTurnDeliveryState(opts?.deliveryState);
     finishTrackedTurn({
       turnId: trackedTurnId,
       status: opts?.status,
       phase: opts?.phase,
       error: opts?.error,
-      deliveryState: derivedDeliveryState,
+      deliveryState: derived,
     });
     trackedTurnId = undefined;
   };
@@ -2316,16 +2363,16 @@ export async function dispatchReplyFromConfig(
     if (!sessionKey || deliveryChannel !== "slack") {
       return undefined;
     }
-    const snapshot = getActiveTrackedTurn(sessionKey);
-    if (!snapshot || !snapshot.replyProduced || snapshot.lastDeliverySuccessAt) {
+    const { snapshot, derived } = finalizeTrackedTurnDeliveryState();
+    if (!snapshot || derived === "suppressed" || derived === "none") {
       return undefined;
     }
-    if (snapshot.deliveryState === "delivery_failed") {
+    if (derived === "delivery_failed") {
       return snapshot.lastDeliveryError
         ? `status: reply delivery failed (${snapshot.lastDeliveryError})`
         : "status: reply delivery failed";
     }
-    if (snapshot.deliveryState === "reply_stranded") {
+    if (derived === "reply_stranded") {
       return "status: turn finished but no visible reply was sent";
     }
     return "status: turn finished but no visible reply was sent";

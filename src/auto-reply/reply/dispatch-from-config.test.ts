@@ -616,8 +616,10 @@ let tryDispatchAcpReplyHook: typeof import("../../plugin-sdk/acp-runtime.js").tr
 let createReplyOperation: typeof import("./reply-run-registry.js").createReplyOperation;
 let replyRunRegistry: typeof import("./reply-run-registry.js").replyRunRegistry;
 let replyRunTesting: typeof import("./reply-run-registry.js").__testing;
+let getActiveTrackedTurn: typeof import("../turn-tracker.js").getActiveTrackedTurn;
 let getRecentTrackedTurn: typeof import("../turn-tracker.js").getRecentTrackedTurn;
 let resetTrackedTurnsForTests: typeof import("../turn-tracker.js").resetTrackedTurnsForTests;
+let updateTrackedTurn: typeof import("../turn-tracker.js").updateTrackedTurn;
 type DispatchReplyArgs = Parameters<
   typeof import("./dispatch-from-config.js").dispatchReplyFromConfig
 >[0];
@@ -941,7 +943,8 @@ describe("dispatchReplyFromConfig", () => {
       replyRunRegistry,
       __testing: replyRunTesting,
     } = await import("./reply-run-registry.js"));
-    ({ getRecentTrackedTurn, resetTrackedTurnsForTests } = await import("../turn-tracker.js"));
+    ({ getActiveTrackedTurn, getRecentTrackedTurn, resetTrackedTurnsForTests, updateTrackedTurn } =
+      await import("../turn-tracker.js"));
     const discordTestPlugin = {
       ...createChannelTestPluginBase({
         id: "discord",
@@ -4624,6 +4627,41 @@ describe("dispatchReplyFromConfig", () => {
     expect((finalCalls[0]?.[0] as ReplyPayload | undefined)?.text).toBe("NO_REPLY");
     const recent = getRecentTrackedTurn(ctx.SessionKey ?? "agent:main:main");
     expect(recent?.deliveryState).toBe("suppressed");
+  });
+
+  it("explicitly finalizes reply_stranded turns and emits the stranded notice", async () => {
+    setNoAbort();
+    const cfg = emptyConfig;
+    const dispatcher = createDispatcher();
+    const ctx = buildTestCtx({
+      Provider: "slack",
+      Surface: "slack",
+      SessionKey: "agent:main:main",
+    });
+
+    await dispatchReplyFromConfig({
+      ctx,
+      cfg,
+      dispatcher,
+      replyResolver: vi.fn(async (_ctx: MsgContext, opts?: GetReplyOptions) => {
+        await Promise.resolve(opts?.onAgentRunStart?.("run-stranded"));
+        const active = getActiveTrackedTurn(ctx.SessionKey ?? "agent:main:main");
+        expect(active?.turnId).toBeTruthy();
+        updateTrackedTurn(active!.turnId, {
+          replyProduced: true,
+          markProgress: true,
+        });
+        return undefined;
+      }),
+    });
+
+    const finalCalls = (dispatcher.sendFinalReply as ReturnType<typeof vi.fn>).mock.calls;
+    expect(finalCalls).toHaveLength(1);
+    expect((finalCalls[0]?.[0] as ReplyPayload | undefined)?.text).toContain(
+      "status: turn finished but no visible reply was sent",
+    );
+    const recent = getRecentTrackedTurn(ctx.SessionKey ?? "agent:main:main");
+    expect(recent?.deliveryState).toBe("reply_stranded");
   });
 
   it("fast-aborts without calling the reply resolver", async () => {
