@@ -15,6 +15,7 @@ import {
 } from "../status.js";
 import {
   buildTurnStatusText,
+  buildWhySilentText,
   getActiveTrackedTurn,
   getRecentTrackedTurn,
 } from "../turn-tracker.js";
@@ -270,6 +271,23 @@ export const handleStatusCommand: CommandHandler = async (params, allowTextComma
       shouldContinue: false,
       reply: {
         text: buildTurnStatusText({
+          active: getActiveTrackedTurn(params.sessionKey),
+          recent: getRecentTrackedTurn(params.sessionKey),
+        }),
+      },
+    };
+  }
+  if (normalizedStatusCommand === "/why-silent" || normalizedStatusCommand === "/whysilent") {
+    if (!params.command.isAuthorizedSender) {
+      logVerbose(
+        `Ignoring /why-silent from unauthorized sender: ${params.command.senderId || "<unknown>"}`,
+      );
+      return { shouldContinue: false };
+    }
+    return {
+      shouldContinue: false,
+      reply: {
+        text: buildWhySilentText({
           active: getActiveTrackedTurn(params.sessionKey),
           recent: getRecentTrackedTurn(params.sessionKey),
         }),

@@ -292,6 +292,13 @@ export function buildBuiltinChatCommands(
       tier: "standard",
     }),
     defineChatCommand({
+      key: "why-silent",
+      nativeName: "why-silent",
+      description: "Explain why the current Slack turn appears silent.",
+      textAliases: ["/why-silent", "/whysilent"],
+      category: "status",
+    }),
+    defineChatCommand({
       key: "allowlist",
       description: "List/add/remove allowlist entries.",
       textAlias: "/allowlist",

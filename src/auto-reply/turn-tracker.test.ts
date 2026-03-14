@@ -4,6 +4,7 @@ import {
   buildTurnProgressLine,
   buildTurnStatusText,
   buildTurnSummaryLine,
+  buildWhySilentText,
   finishTrackedTurn,
   resetTrackedTurnsForTests,
   startTrackedTurn,
@@ -117,5 +118,61 @@ describe("turn tracker", () => {
 
     expect(text).toContain("State: done");
     expect(text).toContain("Phase: done");
+  });
+
+  it("explains silence reasons for active and recent turns", () => {
+    const activeTurn = startTrackedTurn({
+      sessionKey: "agent:main:main",
+      channel: "slack",
+      startedAt: 0,
+      phase: "tool_wait",
+    });
+    updateTrackedTurn(activeTurn.turnId, {
+      activeTool: "exec",
+      deliveryState: "delivery_failed",
+      deliveryTarget: "originating_channel",
+      lastDeliveryAttemptAt: 20_000,
+      lastDeliveryError: "route-reply failed",
+      replyProduced: true,
+      markProgress: true,
+      at: 20_000,
+    });
+    const activeWhy = buildWhySilentText({
+      active: {
+        ...activeTurn,
+        phase: "tool_wait",
+        activeTool: "exec",
+        deliveryState: "delivery_failed",
+        deliveryTarget: "originating_channel",
+        lastDeliveryAttemptAt: 20_000,
+        lastDeliveryError: "route-reply failed",
+        replyProduced: true,
+        lastProgressAt: 20_000,
+        durationClass: "medium",
+        status: "active",
+        steerable: true,
+      },
+      now: 30_000,
+    });
+    expect(activeWhy).toContain("the reply was produced, but delivery failed");
+    expect(activeWhy).toContain("Delivery target: originating channel");
+    expect(activeWhy).toContain("Delivery error: route-reply failed");
+
+    const recentWhy = buildWhySilentText({
+      recent: {
+        ...activeTurn,
+        completedAt: 40_000,
+        updatedAt: 40_000,
+        lastProgressAt: 40_000,
+        status: "done",
+        phase: "done",
+        deliveryState: "suppressed",
+        durationClass: "medium",
+        steerable: true,
+      },
+      now: 50_000,
+    });
+    expect(recentWhy).toContain("intentionally produced no user-visible reply");
+    expect(recentWhy).toContain("Delivery: suppressed");
   });
 });

@@ -328,6 +328,75 @@ export function buildTurnSummaryLine(params: {
   return `${prefix}: ${parts.join(" · ")}`;
 }
 
+export function buildWhySilentText(params: {
+  active?: TrackedTurnSnapshot;
+  recent?: TrackedTurnSnapshot;
+  now?: number;
+}): string {
+  const now = params.now ?? Date.now();
+  const snapshot = params.active ?? params.recent;
+  if (!snapshot) {
+    return "🤫 Why silent\nNo active or recent turn for this session.";
+  }
+  const lines = ["🤫 Why silent"];
+  if (params.active) {
+    if (snapshot.deliveryState === "delivery_failed") {
+      lines.push("Answer: the reply was produced, but delivery failed.");
+    } else if (snapshot.deliveryState === "suppressed") {
+      lines.push("Answer: the turn is intentionally silent right now.");
+    } else if (snapshot.deliveryState === "reply_stranded") {
+      lines.push("Answer: the turn looks stranded after producing a reply.");
+    } else {
+      lines.push("Answer: the turn is still working.");
+    }
+  } else {
+    switch (snapshot.deliveryState) {
+      case "delivery_failed":
+        lines.push("Answer: the last turn produced a reply, but delivery failed.");
+        break;
+      case "reply_stranded":
+        lines.push("Answer: the last turn finished, but no visible reply was sent.");
+        break;
+      case "suppressed":
+        lines.push(
+          "Answer: the last turn intentionally produced no user-visible reply (for example NO_REPLY or heartbeat suppression).",
+        );
+        break;
+      case "block_sent":
+      case "final_sent":
+        lines.push("Answer: the runtime believes a visible reply was already delivered.");
+        break;
+      default:
+        lines.push("Answer: there is no active silent failure right now.");
+        break;
+    }
+  }
+  lines.push(`Phase: ${describePhase(snapshot.phase)}`);
+  lines.push(`State: ${params.active ? "active" : snapshot.status}`);
+  lines.push(`Delivery: ${describeDeliveryState(snapshot.deliveryState)}`);
+  if (snapshot.deliveryTarget) {
+    lines.push(`Delivery target: ${describeDeliveryTarget(snapshot.deliveryTarget)}`);
+  }
+  if (snapshot.activeTool) {
+    lines.push(`Tool: ${snapshot.activeTool}`);
+  }
+  lines.push(`Last progress: ${formatTrackedTurnAgo(snapshot.lastProgressAt, now)} ago`);
+  if (snapshot.lastUserVisibleUpdateAt) {
+    lines.push(
+      `Last visible update: ${formatTrackedTurnAgo(snapshot.lastUserVisibleUpdateAt, now)} ago`,
+    );
+  }
+  if (snapshot.lastDeliveryAttemptAt) {
+    lines.push(
+      `Last delivery attempt: ${formatTrackedTurnAgo(snapshot.lastDeliveryAttemptAt, now)} ago`,
+    );
+  }
+  if (snapshot.lastDeliveryError) {
+    lines.push(`Delivery error: ${snapshot.lastDeliveryError}`);
+  }
+  return lines.join("\n");
+}
+
 export function buildTurnStatusText(params: {
   active?: TrackedTurnSnapshot;
   recent?: TrackedTurnSnapshot;
