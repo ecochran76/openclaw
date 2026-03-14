@@ -20,7 +20,10 @@ import {
   resolveAgentIdFromSessionKey,
   toAgentStoreSessionKey,
 } from "../../routing/session-key.js";
-import { annotateInterSessionPromptText } from "../../sessions/input-provenance.js";
+import {
+  annotateInterSessionPromptText,
+  hasInterSessionUserProvenance,
+} from "../../sessions/input-provenance.js";
 import { isCronRunSessionKey, parseAgentSessionKey } from "../../sessions/session-key-utils.js";
 import { SESSION_LABEL_MAX_LENGTH } from "../../sessions/session-label.js";
 import { stripFormattedReasoningMessage } from "../../shared/text/formatted-reasoning-message.js";
@@ -48,7 +51,15 @@ import {
   SESSIONS_SEND_TOOL_DISPLAY_SUMMARY,
 } from "../tool-description-presets.js";
 import type { AnyAgentTool } from "./common.js";
-import { jsonResult, readNonNegativeIntegerParam, readStringParam } from "./common.js";
+import {
+  jsonResult,
+  readNumberParam,
+  readNonNegativeIntegerParam,
+  readStringArrayParam,
+  readStringOrNumberParam,
+  readStringParam,
+} from "./common.js";
+import { resolveAnnounceTarget } from "./sessions-announce-target.js";
 import {
   createSessionVisibilityGuard,
   createAgentToAgentPolicy,
@@ -57,21 +68,90 @@ import {
   resolveSessionToolContext,
   resolveVisibleSessionReference,
 } from "./sessions-helpers.js";
-import { resolveAnnounceTarget } from "./sessions-announce-target.js";
 import {
   buildAgentToAgentIngressEchoText,
   buildAgentToAgentMessageContext,
+  clampA2ATimeoutSeconds,
+  clampPingPongTurns,
   resolveIngressEchoPolicy,
   resolvePingPongTurns,
+  resolveRelayPolicy,
 } from "./sessions-send-helpers.js";
 import { runSessionsSendA2AFlow } from "./sessions-send-tool.a2a.js";
+
+function parseNaturalSessionSelector(value?: string): {
+  agentId?: string;
+  search?: string;
+  searchFields?: string[];
+  selection?: "most-recent" | "least-recent";
+  threadPolicy?: "prefer-thread";
+} | null {
+  const raw = value?.trim();
+  if (!raw) {
+    return null;
+  }
+  const normalized = raw.replace(/\s+/g, " ").trim();
+  const lower = normalized.toLowerCase();
+
+  const managedByMatch = normalized.match(/\bmanaged by\s+([a-z0-9][a-z0-9_-]*)\b/i);
+  const selection = lower.includes("most recent")
+    ? "most-recent"
+    : lower.includes("least recent")
+      ? "least-recent"
+      : undefined;
+
+  let search = normalized;
+  if (managedByMatch) {
+    search = search.replace(managedByMatch[0], " ").replace(/\s+/g, " ").trim();
+  }
+  search = search
+    .replace(/^the\s+/i, "")
+    .replace(/^(most|least)\s+recent\s+/i, "")
+    .replace(/\bsession\b/gi, " ")
+    .replace(/\s+/g, " ")
+    .trim();
+
+  const wantsDerivedTitle = /\ba2a\b|\bfeature\b|\bdev\b/i.test(search);
+  const shouldTreatAsNaturalSelector =
+    Boolean(managedByMatch) || Boolean(selection) || /\bmanaged by\b/i.test(lower);
+  if (!shouldTreatAsNaturalSelector || !search) {
+    return null;
+  }
+
+  return {
+    agentId: managedByMatch?.[1] ? normalizeAgentId(managedByMatch[1]) : undefined,
+    search,
+    searchFields: wantsDerivedTitle ? ["derivedTitle"] : undefined,
+    selection,
+    threadPolicy: "prefer-thread",
+  };
+}
 
 const SessionsSendToolSchema = Type.Object({
   sessionKey: Type.Optional(Type.String()),
   label: Type.Optional(Type.String({ minLength: 1, maxLength: SESSION_LABEL_MAX_LENGTH })),
   agentId: Type.Optional(Type.String({ minLength: 1, maxLength: 64 })),
+  channel: Type.Optional(Type.String({ minLength: 1 })),
+  to: Type.Optional(Type.String({ minLength: 1 })),
+  accountId: Type.Optional(Type.String({ minLength: 1 })),
+  threadId: Type.Optional(Type.Union([Type.String({ minLength: 1 }), Type.Number()])),
+  threadPolicy: Type.Optional(
+    Type.Union([
+      Type.Literal("exact"),
+      Type.Literal("prefer-thread"),
+      Type.Literal("most-recent"),
+      Type.Literal("channel-root"),
+    ]),
+  ),
+  allowChannelRootFallback: Type.Optional(Type.Boolean()),
+  activeMinutes: Type.Optional(Type.Number({ minimum: 1 })),
+  search: Type.Optional(Type.String()),
+  searchFields: Type.Optional(Type.Array(Type.String({ minLength: 1 }), { minItems: 1 })),
+  selection: Type.Optional(Type.Union([Type.Literal("most-recent"), Type.Literal("least-recent")])),
   message: Type.String(),
-  timeoutSeconds: Type.Optional(Type.Integer({ minimum: 0 })),
+  timeoutSeconds: Type.Optional(Type.Number({ minimum: 0 })),
+  maxPingPongTurns: Type.Optional(Type.Number({ minimum: 0, maximum: 5 })),
+  a2aTimeoutSeconds: Type.Optional(Type.Number({ minimum: 1, maximum: 300 })),
 });
 
 type GatewayCaller = typeof callGateway;
@@ -431,7 +511,6 @@ export function createSessionsSendTool(opts?: {
       const params = normalizeSessionsSendArguments(args);
       const gatewayCall = opts?.callGateway ?? callGateway;
       const message = readStringParam(params, "message", { required: true });
-      const timeoutSeconds = readNonNegativeIntegerParam(params, "timeoutSeconds") ?? 30;
       const { cfg, mainKey, alias, effectiveRequesterKey, restrictToSpawned } =
         resolveSessionToolContext(opts);
 
@@ -442,40 +521,79 @@ export function createSessionsSendTool(opts?: {
       });
 
       const sessionKeyParam = readStringParam(params, "sessionKey");
-      const labelParam = normalizeOptionalString(readStringParam(params, "label"));
-      const labelAgentIdParam = normalizeOptionalString(readStringParam(params, "agentId"));
-
-      let sessionKey = sessionKeyParam;
-      if (!sessionKey && !labelParam && labelAgentIdParam) {
-        const agentMainKey = resolveConfiguredAgentMainSessionKey({
-          cfg,
-          agentId: labelAgentIdParam,
-          mainKey,
-        });
-        if (!agentMainKey) {
-          return jsonResult({
-            runId: crypto.randomUUID(),
-            status: "error",
-            error: `agent not found: ${labelAgentIdParam}`,
-          });
-        }
-        sessionKey = agentMainKey;
-      }
-      if (!sessionKey && labelParam) {
-        const requesterAgentId = resolveAgentIdFromSessionKey(effectiveRequesterKey);
-        const requestedAgentId = labelAgentIdParam
-          ? normalizeAgentId(labelAgentIdParam)
+      const naturalSessionSelector = parseNaturalSessionSelector(sessionKeyParam);
+      const labelParam = readStringParam(params, "label")?.trim() || undefined;
+      const requestedAgentIdParam = readStringParam(params, "agentId")?.trim() || undefined;
+      const selectorChannelParam = readStringParam(params, "channel")?.trim() || undefined;
+      const selectorToParam = readStringParam(params, "to")?.trim() || undefined;
+      const selectorAccountIdParam = readStringParam(params, "accountId")?.trim() || undefined;
+      const selectorThreadIdParam = readStringOrNumberParam(params, "threadId");
+      const selectorThreadPolicyParam =
+        readStringParam(params, "threadPolicy")?.trim() || undefined;
+      const selectorSearchParam = readStringParam(params, "search")?.trim() || undefined;
+      const selectorSearchFieldsParam = readStringArrayParam(params, "searchFields")
+        ?.map((value) => value.trim())
+        .filter(Boolean);
+      const selectorSelectionParam = readStringParam(params, "selection")?.trim() || undefined;
+      const selectorActiveMinutesParam = readNumberParam(params, "activeMinutes", {
+        integer: true,
+      });
+      const selectorAllowChannelRootFallback =
+        typeof params.allowChannelRootFallback === "boolean"
+          ? params.allowChannelRootFallback
           : undefined;
+      const hasSelectorParams = Boolean(
+        selectorChannelParam ||
+        selectorToParam ||
+        selectorAccountIdParam ||
+        selectorThreadIdParam ||
+        selectorThreadPolicyParam ||
+        selectorSearchParam ||
+        (selectorSearchFieldsParam?.length ?? 0) > 0 ||
+        selectorSelectionParam ||
+        selectorActiveMinutesParam !== undefined ||
+        selectorAllowChannelRootFallback === true,
+      );
+      const hasNaturalSelector = Boolean(
+        naturalSessionSelector && !hasSelectorParams && !labelParam,
+      );
+      const targetModeCount = [
+        Boolean(sessionKeyParam && !hasNaturalSelector),
+        Boolean(labelParam),
+        hasSelectorParams || hasNaturalSelector,
+      ].filter(Boolean).length;
+      if (targetModeCount > 1) {
+        return jsonResult({
+          runId: crypto.randomUUID(),
+          status: "error",
+          error: "Provide either sessionKey, label, or selector fields (not multiple).",
+        });
+      }
 
-        if (restrictToSpawned && requestedAgentId && requestedAgentId !== requesterAgentId) {
+      const requesterResolutionAgentId = resolveAgentIdFromSessionKey(effectiveRequesterKey);
+      const requestedAgentId = requestedAgentIdParam
+        ? normalizeAgentId(requestedAgentIdParam)
+        : undefined;
+      const effectiveRequestedAgentId = requestedAgentId ?? naturalSessionSelector?.agentId;
+      if (
+        (labelParam || hasSelectorParams || hasNaturalSelector) &&
+        restrictToSpawned &&
+        effectiveRequestedAgentId
+      ) {
+        if (effectiveRequestedAgentId !== requesterResolutionAgentId) {
           return jsonResult({
             runId: crypto.randomUUID(),
             status: "forbidden",
-            error: "Sandboxed sessions_send label lookup is limited to this agent",
+            error: "Sandboxed sessions_send target resolution is limited to this agent",
           });
         }
-
-        if (requesterAgentId && requestedAgentId && requestedAgentId !== requesterAgentId) {
+      }
+      if (
+        (labelParam || hasSelectorParams || hasNaturalSelector) &&
+        requesterResolutionAgentId &&
+        effectiveRequestedAgentId
+      ) {
+        if (effectiveRequestedAgentId !== requesterResolutionAgentId) {
           if (!a2aPolicy.enabled) {
             return jsonResult({
               runId: crypto.randomUUID(),
@@ -484,7 +602,7 @@ export function createSessionsSendTool(opts?: {
                 "Agent-to-agent messaging is disabled. Set tools.agentToAgent.enabled=true to allow cross-agent sends.",
             });
           }
-          if (!a2aPolicy.isAllowed(requesterAgentId, requestedAgentId)) {
+          if (!a2aPolicy.isAllowed(requesterResolutionAgentId, effectiveRequestedAgentId)) {
             return jsonResult({
               runId: crypto.randomUUID(),
               status: "forbidden",
@@ -492,20 +610,118 @@ export function createSessionsSendTool(opts?: {
             });
           }
         }
+      }
 
+      const effectiveSelectorSearch = selectorSearchParam ?? naturalSessionSelector?.search;
+      const effectiveSelectorSearchFields = selectorSearchFieldsParam?.length
+        ? selectorSearchFieldsParam
+        : naturalSessionSelector?.searchFields;
+      const effectiveSelectorSelection =
+        selectorSelectionParam ?? naturalSessionSelector?.selection;
+      const effectiveSelectorThreadPolicy =
+        selectorThreadPolicyParam ?? naturalSessionSelector?.threadPolicy;
+
+      let sessionKey = hasNaturalSelector ? undefined : sessionKeyParam;
+      if (
+        !sessionKey &&
+        !labelParam &&
+        !hasSelectorParams &&
+        !hasNaturalSelector &&
+        requestedAgentIdParam
+      ) {
+        const agentMainKey = resolveConfiguredAgentMainSessionKey({
+          cfg,
+          agentId: requestedAgentIdParam,
+          mainKey,
+        });
+        if (!agentMainKey) {
+          return jsonResult({
+            runId: crypto.randomUUID(),
+            status: "error",
+            error: `agent not found: ${requestedAgentIdParam}`,
+          });
+        }
+        sessionKey = agentMainKey;
+      }
+      let resolvedTarget:
+        | {
+            sessionKey: string;
+            agentId?: string;
+            deliveryContext?: {
+              channel?: string;
+              to?: string;
+              accountId?: string;
+              threadId?: string;
+            };
+            resolution?: {
+              matchedBy?: string;
+              threadPolicy?: string;
+              selection?: string;
+              fallbackUsed?: boolean;
+              search?: string;
+              searchFields?: string[];
+            };
+          }
+        | undefined;
+      if (!sessionKey && (labelParam || hasSelectorParams || hasNaturalSelector)) {
         const resolveParams: Record<string, unknown> = {
-          label: labelParam,
-          ...(requestedAgentId ? { agentId: requestedAgentId } : {}),
+          ...(labelParam ? { label: labelParam } : {}),
+          ...(effectiveRequestedAgentId ? { agentId: effectiveRequestedAgentId } : {}),
+          ...(selectorChannelParam ? { channel: selectorChannelParam } : {}),
+          ...(selectorToParam ? { to: selectorToParam } : {}),
+          ...(selectorAccountIdParam ? { accountId: selectorAccountIdParam } : {}),
+          ...(selectorThreadIdParam ? { threadId: selectorThreadIdParam } : {}),
+          ...(effectiveSelectorThreadPolicy ? { threadPolicy: effectiveSelectorThreadPolicy } : {}),
+          ...(effectiveSelectorSearch ? { search: effectiveSelectorSearch } : {}),
+          ...(effectiveSelectorSearchFields?.length
+            ? { searchFields: effectiveSelectorSearchFields }
+            : {}),
+          ...(effectiveSelectorSelection ? { selection: effectiveSelectorSelection } : {}),
+          ...(selectorActiveMinutesParam !== undefined
+            ? { activeMinutes: selectorActiveMinutesParam }
+            : {}),
+          ...(selectorAllowChannelRootFallback === true ? { allowChannelRootFallback: true } : {}),
           ...(restrictToSpawned ? { spawnedBy: effectiveRequesterKey } : {}),
         };
         let resolvedKey;
         try {
-          const resolved = await gatewayCall<{ key: string }>({
+          const resolved = await gatewayCall<{
+            key?: string;
+            agentId?: string;
+            deliveryContext?: {
+              channel?: string;
+              to?: string;
+              accountId?: string;
+              threadId?: string;
+            };
+            resolution?: {
+              matchedBy?: string;
+              threadPolicy?: string;
+              selection?: string;
+              fallbackUsed?: boolean;
+              search?: string;
+              searchFields?: string[];
+            };
+          }>({
             method: "sessions.resolve",
             params: resolveParams,
             timeoutMs: 10_000,
           });
-          resolvedKey = normalizeOptionalString(resolved?.key) ?? "";
+          resolvedKey = typeof resolved?.key === "string" ? resolved.key.trim() : "";
+          if (resolvedKey) {
+            resolvedTarget = {
+              sessionKey: resolvedKey,
+              agentId: typeof resolved?.agentId === "string" ? resolved.agentId : undefined,
+              deliveryContext:
+                resolved?.deliveryContext && typeof resolved.deliveryContext === "object"
+                  ? resolved.deliveryContext
+                  : undefined,
+              resolution:
+                resolved?.resolution && typeof resolved.resolution === "object"
+                  ? resolved.resolution
+                  : undefined,
+            };
+          }
         } catch (err) {
           const msg = formatErrorMessage(err);
           if (restrictToSpawned) {
@@ -518,7 +734,11 @@ export function createSessionsSendTool(opts?: {
           return jsonResult({
             runId: crypto.randomUUID(),
             status: "error",
-            error: msg || `No session found with label: ${labelParam}`,
+            error:
+              msg ||
+              (labelParam
+                ? `No session found with label: ${labelParam}`
+                : "No session matched selector filters."),
           });
         }
 
@@ -533,7 +753,9 @@ export function createSessionsSendTool(opts?: {
           return jsonResult({
             runId: crypto.randomUUID(),
             status: "error",
-            error: `No session found with label: ${labelParam}`,
+            error: labelParam
+              ? `No session found with label: ${labelParam}`
+              : "No session matched selector filters.",
           });
         }
         sessionKey = resolvedKey;
@@ -543,7 +765,7 @@ export function createSessionsSendTool(opts?: {
         return jsonResult({
           runId: crypto.randomUUID(),
           status: "error",
-          error: "Either sessionKey or label is required",
+          error: "Either sessionKey, label, or selector fields are required",
         });
       }
       const resolvedSession = await resolveSessionReference({
@@ -578,11 +800,25 @@ export function createSessionsSendTool(opts?: {
       // Normalize sessionKey/sessionId input into a canonical session key.
       const resolvedKey = visibleSession.key;
       const displayKey = visibleSession.displayKey;
+      const resolvedTargetDisplay = resolvedTarget
+        ? { ...resolvedTarget, sessionKey: displayKey }
+        : undefined;
+      const timeoutSeconds = readNonNegativeIntegerParam(params, "timeoutSeconds") ?? 30;
       const timeoutMs =
         finiteSecondsToTimerSafeMilliseconds(timeoutSeconds, {
           floorSeconds: true,
         }) ?? 0;
       const announceTimeoutMs = timeoutSeconds === 0 ? 30_000 : timeoutMs;
+      const maxPingPongTurns = clampPingPongTurns(
+        typeof params.maxPingPongTurns === "number" ? params.maxPingPongTurns : undefined,
+        resolvePingPongTurns(cfg),
+      );
+      const a2aTimeoutMs =
+        clampA2ATimeoutSeconds(
+          typeof params.a2aTimeoutSeconds === "number" ? params.a2aTimeoutSeconds : undefined,
+        ) * 1000;
+      const a2aStepTimeoutMs =
+        timeoutSeconds === 0 ? a2aTimeoutMs : Math.min(announceTimeoutMs, a2aTimeoutMs);
       const idempotencyKey = crypto.randomUUID();
       let runId: string = idempotencyKey;
       if (parseSessionThreadInfoFast(resolvedKey).threadId) {
@@ -606,7 +842,8 @@ export function createSessionsSendTool(opts?: {
           runId: crypto.randomUUID(),
           status: access.status,
           error: access.error,
-          sessionKey: unresolvedDisplayKey,
+          sessionKey: displayKey,
+          resolvedTarget: resolvedTargetDisplay,
         });
       }
 
@@ -649,6 +886,41 @@ export function createSessionsSendTool(opts?: {
                 callGateway: gatewayCall,
               }).catch(() => undefined)
             : undefined;
+      const ingressEchoPolicy = resolveIngressEchoPolicy(cfg);
+      let ingressEcho: SessionsSendIngressEchoResult | { status: "disabled" | "not_applicable" } = {
+        status: ingressEchoPolicy.enabled ? "not_applicable" : "disabled",
+      };
+
+      const allowNestedSessionsSend =
+        cfg.session?.agentToAgent?.guard?.allowNestedSessionsSend === true;
+      if (!allowNestedSessionsSend && opts?.agentSessionKey) {
+        try {
+          const currentHistory = await gatewayCall<{ messages?: Array<Record<string, unknown>> }>({
+            method: "chat.history",
+            params: { sessionKey: opts.agentSessionKey, limit: 20 },
+            timeoutMs: 10_000,
+          });
+          const messages = Array.isArray(currentHistory?.messages) ? currentHistory.messages : [];
+          const latestUser = [...messages].toReversed().find((entry) => entry?.role === "user");
+          const provenance = latestUser?.provenance as Record<string, unknown> | undefined;
+          if (
+            hasInterSessionUserProvenance(latestUser as { role?: unknown; provenance?: unknown }) &&
+            provenance?.sourceTool === "sessions_send"
+          ) {
+            return jsonResult({
+              runId: crypto.randomUUID(),
+              status: "forbidden",
+              error:
+                "Nested sessions_send relay blocked by session.agentToAgent.guard.allowNestedSessionsSend=false.",
+              sessionKey: displayKey,
+              resolvedTarget: resolvedTargetDisplay,
+              ingressEcho,
+            });
+          }
+        } catch {
+          // Best effort guard; if current session history is unavailable, preserve prior behavior.
+        }
+      }
 
       const agentMessageContext = buildAgentToAgentMessageContext({
         requesterSessionKey: opts?.agentSessionKey,
@@ -672,8 +944,22 @@ export function createSessionsSendTool(opts?: {
         extraSystemPrompt: agentMessageContext,
         inputProvenance,
       };
-      const maxPingPongTurns = resolvePingPongTurns(cfg);
-      const ingressEchoPolicy = resolveIngressEchoPolicy(cfg);
+      const relayPolicy = resolveRelayPolicy(cfg);
+      const requesterAgentId = requesterSessionKey
+        ? (resolveAgentIdFromSessionKey(requesterSessionKey) ?? "requester")
+        : "requester";
+      const targetAgentId = resolveAgentIdFromSessionKey(resolvedKey) ?? "target";
+      const sourceRelayTarget =
+        requesterSessionKey && requesterSessionKey !== resolvedKey
+          ? await resolveAnnounceTarget({
+              sessionKey: requesterSessionKey,
+              displayKey: requesterSessionKey,
+            })
+          : null;
+      const targetRelayTarget = await resolveAnnounceTarget({
+        sessionKey: resolvedKey,
+        displayKey,
+      });
 
       // Skip the A2A ping-pong + announce flow when the current caller is the
       // parent of a parent-owned child session it spawned itself and another
@@ -717,50 +1003,74 @@ export function createSessionsSendTool(opts?: {
       const delivery = skipA2AFlow
         ? ({ status: "skipped", mode: "announce" } as const)
         : ({ status: "pending", mode: "announce" } as const);
+      const defaultRelay = {
+        status: relayPolicy.enabled
+          ? timeoutSeconds === 0 && !skipA2AFlow
+            ? "pending"
+            : "not_applicable"
+          : "disabled",
+        mode: relayPolicy.mode,
+        mirrorTurns: relayPolicy.mirrorTurns,
+        targets: [],
+      };
 
-      const ingressEcho =
-        !skipA2AFlow && ingressEchoPolicy.enabled
-          ? await deliverA2AIngressEcho({
-              callGateway: gatewayCall,
-              displayKey,
-              message,
-              requireDelivery: ingressEchoPolicy.requireDelivery,
-              requesterSessionKey,
-              requesterChannel,
-              targetSessionKey: resolvedKey,
-            })
-          : undefined;
-      if (ingressEcho?.status === "blocked") {
+      if (!skipA2AFlow && ingressEchoPolicy.enabled) {
+        ingressEcho = await deliverA2AIngressEcho({
+          callGateway: gatewayCall,
+          displayKey,
+          message,
+          requireDelivery: ingressEchoPolicy.requireDelivery,
+          requesterSessionKey,
+          requesterChannel,
+          targetSessionKey: resolvedKey,
+        });
+      }
+      if (ingressEcho.status === "blocked") {
         return jsonResult({
           runId,
           status: "error",
           error: ingressEcho.error,
           sessionKey: displayKey,
+          resolvedTarget: resolvedTargetDisplay,
           ingressEcho,
         });
       }
 
-      const startA2AFlow = (
+      const startA2AFlow = async (
         roundOneReply?: string,
         waitRunId?: string,
         flowTargetSessionKey = resolvedKey,
         flowDisplayKey = displayKey,
       ) => {
         if (skipA2AFlow) {
-          return;
+          return { relay: defaultRelay };
         }
-        void runSessionsSendA2AFlow({
-          targetSessionKey: flowTargetSessionKey,
-          displayKey: flowDisplayKey,
-          message,
-          announceTimeoutMs,
-          maxPingPongTurns,
-          requesterSessionKey,
-          requesterChannel,
-          baseline: baselineReply,
-          roundOneReply,
-          waitRunId,
-        });
+        const flowTargetRelayTarget =
+          flowTargetSessionKey === resolvedKey
+            ? targetRelayTarget
+            : await resolveAnnounceTarget({
+                sessionKey: flowTargetSessionKey,
+                displayKey: flowDisplayKey,
+              });
+        return (
+          (await runSessionsSendA2AFlow({
+            targetSessionKey: flowTargetSessionKey,
+            displayKey: flowDisplayKey,
+            message,
+            announceTimeoutMs: a2aStepTimeoutMs,
+            maxPingPongTurns,
+            requesterSessionKey,
+            requesterChannel,
+            baseline: baselineReply,
+            roundOneReply,
+            waitRunId,
+            relayPolicy,
+            sourceRelayTarget,
+            targetRelayTarget: flowTargetRelayTarget,
+            requesterAgentId,
+            targetAgentId: resolveAgentIdFromSessionKey(flowTargetSessionKey) ?? targetAgentId,
+          })) ?? { relay: defaultRelay }
+        );
       };
 
       if (timeoutSeconds === 0) {
@@ -771,20 +1081,26 @@ export function createSessionsSendTool(opts?: {
           sessionKey: displayKey,
           deliveryTimeoutMs: announceTimeoutMs,
           allowActiveRunQueueDelivery: true,
+          extraResult: {
+            resolvedTarget: resolvedTargetDisplay,
+            ingressEcho,
+          },
         });
         if (!start.ok) {
           return start.result;
         }
         runId = start.runId;
         if (!start.activeRunQueue) {
-          startA2AFlow(undefined, runId, start.a2aSessionKey, start.a2aDisplayKey);
+          void startA2AFlow(undefined, runId, start.a2aSessionKey, start.a2aDisplayKey);
         }
         return jsonResult({
           runId,
           status: "accepted",
           sessionKey: displayKey,
+          resolvedTarget: resolvedTargetDisplay,
           delivery,
-          ...(ingressEcho ? { ingressEcho } : {}),
+          ingressEcho,
+          relay: defaultRelay,
         });
       }
 
@@ -794,6 +1110,10 @@ export function createSessionsSendTool(opts?: {
         sendParams,
         sessionKey: displayKey,
         deliveryTimeoutMs: announceTimeoutMs,
+        extraResult: {
+          resolvedTarget: resolvedTargetDisplay,
+          ingressEcho,
+        },
       });
       if (!start.ok) {
         return start.result;
@@ -810,7 +1130,7 @@ export function createSessionsSendTool(opts?: {
 
       if (result.status === "timeout") {
         if (isPendingErrorAgentWaitTimeout(result)) {
-          startA2AFlow(undefined, runId);
+          void startA2AFlow(undefined, runId);
           return jsonResult({
             runId,
             status: "timeout",
@@ -821,13 +1141,15 @@ export function createSessionsSendTool(opts?: {
           });
         }
         if (!isTerminalAgentWaitTimeout(result)) {
-          startA2AFlow(undefined, runId);
+          void startA2AFlow(undefined, runId);
           return jsonResult({
             runId,
             status: "accepted",
             sessionKey: displayKey,
+            resolvedTarget: resolvedTargetDisplay,
             delivery,
-            ...(ingressEcho ? { ingressEcho } : {}),
+            ingressEcho,
+            relay: defaultRelay,
           });
         }
         return jsonResult({
@@ -836,7 +1158,8 @@ export function createSessionsSendTool(opts?: {
           error: result.error,
           sentBeforeError: true,
           sessionKey: displayKey,
-          ...(ingressEcho ? { ingressEcho } : {}),
+          resolvedTarget: resolvedTargetDisplay,
+          ingressEcho,
         });
       }
       if (result.status === "error") {
@@ -846,19 +1169,36 @@ export function createSessionsSendTool(opts?: {
           error: result.error ?? "agent error",
           sentBeforeError: true,
           sessionKey: displayKey,
-          ...(ingressEcho ? { ingressEcho } : {}),
+          resolvedTarget: resolvedTargetDisplay,
+          ingressEcho,
         });
       }
       const reply = result.replyText;
-      startA2AFlow(reply ?? undefined);
+      const a2aResult = await startA2AFlow(reply ?? undefined);
+      const relay = a2aResult.relay ?? defaultRelay;
+      if (relayPolicy.enabled && (relay.status === "blocked" || relay.status === "failed")) {
+        return jsonResult({
+          runId,
+          status: "error",
+          error: "Required relay delivery failed.",
+          reply,
+          sessionKey: displayKey,
+          resolvedTarget: resolvedTargetDisplay,
+          delivery,
+          ingressEcho,
+          relay,
+        });
+      }
 
       return jsonResult({
         runId,
         status: "ok",
         reply,
         sessionKey: displayKey,
+        resolvedTarget: resolvedTargetDisplay,
         delivery,
-        ...(ingressEcho ? { ingressEcho } : {}),
+        ingressEcho,
+        relay,
       });
     },
   };
