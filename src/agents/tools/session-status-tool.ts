@@ -801,11 +801,12 @@ export function createSessionStatusTool(opts?: {
       let usageLine: string | undefined;
       if (usageProvider) {
         try {
+          const sourceProfile = resolved.entry.authProfileOverride?.trim();
           const usageSummary = await loadProviderUsageSummary({
             timeoutMs: 3500,
             providers: [usageProvider],
             agentDir,
-            profileId: resolved.entry.authProfileOverride,
+            profileId: sourceProfile,
           });
           const snapshot = usageSummary.providers.find((entry) => entry.provider === usageProvider);
           if (snapshot) {
@@ -815,11 +816,12 @@ export function createSessionStatusTool(opts?: {
               includeResets: true,
             });
             if (formatted && !formatted.startsWith("error:")) {
-              const sourceProfile = resolved.entry.authProfileOverride?.trim();
               usageLine = sourceProfile
                 ? `📊 Usage (profile ${sourceProfile}): ${formatted}`
                 : `📊 Usage: ${formatted}`;
             }
+          } else if (sourceProfile) {
+            usageLine = `📊 Usage unavailable for active profile (${sourceProfile})`;
           }
         } catch {
           const sourceProfile = resolved.entry.authProfileOverride?.trim();

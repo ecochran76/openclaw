@@ -237,7 +237,7 @@ async function resolveOAuthToken(params: {
     provider: params.provider,
   });
   const deduped = dedupeProfileIds(order);
-  const profileIds = params.profileId ? [params.profileId, ...deduped] : deduped;
+  const profileIds = params.profileId ? [params.profileId] : deduped;
 
   for (const profileId of dedupeProfileIds(profileIds)) {
     const cred = store.profiles[profileId];
