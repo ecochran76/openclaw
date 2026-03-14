@@ -112,6 +112,10 @@ USER.md
 *.tgz
 *.tar.gz
 *.zip
+.patch-backups/
+.tmp-*.mts
+openclaw-*.tgz
+.tgz
 .idea
 .vscode/
 
