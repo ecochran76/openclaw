@@ -14,6 +14,17 @@ export type TrackedTurnStatus = "active" | "done" | "error";
 
 export type TrackedTurnDurationClass = "instant" | "short" | "medium" | "long";
 
+export type TrackedTurnDeliveryState =
+  | "pending"
+  | "block_sent"
+  | "final_sent"
+  | "reply_stranded"
+  | "delivery_failed"
+  | "suppressed"
+  | "none";
+
+export type TrackedTurnDeliveryTarget = "same_channel" | "originating_channel";
+
 export type TrackedTurnSnapshot = {
   turnId: string;
   runId?: string;
@@ -30,7 +41,12 @@ export type TrackedTurnSnapshot = {
   lastProgressAt: number;
   lastUserVisibleUpdateAt?: number;
   activeTool?: string;
-  deliveryState?: "pending" | "block" | "final" | "none";
+  deliveryState?: TrackedTurnDeliveryState;
+  deliveryTarget?: TrackedTurnDeliveryTarget;
+  lastDeliveryAttemptAt?: number;
+  lastDeliverySuccessAt?: number;
+  lastDeliveryError?: string;
+  replyProduced?: boolean;
   lastError?: string;
 };
 
@@ -71,6 +87,7 @@ export function startTrackedTurn(params: {
   startedAt?: number;
   phase?: TrackedTurnPhase;
   steerable?: boolean;
+  deliveryTarget?: TrackedTurnDeliveryTarget;
 }): TrackedTurnSnapshot {
   const startedAt = params.startedAt ?? Date.now();
   const snapshot: TrackedTurnSnapshot = {
@@ -86,6 +103,8 @@ export function startTrackedTurn(params: {
     steerable: params.steerable ?? true,
     lastProgressAt: startedAt,
     deliveryState: "pending",
+    deliveryTarget: params.deliveryTarget,
+    replyProduced: false,
   };
   activeBySession.set(params.sessionKey, snapshot);
   turnIdToSession.set(snapshot.turnId, params.sessionKey);
@@ -111,7 +130,17 @@ export function updateTrackedTurn(
   patch: Partial<
     Pick<
       TrackedTurnSnapshot,
-      "phase" | "activeTool" | "lastError" | "steerable" | "deliveryState" | "status"
+      | "phase"
+      | "activeTool"
+      | "lastError"
+      | "steerable"
+      | "deliveryState"
+      | "deliveryTarget"
+      | "status"
+      | "lastDeliveryAttemptAt"
+      | "lastDeliverySuccessAt"
+      | "lastDeliveryError"
+      | "replyProduced"
     >
   > & { markProgress?: boolean; markVisible?: boolean; at?: number },
 ): TrackedTurnSnapshot | undefined {
@@ -139,6 +168,21 @@ export function updateTrackedTurn(
   if (patch.deliveryState !== undefined) {
     current.deliveryState = patch.deliveryState;
   }
+  if (patch.deliveryTarget !== undefined) {
+    current.deliveryTarget = patch.deliveryTarget;
+  }
+  if (patch.lastDeliveryAttemptAt !== undefined) {
+    current.lastDeliveryAttemptAt = patch.lastDeliveryAttemptAt;
+  }
+  if (patch.lastDeliverySuccessAt !== undefined) {
+    current.lastDeliverySuccessAt = patch.lastDeliverySuccessAt;
+  }
+  if (patch.lastDeliveryError !== undefined) {
+    current.lastDeliveryError = patch.lastDeliveryError || undefined;
+  }
+  if (patch.replyProduced !== undefined) {
+    current.replyProduced = patch.replyProduced;
+  }
   if (patch.status) {
     current.status = patch.status;
   }
@@ -147,9 +191,6 @@ export function updateTrackedTurn(
   }
   if (patch.markVisible) {
     current.lastUserVisibleUpdateAt = at;
-    if (current.deliveryState === "pending") {
-      current.deliveryState = "block";
-    }
   }
   current.updatedAt = at;
   activeBySession.set(sessionKey, current);
@@ -229,9 +270,62 @@ function describePhase(phase: TrackedTurnPhase): string {
   }
 }
 
+function describeDeliveryState(state?: TrackedTurnDeliveryState): string {
+  switch (state) {
+    case "pending":
+      return "reply pending";
+    case "block_sent":
+      return "block sent";
+    case "final_sent":
+      return "final sent";
+    case "reply_stranded":
+      return "reply stranded";
+    case "delivery_failed":
+      return "delivery failed";
+    case "suppressed":
+      return "suppressed";
+    case "none":
+      return "no visible reply";
+    default:
+      return "unknown";
+  }
+}
+
+function describeDeliveryTarget(target?: TrackedTurnDeliveryTarget): string {
+  switch (target) {
+    case "same_channel":
+      return "same channel";
+    case "originating_channel":
+      return "originating channel";
+    default:
+      return "unknown";
+  }
+}
+
 export function buildTurnProgressLine(snapshot: TrackedTurnSnapshot): string {
   const toolSuffix = snapshot.activeTool ? ` (${snapshot.activeTool})` : "";
   return `working: ${describePhase(snapshot.phase)}${toolSuffix}`;
+}
+
+export function buildTurnSummaryLine(params: {
+  active?: TrackedTurnSnapshot;
+  recent?: TrackedTurnSnapshot;
+}): string | undefined {
+  const snapshot = params.active ?? params.recent;
+  if (!snapshot) {
+    return undefined;
+  }
+  const prefix = params.active ? "🧭 Turn" : "🧭 Recent turn";
+  const parts = [
+    params.active ? "active" : snapshot.status,
+    describePhase(snapshot.phase),
+    snapshot.durationClass,
+    describeDeliveryState(snapshot.deliveryState),
+  ];
+  if (snapshot.activeTool) {
+    parts.push(snapshot.activeTool);
+  }
+  return `${prefix}: ${parts.join(" · ")}`;
 }
 
 export function buildTurnStatusText(params: {
@@ -254,12 +348,30 @@ export function buildTurnStatusText(params: {
   if (snapshot.activeTool) {
     lines.push(`Tool: ${snapshot.activeTool}`);
   }
+  lines.push(`Reply produced: ${snapshot.replyProduced ? "yes" : "no"}`);
+  lines.push(`Delivery: ${describeDeliveryState(snapshot.deliveryState)}`);
+  if (snapshot.deliveryTarget) {
+    lines.push(`Delivery target: ${describeDeliveryTarget(snapshot.deliveryTarget)}`);
+  }
+  if (snapshot.lastDeliveryAttemptAt) {
+    lines.push(
+      `Last delivery attempt: ${formatTrackedTurnAgo(snapshot.lastDeliveryAttemptAt, now)} ago`,
+    );
+  }
+  if (snapshot.lastDeliverySuccessAt) {
+    lines.push(
+      `Last delivery success: ${formatTrackedTurnAgo(snapshot.lastDeliverySuccessAt, now)} ago`,
+    );
+  }
   lines.push(`Last progress: ${formatTrackedTurnAgo(snapshot.lastProgressAt, now)} ago`);
   lines.push(
     `Last visible update: ${snapshot.lastUserVisibleUpdateAt ? `${formatTrackedTurnAgo(snapshot.lastUserVisibleUpdateAt, now)} ago` : "none"}`,
   );
   if (snapshot.runId) {
     lines.push(`Run: ${snapshot.runId.slice(0, 8)}`);
+  }
+  if (snapshot.lastDeliveryError) {
+    lines.push(`Delivery error: ${snapshot.lastDeliveryError}`);
   }
   if (snapshot.lastError) {
     lines.push(`Error: ${snapshot.lastError}`);

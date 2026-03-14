@@ -36,6 +36,11 @@ describe("/turn-status", () => {
     updateTrackedTurn(turn.turnId, {
       phase: "tool_wait",
       activeTool: "browser",
+      replyProduced: true,
+      deliveryState: "delivery_failed",
+      deliveryTarget: "originating_channel",
+      lastDeliveryAttemptAt: Date.now() - 5_000,
+      lastDeliveryError: "route-reply failed",
       markProgress: true,
       markVisible: true,
     });
@@ -49,6 +54,10 @@ describe("/turn-status", () => {
     expect(result.shouldContinue).toBe(false);
     expect(result.reply?.text).toContain("State: active");
     expect(result.reply?.text).toContain("Tool: browser");
+    expect(result.reply?.text).toContain("Reply produced: yes");
+    expect(result.reply?.text).toContain("Delivery: delivery failed");
+    expect(result.reply?.text).toContain("Delivery target: originating channel");
+    expect(result.reply?.text).toContain("Delivery error: route-reply failed");
     expect(result.reply?.text).toContain("Run: run-abcd");
   });
 });

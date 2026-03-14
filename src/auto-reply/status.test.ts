@@ -523,6 +523,20 @@ describe("buildStatusMessage", () => {
     expect(normalized).not.toContain("\u001b");
   });
 
+  it("includes a compact turn summary when provided", () => {
+    const text = buildStatusMessage({
+      agent: {
+        model: "anthropic/pi:opus",
+      },
+      sessionKey: "agent:main:main",
+      queue: { mode: "collect", depth: 0 },
+      turnLine: "🧭 Turn: active · tool wait · medium · delivery failed · exec",
+    });
+    const normalized = normalizeTestText(text);
+
+    expect(normalized).toContain("Turn: active · tool wait · medium · delivery failed · exec");
+  });
+
   it("falls back to sessionEntry levels when resolved levels are not passed", () => {
     const text = buildStatusMessage({
       agent: {

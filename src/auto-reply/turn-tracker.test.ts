@@ -3,6 +3,7 @@ import {
   attachTrackedTurnRunId,
   buildTurnProgressLine,
   buildTurnStatusText,
+  buildTurnSummaryLine,
   finishTrackedTurn,
   resetTrackedTurnsForTests,
   startTrackedTurn,
@@ -30,7 +31,11 @@ describe("turn tracker", () => {
     });
     updateTrackedTurn(turn.turnId, {
       markVisible: true,
-      deliveryState: "block",
+      deliveryState: "block_sent",
+      deliveryTarget: "same_channel",
+      lastDeliveryAttemptAt: 29_000,
+      lastDeliverySuccessAt: 30_000,
+      replyProduced: true,
       at: 30_000,
     });
 
@@ -42,6 +47,11 @@ describe("turn tracker", () => {
         activeTool: "exec",
         lastProgressAt: 25_000,
         lastUserVisibleUpdateAt: 30_000,
+        lastDeliveryAttemptAt: 29_000,
+        lastDeliverySuccessAt: 30_000,
+        deliveryState: "block_sent",
+        deliveryTarget: "same_channel",
+        replyProduced: true,
         durationClass: "medium",
       },
       now: 70_000,
@@ -50,7 +60,28 @@ describe("turn tracker", () => {
     expect(text).toContain("State: active");
     expect(text).toContain("Phase: tool wait");
     expect(text).toContain("Tool: exec");
+    expect(text).toContain("Reply produced: yes");
+    expect(text).toContain("Delivery: block sent");
+    expect(text).toContain("Delivery target: same channel");
     expect(text).toContain("Run: run-1234");
+    expect(
+      buildTurnSummaryLine({
+        active: {
+          ...turn,
+          phase: "tool_wait",
+          activeTool: "exec",
+          status: "active",
+          durationClass: "medium",
+          deliveryState: "block_sent",
+          replyProduced: true,
+          lastProgressAt: 25_000,
+          lastUserVisibleUpdateAt: 30_000,
+          startedAt: 0,
+          updatedAt: 30_000,
+          steerable: true,
+        },
+      }),
+    ).toBe("🧭 Turn: active · tool wait · medium · block sent · exec");
     expect(
       buildTurnProgressLine({
         ...turn,
