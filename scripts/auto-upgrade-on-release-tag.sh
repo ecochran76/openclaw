@@ -8,6 +8,10 @@ set -Eeuo pipefail
 # - optionally rebase feature branches onto integration branch
 # - reinstall live OpenClaw from integration branch via scripts/patch-live-openclaw.sh
 #
+# Default unattended behavior should keep release automation focused on the
+# deployable integration branch. Feature-branch refresh is optional/manual and
+# must not be required for a successful live upgrade.
+#
 # Optional notifications:
 # - pre-restart warning (sent right before gateway restart in patch script)
 # - success summary
@@ -17,7 +21,7 @@ set -Eeuo pipefail
 #   scripts/auto-upgrade-on-release-tag.sh [--force] [--dry-run]
 #     [--repo-dir /path/to/openclaw.git]
 #     [--branch ec-main]
-#     [--feature-branch feat/a2a-ingress-echo] [--feature-branch feat/profile-upgrade]
+#     [--feature-branch <name> ...]   # optional manual maintenance only
 #     [--upstream-remote origin] [--fork-remote fork]
 #     [--ref <git-ref>|--commit <sha>|--latest-main]
 #     [--channel slack] [--target C0AGFJ7D0RY]
@@ -29,7 +33,7 @@ set -Eeuo pipefail
 
 REPO_DIR="${OPENCLAW_AUTO_REPO_DIR:-$(cd "$(dirname "$0")/.." && pwd)}"
 WORK_BRANCH="${OPENCLAW_AUTO_BRANCH:-ec-main}"
-FEATURE_BRANCHES_RAW="${OPENCLAW_AUTO_FEATURE_BRANCHES:-feat/a2a-ingress-echo,feat/profile-upgrade}"
+FEATURE_BRANCHES_RAW="${OPENCLAW_AUTO_FEATURE_BRANCHES:-}"
 UPSTREAM_REMOTE="${OPENCLAW_AUTO_UPSTREAM_REMOTE:-origin}"
 FORK_REMOTE="${OPENCLAW_AUTO_FORK_REMOTE:-fork}"
 
