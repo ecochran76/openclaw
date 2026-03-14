@@ -137,6 +137,8 @@ Candidate commands:
 - delivery attribution
 - reply-stranded watcher
 - clearer Slack failure/status messages
+- compact active-turn summary in `/status`
+- detailed plan: `docs/dev/slack-turn-slice-2-delivery-attribution-plan.md`
 
 ### Slice 3
 

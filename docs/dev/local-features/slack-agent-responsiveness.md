@@ -10,9 +10,19 @@ The core belief is simple:
 
 ## Status
 
-- design and planning stage
-- not yet implemented as a full runtime feature
-- see `docs/dev/slack-turn-visibility-and-steering.md`
+- Slice 1 landed on `ec-main`:
+  - turn-state timeline foundation
+  - one silent-turn watcher
+  - `/turn-status`
+  - automatic medium/long-turn progress nudges
+- Slice 2 is planned next:
+  - delivery attribution
+  - reply-stranded watcher
+  - clearer Slack failure/status messages
+  - compact turn visibility in `/status`
+- Design docs:
+  - `docs/dev/slack-turn-visibility-and-steering.md`
+  - `docs/dev/slack-turn-slice-2-delivery-attribution-plan.md`
 
 ## Problem statement
 

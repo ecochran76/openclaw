@@ -62,7 +62,8 @@ This file is the durable map for:
   - steering/status tooling
   - delivery attribution
 - Current status:
-  - design/planning stage only
+  - Slice 1 landed on `ec-main` (`498f59a1c`)
+  - Slice 2 delivery-attribution plan documented in `docs/dev/slack-turn-slice-2-delivery-attribution-plan.md`
 
 ### 4. Upgrade / branch discipline
 
