@@ -322,6 +322,21 @@ export function buildBuiltinChatCommands(
       category: "status",
     }),
     defineChatCommand({
+      key: "turn-steer",
+      nativeName: "turn-steer",
+      description: "Send guidance to the active steerable turn for this session.",
+      textAlias: "/turn-steer",
+      category: "status",
+      args: [
+        {
+          name: "text",
+          description: "Steering text",
+          type: "string",
+          captureRemaining: true,
+        },
+      ],
+    }),
+    defineChatCommand({
       key: "allowlist",
       description: "List/add/remove allowlist entries.",
       textAlias: "/allowlist",

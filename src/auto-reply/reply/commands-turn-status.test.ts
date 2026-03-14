@@ -2,6 +2,7 @@ import { afterEach, describe, expect, it } from "vitest";
 import type { OpenClawConfig } from "../../config/config.js";
 import {
   attachTrackedTurnRunId,
+  recordTrackedTurnSteer,
   resetTrackedTurnsForTests,
   startTrackedTurn,
   updateTrackedTurn,
@@ -44,6 +45,10 @@ describe("/turn-status", () => {
       markProgress: true,
       markVisible: true,
     });
+    recordTrackedTurnSteer(turn.turnId, {
+      text: "skip polish and run tests first",
+      at: Date.now() - 2_000,
+    });
 
     const params = buildCommandTestParams("/turn-status", {} as OpenClawConfig, {
       Provider: "slack",
@@ -53,6 +58,9 @@ describe("/turn-status", () => {
     const result = await handleCommands(params);
     expect(result.shouldContinue).toBe(false);
     expect(result.reply?.text).toContain("State: active");
+    expect(result.reply?.text).toContain("Steers: 1");
+    expect(result.reply?.text).toContain("Last steer:");
+    expect(result.reply?.text).toContain("Last steer text: skip polish and run tests first");
     expect(result.reply?.text).toContain("Tool: browser");
     expect(result.reply?.text).toContain("Reply produced: yes");
     expect(result.reply?.text).toContain("Delivery: delivery failed");

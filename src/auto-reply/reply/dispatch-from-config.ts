@@ -1640,6 +1640,7 @@ export async function dispatchReplyFromConfig(
         replyRoute.chatType,
       )
     : undefined;
+  const visibleChannel = deliveryChannel;
   const deliveryTarget = shouldRouteToOriginating ? "originating_channel" : "same_channel";
   let normalizeReplyMediaPaths:
     | ReturnType<
@@ -2299,12 +2300,14 @@ export async function dispatchReplyFromConfig(
     if (!sessionKey || deliveryChannel !== "slack") {
       return;
     }
+    const trackedSessionId = sessionStoreEntry.entry?.sessionId?.trim();
     const snapshot = startTrackedTurn({
       sessionKey,
-      channel: deliveryChannel,
+      sessionId: trackedSessionId,
+      channel: visibleChannel,
       threadId: ctx.MessageThreadId,
       phase: "reasoning",
-      steerable: true,
+      steerable: Boolean(trackedSessionId),
       deliveryTarget,
     });
     trackedTurnId = snapshot.turnId;

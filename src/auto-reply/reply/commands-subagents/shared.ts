@@ -29,14 +29,40 @@ import {
 export type { ChatMessage } from "../commands-subagents-text.js";
 
 export const COMMAND = "/subagents";
-const COMMAND_FOCUS = "/focus";
-const COMMAND_UNFOCUS = "/unfocus";
-const COMMAND_AGENTS = "/agents";
-const ACTIONS = new Set(["list", "log", "info", "help"]);
+export const COMMAND_KILL = "/kill";
+export const COMMAND_STEER = "/steer";
+export const COMMAND_TELL = "/tell";
+export const COMMAND_FOCUS = "/focus";
+export const COMMAND_UNFOCUS = "/unfocus";
+export const COMMAND_AGENTS = "/agents";
+export const ACTIONS = new Set([
+  "list",
+  "kill",
+  "log",
+  "send",
+  "steer",
+  "info",
+  "spawn",
+  "focus",
+  "unfocus",
+  "agents",
+  "help",
+]);
 
 export const RECENT_WINDOW_MINUTES = 30;
 
-type SubagentsAction = "list" | "log" | "info" | "focus" | "unfocus" | "agents" | "help";
+type SubagentsAction =
+  | "list"
+  | "kill"
+  | "log"
+  | "send"
+  | "steer"
+  | "info"
+  | "spawn"
+  | "focus"
+  | "unfocus"
+  | "agents"
+  | "help";
 
 type SubagentsCommandParams = Parameters<CommandHandler>[0];
 
@@ -250,6 +276,8 @@ export function buildSubagentsHelp() {
     "- /agents",
     "- /session idle <duration|off>",
     "- /session max-age <duration|off>",
+    "- /kill <id|#|all>",
+    "- /steer <id|#> <message>",
     "",
     "Ids: use the list index (#), runId/session prefix, label, or full session key.",
   ].join("\n");

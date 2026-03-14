@@ -480,6 +480,7 @@ describe("commands registry", () => {
     expect(detection.exact.has("/skill")).toBe(true);
     expect(detection.exact.has("/automation")).toBe(true);
     expect(detection.exact.has("/compact")).toBe(true);
+    expect(detection.exact.has("/turn-steer")).toBe(true);
     expect(detection.exact.has("/whoami")).toBe(true);
     expect(detection.exact.has("/id")).toBe(true);
     for (const command of listChatCommands()) {

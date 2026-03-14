@@ -312,7 +312,7 @@ export function recordTrackedTurnSteer(
   current.lastSteerText = params.text;
   current.updatedAt = at;
   activeBySession.set(sessionKey, current);
-  return clone(applyElapsed(current, at));
+  return clone(projectTrackedTurn(current, at));
 }
 export function formatTrackedTurnAgo(at?: number, now = Date.now()): string {
   if (!at) {

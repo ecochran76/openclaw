@@ -7,9 +7,9 @@ import {
   buildTurnStatusText,
   buildTurnSummaryLine,
   buildWhySilentText,
+  recordTrackedTurnSteer,
   finishTrackedTurn,
   getRecentTrackedTurns,
-  recordTrackedTurnSteer,
   resetTrackedTurnsForTests,
   startTrackedTurn,
   updateTrackedTurn,
@@ -75,6 +75,9 @@ describe("turn tracker", () => {
     expect(text).toContain("Last steer: 35s ago");
     expect(text).toContain("Last steer text: focus on the failing delivery path only");
     expect(text).toContain("Tool: exec");
+    expect(text).toContain("Steers: 1");
+    expect(text).toContain("Last steer: 35s ago");
+    expect(text).toContain("Last steer text: focus on the failing delivery path only");
     expect(text).toContain("Reply produced: yes");
     expect(text).toContain("Delivery: block sent");
     expect(text).toContain("Delivery target: same channel");
@@ -384,13 +387,16 @@ describe("turn tracker", () => {
         lastProgressAt: 60_000,
         durationClass: "short",
         steerable: true,
+        steerCount: 1,
         status: "active",
       },
       recents: recent,
       now: 70_000,
     });
     expect(turnsText).toContain("🧭 Turns");
-    expect(turnsText).toContain("active · tool wait · medium · reply pending · steerable · exec");
+    expect(turnsText).toContain(
+      "active · tool wait · medium · reply pending · steerable · steers:1 · exec",
+    );
     expect(turnsText).toContain("error · error · medium · delivery failed");
     expect(turnsText).toContain("done · done · short · final sent");
 

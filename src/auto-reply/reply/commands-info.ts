@@ -1,5 +1,6 @@
 /** Handles informational commands such as /help, /commands, /tools, and exports. */
 import { resolveSessionAgentId } from "../../agents/agent-scope.js";
+import { queueEmbeddedPiMessage } from "../../agents/pi-embedded.js";
 import { resolveEffectiveToolInventory } from "../../agents/tools-effective-inventory.js";
 import { getChannelPlugin } from "../../channels/plugins/index.js";
 import { logVerbose } from "../../globals.js";
@@ -21,6 +22,7 @@ import {
   getActiveTrackedTurn,
   getRecentTrackedTurn,
   getRecentTrackedTurns,
+  recordTrackedTurnSteer,
   updateTrackedTurn,
 } from "../turn-tracker.js";
 import { buildThreadingToolContext } from "./agent-runner-utils.js";
@@ -258,6 +260,46 @@ export const handleToolsCommand: CommandHandler = async (params, allowTextComman
   }
 };
 
+export function buildCommandsPaginationKeyboard(
+  currentPage: number,
+  totalPages: number,
+  agentId?: string,
+): Array<Array<{ text: string; callback_data: string }>> {
+  const buttons: Array<{ text: string; callback_data: string }> = [];
+  const suffix = agentId ? `:${agentId}` : "";
+
+  if (currentPage > 1) {
+    buttons.push({
+      text: "◀ Prev",
+      callback_data: `commands_page_${currentPage - 1}${suffix}`,
+    });
+  }
+
+  buttons.push({
+    text: `${currentPage}/${totalPages}`,
+    callback_data: `commands_page_noop${suffix}`,
+  });
+
+  if (currentPage < totalPages) {
+    buttons.push({
+      text: "Next ▶",
+      callback_data: `commands_page_${currentPage + 1}${suffix}`,
+    });
+  }
+
+  return [buttons];
+}
+
+function parseTurnSteerText(commandBodyNormalized: string): string | null {
+  if (commandBodyNormalized === "/turn-steer") {
+    return "";
+  }
+  if (!commandBodyNormalized.startsWith("/turn-steer ")) {
+    return null;
+  }
+  return commandBodyNormalized.slice("/turn-steer".length).trim();
+}
+
 /** Command handler for /status. */
 export const handleStatusCommand: CommandHandler = async (params, allowTextCommands) => {
   if (!allowTextCommands) {
@@ -333,6 +375,48 @@ export const handleStatusCommand: CommandHandler = async (params, allowTextComma
           active: getActiveTrackedTurn(params.sessionKey),
           recent: getRecentTrackedTurn(params.sessionKey),
         }),
+      },
+    };
+  }
+  const steerText = parseTurnSteerText(normalizedStatusCommand);
+  if (steerText !== null) {
+    if (!params.command.isAuthorizedSender) {
+      logVerbose(
+        `Ignoring /turn-steer from unauthorized sender: ${params.command.senderId || "<unknown>"}`,
+      );
+      return { shouldContinue: false };
+    }
+    if (!steerText) {
+      return {
+        shouldContinue: false,
+        reply: {
+          text: "🧭 Turn steer\nUsage: /turn-steer <text>",
+        },
+      };
+    }
+    const active = getActiveTrackedTurn(params.sessionKey);
+    if (!active?.steerable) {
+      return {
+        shouldContinue: false,
+        reply: {
+          text: "🧭 Turn steer\nNo active steerable turn for this session.",
+        },
+      };
+    }
+    const sessionId = active.sessionId?.trim();
+    if (!sessionId || !queueEmbeddedPiMessage(sessionId, steerText)) {
+      return {
+        shouldContinue: false,
+        reply: {
+          text: "🧭 Turn steer\nActive turn is not accepting live steering right now.",
+        },
+      };
+    }
+    recordTrackedTurnSteer(active.turnId, { text: steerText });
+    return {
+      shouldContinue: false,
+      reply: {
+        text: `🧭 Turn steer\nSent to active turn.\nInstruction: ${steerText}`,
       },
     };
   }
