@@ -1,5 +1,16 @@
 # Slack Turn Visibility — Slice 3 Plan
 
+## Status
+
+Slice 3 is now in progress on `ec-main`:
+
+- `3d925d0cc` — `/turns`, `/nudge`, and recent-turn list support
+- `8de818625` — stalled state surfaced in inspection commands
+- `cdf6f5aee` — stalled-turn watcher notices
+- `d81df866f` — `/turn-steer` without colliding with upstream `/steer`
+
+This document remains the main planning record for the remaining Slice 3 work.
+
 ## Goal
 
 Move from **inspection + attribution** to **active control + stalled-turn handling**.
@@ -33,7 +44,7 @@ Add explicit steering surfaces for active turns.
 
 Candidate commands:
 
-- `/steer <text>`
+- `/turn-steer <text>`
   - send a short steering instruction into the active turn context
 - `/nudge`
   - request a machine-generated progress/status update immediately
@@ -122,7 +133,7 @@ Behavior:
 - if active turn exists: emit concise current status
 - if none exists: say there is no active turn to nudge
 
-### `/steer <text>`
+### `/turn-steer <text>`
 
 Purpose:
 
@@ -136,9 +147,9 @@ Behavior:
 
 Examples:
 
-- `/steer focus on the failing delivery path only`
-- `/steer stop coding and summarize current findings`
-- `/steer skip polish and run tests first`
+- `/turn-steer focus on the failing delivery path only`
+- `/turn-steer stop coding and summarize current findings`
+- `/turn-steer skip polish and run tests first`
 
 ### `/turns`
 
@@ -198,10 +209,18 @@ Likely tests:
 
 ### Slice 3B — steering
 
-- add `/steer <text>`
-- define active-turn targeting semantics
-- record steering events in tracked state
-- ensure post-steer progress/status messages stay coherent
+Status: mostly landed.
+
+- added `/turn-steer <text>`
+- kept upstream `/steer <id|#> <message>` for subagent steering
+- defined active-turn targeting semantics
+- recorded steering events in tracked state
+- surfaced steering metadata in turn inspection output
+
+Remaining questions:
+
+- should `/why-silent` or `/turns` mention recent steering more explicitly?
+- do we want a dedicated “cannot steer this turn” reason taxonomy beyond the current message?
 
 ### Slice 3C — stalled-turn watcher polish
 
@@ -237,7 +256,7 @@ Minimum targeted coverage:
 - `pnpm test -- src/auto-reply/reply/dispatch-from-config.test.ts`
 - `pnpm test -- src/auto-reply/reply/commands-turn-status.test.ts`
 - `pnpm test -- src/auto-reply/reply/commands-why-silent.test.ts`
-- command tests for `/turns`, `/nudge`, `/steer`
+- command tests for `/turns`, `/nudge`, `/turn-steer`
 - `pnpm tsgo`
 
 ## Why Slice 3 matters

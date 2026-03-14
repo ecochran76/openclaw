@@ -64,7 +64,9 @@ This file is the durable map for:
 - Current status:
   - Slice 1 landed on `ec-main` (`498f59a1c`)
   - Slice 2 landed on `ec-main` as a commit series (`05571e149`, `987865f7c`, `5f9754034`, `f8523c896`, `1f104770f`)
+  - Slice 3 is in progress on `ec-main` (`3d925d0cc`, `8de818625`, `cdf6f5aee`, `d81df866f`)
   - Slice 3 plan documented in `docs/dev/slack-turn-slice-3-steering-and-watchers-plan.md`
+  - Pre-live-test polish checklist documented in `docs/dev/slack-turn-live-testing-polish-plan.md`
 
 ### 4. Upgrade / branch discipline
 

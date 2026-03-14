@@ -105,13 +105,14 @@ Generated updates should be terse and operational, for example:
 
 ## Steering surfaces
 
-Candidate commands:
+Current / candidate commands:
 
 - `/turn-status`
 - `/why-silent`
 - `/turns`
-- `/steer`
 - `/nudge`
+- `/turn-steer`
+- upstream `/steer` remains the subagent/run steering surface and is not repurposed for tracked-turn steering
 
 ### `/turn-status` should include
 
@@ -148,12 +149,21 @@ Detailed plan/history:
 
 - `docs/dev/slack-turn-slice-2-delivery-attribution-plan.md`
 
-### Slice 3 — planned next
+### Slice 3 — in progress
 
-- steering hooks
-- richer turn inspection
-- stalled-turn watcher / recovery tooling
-- detailed plan: `docs/dev/slack-turn-slice-3-steering-and-watchers-plan.md`
+Shipped on `ec-main` so far across:
+
+- `3d925d0cc` — `/turns`, `/nudge`, and recent-turn list support
+- `8de818625` — stalled-turn state surfaced in inspection commands
+- `cdf6f5aee` — stalled-turn watcher notices
+- `d81df866f` — `/turn-steer` without colliding with upstream `/steer`
+
+Still open before live testing:
+
+- polish command/help consistency and live-thread behavior
+- decide whether blocked-vs-stalled needs a first pass now or can wait
+- detailed plan/history: `docs/dev/slack-turn-slice-3-steering-and-watchers-plan.md`
+- pre-live-test checklist: `docs/dev/slack-turn-live-testing-polish-plan.md`
 
 ## Why this should be a first-class runtime feature
 
