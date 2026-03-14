@@ -2,7 +2,7 @@
 
 ## Goal
 
-Keep two active features moving in parallel while rebasing frequently onto `openclaw/openclaw` without creating merge chaos.
+Keep persistent feature work moving in parallel on top of `openclaw/openclaw` without letting stale side branches create merge chaos or block deployable upgrades.
 
 Features in scope:
 
@@ -33,6 +33,8 @@ This repo currently uses:
 3. Promotion to `fork/main` only happens from a known-good `ec-main` state.
 4. Integration into `ec-main` uses **small, topic-scoped commits** and `cherry-pick -x` when partial adoption is needed.
 5. Avoid merge commits in this stack; prefer rebase + fast-forward.
+6. **Unattended release upgrade automation targets `ec-main` only**. Feature branch refresh is a separate maintenance task and must not block live patching.
+7. Long-lived branches should stay single-purpose. If a branch starts accumulating unrelated auth/UI/script work, split it into additional topic branches before the next rebase cycle.
 
 ## One-time bootstrap
 
@@ -84,6 +86,9 @@ git rebase ec-main
 git push fork feat/profile-upgrade --force-with-lease
 ```
 
+Treat this as a **developer maintenance loop**, not part of unattended production upgrade automation.
+If a feature branch stops being actively developed, either archive/delete it or remove it from any helper scripts that still mention it.
+
 ## Integrating feature work into `ec-main`
 
 Use one of these patterns:
@@ -131,6 +136,9 @@ git push fork main
 - Separate tests from implementation only when tests are large/follow-up.
 - Include migration-safe defaults (feature flags default-off where possible).
 - Avoid broad renames in active subsystems during feature work.
+- Do not mix infra/script churn, auth/profile work, and product behavior on the same long-lived feature branch unless they are inseparable.
+- If a commit is useful beyond its feature branch, cherry-pick it into `ec-main` early instead of letting the branch become a catch-all queue.
+- Prefer short-lived stacked branches for cross-cutting prep work (for example `feat/auth-profile-sync`, `feat/a2a-relay-contract`) over one umbrella branch that absorbs everything.
 
 ## Guardrails for fast-moving upstream
 
@@ -172,3 +180,15 @@ git rebase --abort
 - Morning: rebase `ec-main` onto `origin/main`.
 - During day: feature branches rebase onto `ec-main` before opening/refreshing PRs.
 - End of day: integrate stable slices into `ec-main`, run full tests, optionally promote to `fork/main`.
+
+## Recommended persistent-feature model
+
+If you want cleaner long-lived development on top of fast-moving upstream, use this bias:
+
+- `ec-main` = the only branch that unattended live patching/upgrades care about.
+- one branch per real workstream = `feat/a2a-*`, `feat/auth-*`, `feat/ui-*`, not one umbrella branch that mixes all three.
+- cherry-pick deployable slices into `ec-main` as soon as they are green.
+- once a slice lands in `ec-main`, either drop it from the feature branch or expect duplicate-commit conflicts on the next rebase.
+- reserve `fork/main` for known-good promoted states, not day-to-day integration.
+
+A simple rule of thumb: if a nightly release upgrade would fail because a branch is stale, that branch is too tightly coupled to production automation.
