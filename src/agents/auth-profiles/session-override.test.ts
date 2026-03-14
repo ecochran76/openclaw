@@ -395,7 +395,6 @@ describe("resolveSessionAuthProfileOverride", () => {
           "codex-cli": [TEST_PRIMARY_PROFILE_ID],
         },
       });
-
       const sessionEntry: SessionEntry = {
         sessionId: "s1",
         updatedAt: Date.now(),
@@ -560,6 +559,59 @@ describe("resolveSessionAuthProfileOverride", () => {
       expect(resolved).toBe(TEST_SECONDARY_PROFILE_ID);
       expect(sessionEntry.authProfileOverride).toBe(TEST_SECONDARY_PROFILE_ID);
       expect(sessionEntry.authProfileOverrideSource).toBe("auto");
+    });
+  });
+
+  it("keeps user override on the first run of a new session", async () => {
+    await withAuthState(async (state) => {
+      const agentDir = state.agentDir();
+      await fs.mkdir(agentDir, { recursive: true });
+      authStoreMocks.state.hasSource = true;
+      authStoreMocks.state.store = {
+        version: 1,
+        profiles: {
+          "openai-codex:default": {
+            type: "oauth",
+            provider: "openai-codex",
+            access: "access-default",
+            refresh: "refresh-default",
+            expires: Date.now() + 60_000,
+          },
+          "openai-codex:dillan": {
+            type: "oauth",
+            provider: "openai-codex",
+            access: "access-dillan",
+            refresh: "refresh-dillan",
+            expires: Date.now() + 60_000,
+          },
+        },
+        order: {
+          "openai-codex": ["openai-codex:default", "openai-codex:dillan"],
+        },
+      };
+
+      const sessionEntry: SessionEntry = {
+        sessionId: "s1",
+        updatedAt: Date.now(),
+        authProfileOverride: "openai-codex:dillan",
+        authProfileOverrideSource: "user",
+      };
+      const sessionStore = { "agent:main:slack:thread:1": sessionEntry };
+
+      const resolved = await resolveSessionAuthProfileOverride({
+        cfg: {} as OpenClawConfig,
+        provider: "openai-codex",
+        agentDir,
+        sessionEntry,
+        sessionStore,
+        sessionKey: "agent:main:slack:thread:1",
+        storePath: undefined,
+        isNewSession: true,
+      });
+
+      expect(resolved).toBe("openai-codex:dillan");
+      expect(sessionEntry.authProfileOverride).toBe("openai-codex:dillan");
+      expect(sessionEntry.authProfileOverrideSource).toBe("user");
     });
   });
 });

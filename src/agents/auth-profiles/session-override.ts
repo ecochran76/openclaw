@@ -208,7 +208,12 @@ export async function resolveSessionAuthProfileOverride(params: {
   if (replacementForUnusableCurrent) {
     current = undefined;
   }
-  if (source === "user" && current && !isNewSession) {
+  // Explicit user selections must survive the first real turn in a freshly
+  // created session/thread. /profile can persist the override before the
+  // first non-command message arrives, and that follow-up turn may still be
+  // flagged as "new session". Rotating away from a user-picked profile there
+  // makes /profile appear to "stick" only until the next message.
+  if (source === "user" && current) {
     return current;
   }
 
