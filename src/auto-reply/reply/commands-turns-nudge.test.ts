@@ -80,4 +80,28 @@ describe("/turns and /nudge", () => {
       true,
     );
   });
+
+  it("nudges stalled active turns as stalled", async () => {
+    const turn = startTrackedTurn({
+      sessionKey: "agent:main:main",
+      channel: "slack",
+      phase: "tool_wait",
+      startedAt: Date.now() - 180_000,
+    });
+    updateTrackedTurn(turn.turnId, {
+      activeTool: "exec",
+      markProgress: true,
+      at: Date.now() - 180_000,
+    });
+
+    const params = buildCommandTestParams("/nudge", {} as OpenClawConfig, {
+      Provider: "slack",
+      Surface: "slack",
+    });
+
+    const result = await handleCommands(params);
+    expect(result.shouldContinue).toBe(false);
+    expect(result.reply?.text).toContain("stalled: no recent progress (exec)");
+    expect(result.reply?.text).toContain("Stalled threshold:");
+  });
 });

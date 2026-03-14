@@ -74,7 +74,6 @@ describe("/why-silent", () => {
     expect(result.reply?.text).toContain("Phase: stalled");
     expect(result.reply?.text).toContain("Stalled threshold:");
   });
-
   it("explains a maintenance suppressed active turn", async () => {
     const turn = startTrackedTurn({
       sessionKey: "agent:main:main",

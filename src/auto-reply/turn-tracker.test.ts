@@ -95,6 +95,7 @@ describe("turn tracker", () => {
           updatedAt: 30_000,
           steerable: true,
         },
+        now: 70_000,
       }),
     ).toBe("🧭 Turn: active · tool wait · medium · block sent · exec");
     expect(
@@ -386,9 +387,10 @@ describe("turn tracker", () => {
         status: "active",
       },
       recents: recent,
+      now: 70_000,
     });
     expect(turnsText).toContain("🧭 Turns");
-    expect(turnsText).toContain("active · tool wait · short · reply pending · steerable · exec");
+    expect(turnsText).toContain("active · tool wait · medium · reply pending · steerable · exec");
     expect(turnsText).toContain("error · error · medium · delivery failed");
     expect(turnsText).toContain("done · done · short · final sent");
 
@@ -405,5 +407,69 @@ describe("turn tracker", () => {
     });
     expect(nudge).toContain("working: tool wait (exec)");
     expect(nudge).toContain("Last progress: 10s ago");
+  });
+
+  it("derives stalled state for long-silent active turns", () => {
+    const turn = startTrackedTurn({
+      sessionKey: "agent:main:main",
+      startedAt: 0,
+      phase: "tool_wait",
+      channel: "slack",
+    });
+    updateTrackedTurn(turn.turnId, {
+      activeTool: "exec",
+      markProgress: true,
+      at: 0,
+    });
+
+    const status = buildTurnStatusText({
+      active: {
+        ...turn,
+        activeTool: "exec",
+        lastProgressAt: 0,
+        status: "active",
+        steerable: true,
+      },
+      now: 180_000,
+    });
+    expect(status).toContain("Phase: stalled");
+    expect(status).toContain("Stalled threshold:");
+
+    const why = buildWhySilentText({
+      active: {
+        ...turn,
+        activeTool: "exec",
+        lastProgressAt: 0,
+        status: "active",
+        steerable: true,
+      },
+      now: 180_000,
+    });
+    expect(why).toContain("turn appears stalled");
+
+    const turns = buildTurnsText({
+      active: {
+        ...turn,
+        activeTool: "exec",
+        lastProgressAt: 0,
+        status: "active",
+        steerable: true,
+      },
+      now: 180_000,
+    });
+    expect(turns).toContain("active · stalled · long · reply pending · steerable · exec");
+
+    const nudge = buildNudgeText({
+      active: {
+        ...turn,
+        activeTool: "exec",
+        lastProgressAt: 0,
+        status: "active",
+        steerable: true,
+      },
+      now: 180_000,
+    });
+    expect(nudge).toContain("stalled: no recent progress (exec)");
+    expect(nudge).toContain("Stalled threshold:");
   });
 });

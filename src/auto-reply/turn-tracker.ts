@@ -7,6 +7,7 @@ export type TrackedTurnPhase =
   | "tool_wait"
   | "compaction"
   | "delivery_prepare"
+  | "stalled"
   | "done"
   | "error";
 
@@ -58,6 +59,7 @@ export type TrackedTurnSnapshot = {
 };
 
 const RECENT_TURN_LIMIT = 5;
+export const TRACKED_TURN_STALL_THRESHOLD_MS = 120_000;
 
 const activeBySession = new Map<string, TrackedTurnSnapshot>();
 const recentListBySession = new Map<string, TrackedTurnSnapshot[]>();
@@ -87,6 +89,26 @@ function applyElapsed(snapshot: TrackedTurnSnapshot, now = Date.now()): TrackedT
     ...snapshot,
     durationClass: classifyTurnDuration(Math.max(0, end - snapshot.startedAt)),
   };
+}
+
+function maybeDeriveStalled(snapshot: TrackedTurnSnapshot, now = Date.now()): TrackedTurnSnapshot {
+  if (snapshot.status !== "active" || snapshot.completedAt) {
+    return snapshot;
+  }
+  if (snapshot.phase === "stalled") {
+    return snapshot;
+  }
+  if (Math.max(0, now - snapshot.lastProgressAt) < TRACKED_TURN_STALL_THRESHOLD_MS) {
+    return snapshot;
+  }
+  return {
+    ...snapshot,
+    phase: "stalled",
+  };
+}
+
+function projectTrackedTurn(snapshot: TrackedTurnSnapshot, now = Date.now()): TrackedTurnSnapshot {
+  return maybeDeriveStalled(applyElapsed(snapshot, now), now);
 }
 
 export function startTrackedTurn(params: {
@@ -209,7 +231,7 @@ export function updateTrackedTurn(
   }
   current.updatedAt = at;
   activeBySession.set(sessionKey, current);
-  return clone(applyElapsed(current, at));
+  return clone(projectTrackedTurn(current, at));
 }
 
 export function finishTrackedTurn(params: {
@@ -238,7 +260,7 @@ export function finishTrackedTurn(params: {
   if (params.deliveryState !== undefined) {
     current.deliveryState = params.deliveryState;
   }
-  const finalized = applyElapsed(current, completedAt);
+  const finalized = projectTrackedTurn(current, completedAt);
   activeBySession.delete(sessionKey);
   const recent = recentListBySession.get(sessionKey) ?? [];
   recent.unshift(finalized);
@@ -252,12 +274,12 @@ export function finishTrackedTurn(params: {
 
 export function getActiveTrackedTurn(sessionKey: string): TrackedTurnSnapshot | undefined {
   const current = activeBySession.get(sessionKey);
-  return current ? clone(applyElapsed(current)) : undefined;
+  return current ? clone(projectTrackedTurn(current)) : undefined;
 }
 
 export function getRecentTrackedTurn(sessionKey: string): TrackedTurnSnapshot | undefined {
   const recent = recentListBySession.get(sessionKey)?.[0];
-  return recent ? clone(applyElapsed(recent)) : undefined;
+  return recent ? clone(projectTrackedTurn(recent)) : undefined;
 }
 
 export function getRecentTrackedTurns(
@@ -266,7 +288,7 @@ export function getRecentTrackedTurns(
 ): TrackedTurnSnapshot[] {
   return (recentListBySession.get(sessionKey) ?? [])
     .slice(0, limit)
-    .map((turn) => clone(applyElapsed(turn)));
+    .map((turn) => clone(projectTrackedTurn(turn)));
 }
 
 export function recordTrackedTurnSteer(
@@ -324,6 +346,8 @@ function describePhase(phase: TrackedTurnPhase): string {
       return "compacting context";
     case "delivery_prepare":
       return "preparing reply";
+    case "stalled":
+      return "stalled";
     case "done":
       return "done";
     case "error":
@@ -378,6 +402,9 @@ function describeSuppressionReason(reason?: TrackedTurnSuppressionReason): strin
 
 export function buildTurnProgressLine(snapshot: TrackedTurnSnapshot): string {
   const toolSuffix = snapshot.activeTool ? ` (${snapshot.activeTool})` : "";
+  if (snapshot.phase === "stalled") {
+    return `stalled: no recent progress${toolSuffix}`;
+  }
   return `working: ${describePhase(snapshot.phase)}${toolSuffix}`;
 }
 
@@ -412,14 +439,18 @@ function buildTurnLine(
 export function buildTurnSummaryLine(params: {
   active?: TrackedTurnSnapshot;
   recent?: TrackedTurnSnapshot;
+  now?: number;
 }): string | undefined {
-  const snapshot = params.active ?? params.recent;
+  const now = params.now ?? Date.now();
+  const active = params.active ? projectTrackedTurn(params.active, now) : undefined;
+  const recent = params.recent ? projectTrackedTurn(params.recent, now) : undefined;
+  const snapshot = active ?? recent;
   if (!snapshot) {
     return undefined;
   }
-  const prefix = params.active ? "🧭 Turn" : "🧭 Recent turn";
+  const prefix = active ? "🧭 Turn" : "🧭 Recent turn";
   const parts = [
-    params.active ? "active" : snapshot.status,
+    active ? "active" : snapshot.status,
     describePhase(snapshot.phase),
     snapshot.durationClass,
     describeDeliveryState(snapshot.deliveryState),
@@ -439,8 +470,9 @@ export function buildTurnsText(params: {
   recents?: TrackedTurnSnapshot[];
   now?: number;
 }): string {
-  const active = params.active;
-  const recents = params.recents ?? [];
+  const now = params.now ?? Date.now();
+  const active = params.active ? projectTrackedTurn(params.active, now) : undefined;
+  const recents = (params.recents ?? []).map((turn) => projectTrackedTurn(turn, now));
   if (!active && recents.length === 0) {
     return "🧭 Turns\nNo active or recent turns for this session.";
   }
@@ -460,18 +492,24 @@ export function buildNudgeText(params: {
   now?: number;
 }): string {
   const now = params.now ?? Date.now();
-  if (params.active) {
-    const active = params.active;
+  const active = params.active ? projectTrackedTurn(params.active, now) : undefined;
+  const recent = params.recent ? projectTrackedTurn(params.recent, now) : undefined;
+  if (active) {
     const lines = ["🧭 Nudge", buildTurnProgressLine(active)];
     lines.push(`Delivery: ${describeDeliveryState(active.deliveryState)}`);
     lines.push(`Last progress: ${formatTrackedTurnAgo(active.lastProgressAt, now)} ago`);
+    if (active.phase === "stalled") {
+      lines.push(
+        `Stalled threshold: ${formatDurationCompact(TRACKED_TURN_STALL_THRESHOLD_MS, { spaced: true }) ?? "120 s"}`,
+      );
+    }
     if (active.activeTool) {
       lines.push(`Tool: ${active.activeTool}`);
     }
     return lines.join("\n");
   }
-  if (params.recent) {
-    return `🧭 Nudge\nNo active turn to nudge.\nRecent: ${buildTurnLine(params.recent).slice(2)}`;
+  if (recent) {
+    return `🧭 Nudge\nNo active turn to nudge.\nRecent: ${buildTurnLine(recent).slice(2)}`;
   }
   return "🧭 Nudge\nNo active turn to nudge.";
 }
@@ -482,13 +520,17 @@ export function buildWhySilentText(params: {
   now?: number;
 }): string {
   const now = params.now ?? Date.now();
-  const snapshot = params.active ?? params.recent;
+  const active = params.active ? projectTrackedTurn(params.active, now) : undefined;
+  const recent = params.recent ? projectTrackedTurn(params.recent, now) : undefined;
+  const snapshot = active ?? recent;
   if (!snapshot) {
     return "🤫 Why silent\nNo active or recent turn for this session.";
   }
   const lines = ["🤫 Why silent"];
-  if (params.active) {
-    if (snapshot.deliveryState === "delivery_failed") {
+  if (active) {
+    if (snapshot.phase === "stalled") {
+      lines.push("Answer: the turn appears stalled.");
+    } else if (snapshot.deliveryState === "delivery_failed") {
       lines.push("Answer: the reply was produced, but delivery failed.");
     } else if (snapshot.deliveryState === "suppressed") {
       if (snapshot.suppressionReason === "maintenance") {
@@ -532,7 +574,7 @@ export function buildWhySilentText(params: {
     }
   }
   lines.push(`Phase: ${describePhase(snapshot.phase)}`);
-  lines.push(`State: ${params.active ? "active" : snapshot.status}`);
+  lines.push(`State: ${active ? "active" : snapshot.status}`);
   lines.push(`Delivery: ${describeDeliveryState(snapshot.deliveryState)}`);
   const suppressionReason = describeSuppressionReason(snapshot.suppressionReason);
   if (suppressionReason) {
@@ -545,6 +587,11 @@ export function buildWhySilentText(params: {
     lines.push(`Tool: ${snapshot.activeTool}`);
   }
   lines.push(`Last progress: ${formatTrackedTurnAgo(snapshot.lastProgressAt, now)} ago`);
+  if (snapshot.phase === "stalled") {
+    lines.push(
+      `Stalled threshold: ${formatDurationCompact(TRACKED_TURN_STALL_THRESHOLD_MS, { spaced: true }) ?? "120 s"}`,
+    );
+  }
   if (snapshot.lastUserVisibleUpdateAt) {
     lines.push(
       `Last visible update: ${formatTrackedTurnAgo(snapshot.lastUserVisibleUpdateAt, now)} ago`,
@@ -567,14 +614,16 @@ export function buildTurnStatusText(params: {
   now?: number;
 }): string {
   const now = params.now ?? Date.now();
-  const snapshot = params.active ?? params.recent;
+  const active = params.active ? projectTrackedTurn(params.active, now) : undefined;
+  const recent = params.recent ? projectTrackedTurn(params.recent, now) : undefined;
+  const snapshot = active ?? recent;
   if (!snapshot) {
     return "🧭 Turn status\nNo active turn for this session.";
   }
   const elapsed = Math.max(0, (snapshot.completedAt ?? now) - snapshot.startedAt);
   const elapsedText = formatDurationCompact(elapsed, { spaced: true }) ?? "0s";
   const lines = ["🧭 Turn status"];
-  lines.push(`State: ${params.active ? "active" : snapshot.status}`);
+  lines.push(`State: ${active ? "active" : snapshot.status}`);
   lines.push(`Phase: ${describePhase(snapshot.phase)}`);
   lines.push(`Duration: ${elapsedText} (${snapshot.durationClass})`);
   lines.push(`Steerable: ${snapshot.steerable ? "yes" : "no"}`);
@@ -609,6 +658,11 @@ export function buildTurnStatusText(params: {
     );
   }
   lines.push(`Last progress: ${formatTrackedTurnAgo(snapshot.lastProgressAt, now)} ago`);
+  if (snapshot.phase === "stalled") {
+    lines.push(
+      `Stalled threshold: ${formatDurationCompact(TRACKED_TURN_STALL_THRESHOLD_MS, { spaced: true }) ?? "120 s"}`,
+    );
+  }
   lines.push(
     `Last visible update: ${snapshot.lastUserVisibleUpdateAt ? `${formatTrackedTurnAgo(snapshot.lastUserVisibleUpdateAt, now)} ago` : "none"}`,
   );

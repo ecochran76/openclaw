@@ -324,7 +324,7 @@ export const handleStatusCommand: CommandHandler = async (params, allowTextComma
     }
     const active = getActiveTrackedTurn(params.sessionKey);
     if (active) {
-      updateTrackedTurn(active.turnId, { markVisible: true, markProgress: true });
+      updateTrackedTurn(active.turnId, { markVisible: true });
     }
     return {
       shouldContinue: false,
