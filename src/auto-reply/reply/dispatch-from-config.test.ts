@@ -616,6 +616,8 @@ let tryDispatchAcpReplyHook: typeof import("../../plugin-sdk/acp-runtime.js").tr
 let createReplyOperation: typeof import("./reply-run-registry.js").createReplyOperation;
 let replyRunRegistry: typeof import("./reply-run-registry.js").replyRunRegistry;
 let replyRunTesting: typeof import("./reply-run-registry.js").__testing;
+let getRecentTrackedTurn: typeof import("../turn-tracker.js").getRecentTrackedTurn;
+let resetTrackedTurnsForTests: typeof import("../turn-tracker.js").resetTrackedTurnsForTests;
 type DispatchReplyArgs = Parameters<
   typeof import("./dispatch-from-config.js").dispatchReplyFromConfig
 >[0];
@@ -922,9 +924,24 @@ async function dispatchTwiceWithFreshDispatchers(params: Omit<DispatchReplyArgs,
 }
 
 describe("dispatchReplyFromConfig", () => {
-  beforeEach(() => {
+  beforeEach(async () => {
     clearAgentHarnesses();
     clearPluginCommands();
+    vi.resetModules();
+    ({ dispatchReplyFromConfig, testing: dispatchFromConfigTesting } =
+      await import("./dispatch-from-config.js"));
+    await import("./dispatch-acp.js");
+    await import("./dispatch-acp-command-bypass.js");
+    await import("./dispatch-acp-tts.runtime.js");
+    await import("./dispatch-acp-session.runtime.js");
+    ({ resetInboundDedupe } = await import("./inbound-dedupe.js"));
+    ({ tryDispatchAcpReplyHook } = await import("../../plugin-sdk/acp-runtime.js"));
+    ({
+      createReplyOperation,
+      replyRunRegistry,
+      __testing: replyRunTesting,
+    } = await import("./reply-run-registry.js"));
+    ({ getRecentTrackedTurn, resetTrackedTurnsForTests } = await import("../turn-tracker.js"));
     const discordTestPlugin = {
       ...createChannelTestPluginBase({
         id: "discord",
@@ -1021,6 +1038,7 @@ describe("dispatchReplyFromConfig", () => {
     acpManagerRuntimeMocks.getAcpSessionManager.mockReturnValue(createMockAcpSessionManager());
     replyRunTesting.resetReplyRunRegistry();
     resetInboundDedupe();
+    resetTrackedTurnsForTests();
     mocks.routeReply.mockReset();
     mocks.routeReply.mockResolvedValue({ ok: true, messageId: "mock" });
     acpMocks.listAcpSessionEntries.mockReset().mockResolvedValue([]);
@@ -2052,6 +2070,81 @@ describe("dispatchReplyFromConfig", () => {
     expect(routeCall?.channel).toBe("mattermost");
     expect(routeCall?.to).toBe("channel:CHAN1");
     expect(routeCall?.threadId).toBeUndefined();
+  });
+
+  it("posts a Slack status notice when routed final delivery fails", async () => {
+    setNoAbort();
+    mocks.routeReply.mockReset();
+    mocks.routeReply
+      .mockResolvedValueOnce({ ok: false, error: "slack transport failed" } as unknown as {
+        ok: boolean;
+        messageId: string;
+      })
+      .mockResolvedValueOnce({ ok: true, messageId: "status-msg" });
+    const cfg = emptyConfig;
+    const dispatcher = createDispatcher();
+    const ctx = buildTestCtx({
+      Provider: "discord",
+      Surface: "discord",
+      SessionKey: "agent:main:main",
+      OriginatingChannel: "slack",
+      OriginatingTo: "channel:C123",
+    });
+
+    await dispatchReplyFromConfig({
+      ctx,
+      cfg,
+      dispatcher,
+      replyResolver: vi.fn(async (_ctx: MsgContext, opts?: GetReplyOptions) => {
+        await Promise.resolve(opts?.onAgentRunStart?.("run-1"));
+        return { text: "hello" } as ReplyPayload;
+      }),
+    });
+
+    expect(mocks.routeReply).toHaveBeenCalledTimes(2);
+    expect((mocks.routeReply.mock.calls[0]?.[0] as { payload?: ReplyPayload })?.payload?.text).toBe(
+      "hello",
+    );
+    expect(
+      (mocks.routeReply.mock.calls[1]?.[0] as { payload?: ReplyPayload })?.payload?.text,
+    ).toContain("status: reply delivery failed");
+    expect(getRecentTrackedTurn(ctx.SessionKey ?? "agent:main:main")?.deliveryState).toBe(
+      "delivery_failed",
+    );
+  });
+
+  it("posts a same-channel status notice when final delivery is rejected", async () => {
+    setNoAbort();
+    const cfg = emptyConfig;
+    const dispatcher = createDispatcher();
+    (dispatcher.sendFinalReply as ReturnType<typeof vi.fn>)
+      .mockImplementationOnce(() => false)
+      .mockImplementationOnce(() => true);
+    const ctx = buildTestCtx({
+      Provider: "slack",
+      Surface: "slack",
+      SessionKey: "agent:main:main",
+    });
+
+    await dispatchReplyFromConfig({
+      ctx,
+      cfg,
+      dispatcher,
+      replyResolver: vi.fn(async (_ctx: MsgContext, opts?: GetReplyOptions) => {
+        await Promise.resolve(opts?.onAgentRunStart?.("run-2"));
+        return { text: "hello" } as ReplyPayload;
+      }),
+    });
+
+    const finalCalls = (dispatcher.sendFinalReply as ReturnType<typeof vi.fn>).mock.calls;
+    expect(finalCalls).toHaveLength(2);
+    expect((finalCalls[0]?.[0] as ReplyPayload | undefined)?.text).toBe("hello");
+    expect((finalCalls[1]?.[0] as ReplyPayload | undefined)?.text).toContain(
+      "status: reply delivery failed",
+    );
+    const recent = getRecentTrackedTurn(ctx.SessionKey ?? "agent:main:main");
+    expect(recent?.deliveryState).toBe("delivery_failed");
+    expect(recent?.lastDeliveryError).toContain("dispatcher rejected final reply");
   });
 
   it("forces suppressTyping when routing to a different originating channel", async () => {
@@ -4504,6 +4597,33 @@ describe("dispatchReplyFromConfig", () => {
       },
     });
     expect(dispatcher.sendFinalReply).toHaveBeenCalledWith({ text: "NO_REPLY" });
+  });
+
+  it("does not emit undelivered-reply notices for intentional NO_REPLY finals", async () => {
+    setNoAbort();
+    const cfg = emptyConfig;
+    const dispatcher = createDispatcher();
+    const ctx = buildTestCtx({
+      Provider: "slack",
+      Surface: "slack",
+      SessionKey: "agent:main:main",
+    });
+
+    await dispatchReplyFromConfig({
+      ctx,
+      cfg,
+      dispatcher,
+      replyResolver: vi.fn(async (_ctx: MsgContext, opts?: GetReplyOptions) => {
+        await Promise.resolve(opts?.onAgentRunStart?.("run-silent"));
+        return { text: "NO_REPLY" } as ReplyPayload;
+      }),
+    });
+
+    const finalCalls = (dispatcher.sendFinalReply as ReturnType<typeof vi.fn>).mock.calls;
+    expect(finalCalls).toHaveLength(1);
+    expect((finalCalls[0]?.[0] as ReplyPayload | undefined)?.text).toBe("NO_REPLY");
+    const recent = getRecentTrackedTurn(ctx.SessionKey ?? "agent:main:main");
+    expect(recent?.deliveryState).toBe("suppressed");
   });
 
   it("fast-aborts without calling the reply resolver", async () => {

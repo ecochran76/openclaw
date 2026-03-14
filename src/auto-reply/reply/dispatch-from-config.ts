@@ -124,6 +124,15 @@ import {
 } from "../reply-payload.js";
 import type { FinalizedMsgContext } from "../templating.js";
 import { normalizeVerboseLevel } from "../thinking.js";
+import { isSilentReplyText, SILENT_REPLY_TOKEN } from "../tokens.js";
+import {
+  attachTrackedTurnRunId,
+  buildTurnProgressLine,
+  finishTrackedTurn,
+  getActiveTrackedTurn,
+  startTrackedTurn,
+  updateTrackedTurn,
+} from "../turn-tracker.js";
 import { resolveSessionRuntimeOverrideForProvider } from "./agent-runner-execution.js";
 import {
   takeCommandSessionMetadataChanges,
@@ -1627,6 +1636,7 @@ export async function dispatchReplyFromConfig(
         replyRoute.chatType,
       )
     : undefined;
+  const deliveryTarget = shouldRouteToOriginating ? "originating_channel" : "same_channel";
   let normalizeReplyMediaPaths:
     | ReturnType<
         (typeof import("./reply-media-paths.runtime.js"))["createReplyMediaPathNormalizer"]
@@ -2140,6 +2150,193 @@ export async function dispatchReplyFromConfig(
     );
   }
 
+  let trackedTurnId: string | undefined;
+  let turnNudgeTimer: ReturnType<typeof setTimeout> | undefined;
+  let firstTurnNudgeSent = false;
+  const clearTurnNudgeTimer = () => {
+    if (turnNudgeTimer) {
+      clearTimeout(turnNudgeTimer);
+      turnNudgeTimer = undefined;
+    }
+  };
+
+  const markTrackedTurnReplyProduced = () => {
+    if (!trackedTurnId) {
+      return;
+    }
+    updateTrackedTurn(trackedTurnId, {
+      replyProduced: true,
+      deliveryTarget,
+      markProgress: true,
+    });
+  };
+  const recordTrackedTurnDeliveryAttempt = () => {
+    if (!trackedTurnId) {
+      return;
+    }
+    updateTrackedTurn(trackedTurnId, {
+      deliveryTarget,
+      lastDeliveryAttemptAt: Date.now(),
+      markProgress: true,
+    });
+  };
+  const recordTrackedTurnDeliverySuccess = (state: "block_sent" | "final_sent") => {
+    if (!trackedTurnId) {
+      return;
+    }
+    const at = Date.now();
+    updateTrackedTurn(trackedTurnId, {
+      deliveryState: state,
+      deliveryTarget,
+      lastDeliveryAttemptAt: at,
+      lastDeliverySuccessAt: at,
+      lastDeliveryError: undefined,
+      markVisible: true,
+    });
+  };
+  const recordTrackedTurnDeliveryFailure = (error: string) => {
+    if (!trackedTurnId) {
+      return;
+    }
+    updateTrackedTurn(trackedTurnId, {
+      deliveryState: "delivery_failed",
+      deliveryTarget,
+      lastDeliveryAttemptAt: Date.now(),
+      lastDeliveryError: error,
+      markProgress: true,
+    });
+  };
+  const startTrackedTurnRun = (runId: string) => {
+    if (!sessionKey || deliveryChannel !== "slack") {
+      return;
+    }
+    const snapshot = startTrackedTurn({
+      sessionKey,
+      channel: deliveryChannel,
+      threadId: ctx.MessageThreadId,
+      phase: "reasoning",
+      steerable: true,
+      deliveryTarget,
+    });
+    trackedTurnId = snapshot.turnId;
+    attachTrackedTurnRunId(snapshot.turnId, runId);
+    const schedule = (delayMs: number) => {
+      clearTurnNudgeTimer();
+      turnNudgeTimer = setTimeout(
+        () => {
+          void (async () => {
+            const active = trackedTurnId ? getActiveTrackedTurn(sessionKey) : undefined;
+            if (!active || active.turnId !== trackedTurnId) {
+              return;
+            }
+            const now = Date.now();
+            const lastVisible = active.lastUserVisibleUpdateAt ?? active.startedAt;
+            const thresholdMs = firstTurnNudgeSent ? 90_000 : 20_000;
+            if (now - lastVisible < thresholdMs) {
+              schedule(thresholdMs - (now - lastVisible));
+              return;
+            }
+            const payload = { text: buildTurnProgressLine(active) } satisfies ReplyPayload;
+            markTrackedTurnReplyProduced();
+            recordTrackedTurnDeliveryAttempt();
+            if (shouldRouteToOriginating) {
+              const ok = await sendPayloadAsync(payload, undefined, false);
+              if (ok) {
+                recordTrackedTurnDeliverySuccess("block_sent");
+              } else {
+                recordTrackedTurnDeliveryFailure("route-reply failed");
+              }
+            } else {
+              const queued = dispatcher.sendBlockReply(payload);
+              if (queued) {
+                recordTrackedTurnDeliverySuccess("block_sent");
+              } else {
+                recordTrackedTurnDeliveryFailure("dispatcher rejected block reply");
+              }
+            }
+            firstTurnNudgeSent = true;
+            schedule(90_000);
+          })();
+        },
+        Math.max(1000, delayMs),
+      );
+    };
+    schedule(20_000);
+  };
+
+  const finishTrackedTurnRun = (opts?: {
+    status?: "done" | "error";
+    phase?: "done" | "error";
+    error?: string;
+    deliveryState?:
+      | "pending"
+      | "block_sent"
+      | "final_sent"
+      | "reply_stranded"
+      | "delivery_failed"
+      | "suppressed"
+      | "none";
+  }) => {
+    clearTurnNudgeTimer();
+    if (!trackedTurnId) {
+      return;
+    }
+    const snapshot = sessionKey ? getActiveTrackedTurn(sessionKey) : undefined;
+    const derivedDeliveryState = (() => {
+      if (opts?.deliveryState) {
+        return opts.deliveryState;
+      }
+      if (!snapshot) {
+        return undefined;
+      }
+      if (snapshot.deliveryState === "delivery_failed") {
+        return "delivery_failed";
+      }
+      if (snapshot.lastDeliverySuccessAt) {
+        return snapshot.deliveryState;
+      }
+      if (snapshot.replyProduced) {
+        return "reply_stranded";
+      }
+      if (snapshot.deliveryState === "suppressed") {
+        return "suppressed";
+      }
+      return "none";
+    })();
+    finishTrackedTurn({
+      turnId: trackedTurnId,
+      status: opts?.status,
+      phase: opts?.phase,
+      error: opts?.error,
+      deliveryState: derivedDeliveryState,
+    });
+    trackedTurnId = undefined;
+  };
+  const buildUndeliveredReplyNotice = () => {
+    if (!sessionKey || deliveryChannel !== "slack") {
+      return undefined;
+    }
+    const snapshot = getActiveTrackedTurn(sessionKey);
+    if (!snapshot || !snapshot.replyProduced || snapshot.lastDeliverySuccessAt) {
+      return undefined;
+    }
+    if (snapshot.deliveryState === "delivery_failed") {
+      return snapshot.lastDeliveryError
+        ? `status: reply delivery failed (${snapshot.lastDeliveryError})`
+        : "status: reply delivery failed";
+    }
+    if (snapshot.deliveryState === "reply_stranded") {
+      return "status: turn finished but no visible reply was sent";
+    }
+    return "status: turn finished but no visible reply was sent";
+  };
+  const sendUndeliveredReplyNotice = async (text: string) => {
+    const payload = { text } satisfies ReplyPayload;
+    if (shouldRouteToOriginating) {
+      return sendPayloadAsync(payload, undefined, false);
+    }
+    return dispatcher.sendFinalReply(payload);
+  };
   markProcessing();
 
   try {
@@ -2360,6 +2557,21 @@ export async function dispatchReplyFromConfig(
       throwIfFinalDeliveryAborted();
       const normalizedPayload = await normalizeReplyMediaPayload(ttsPayload);
       throwIfFinalDeliveryAborted();
+      const normalizedParts = resolveSendableOutboundReplyParts(normalizedPayload);
+      const isSuppressedFinalReply =
+        typeof normalizedPayload.text === "string" &&
+        isSilentReplyText(normalizedPayload.text, SILENT_REPLY_TOKEN) &&
+        !normalizedParts.hasMedia;
+      if (isSuppressedFinalReply && trackedTurnId) {
+        updateTrackedTurn(trackedTurnId, {
+          deliveryState: "suppressed",
+          deliveryTarget,
+          markProgress: true,
+        });
+      } else if (hasVisibleFinalContent) {
+        markTrackedTurnReplyProduced();
+        recordTrackedTurnDeliveryAttempt();
+      }
       const result = await routeReplyToOriginating(normalizedPayload, {
         abortSignal,
         kind: "final",
@@ -2376,6 +2588,11 @@ export async function dispatchReplyFromConfig(
             metadata: sourceReplyTranscriptMirror,
             cfg,
           });
+          if (!isSuppressedFinalReply && hasVisibleFinalContent) {
+            recordTrackedTurnDeliverySuccess("final_sent");
+          }
+        } else if (!isSuppressedFinalReply && hasVisibleFinalContent) {
+          recordTrackedTurnDeliveryFailure("route-reply failed");
         }
         return {
           queuedFinal: result.ok,
@@ -2433,6 +2650,11 @@ export async function dispatchReplyFromConfig(
           metadata: deliveredTranscriptMirror,
           cfg,
         });
+        if (!isSuppressedFinalReply && hasVisibleFinalContent) {
+          recordTrackedTurnDeliverySuccess("final_sent");
+        }
+      } else if (!isSuppressedFinalReply && hasVisibleFinalContent) {
+        recordTrackedTurnDeliveryFailure("dispatcher rejected final reply");
       }
       return {
         queuedFinal,
@@ -2964,6 +3186,10 @@ export async function dispatchReplyFromConfig(
               requiresToolSummaryVisibility: true,
               waitForDirectBlockReplyDelivery: true,
             }),
+            onAgentRunStart: (runId: string) => {
+              startTrackedTurnRun(runId);
+              return params.replyOptions?.onAgentRunStart?.(runId);
+            },
             onToolResult: (payload: ReplyPayload) => {
               markProgress();
               const run = async () => {
@@ -3466,8 +3692,31 @@ export async function dispatchReplyFromConfig(
     }
 
     await waitForPendingDirectBlockReplyDelivery(getDispatchAbortSignal());
+    await waitForPendingDirectBlockReplyDelivery(getDispatchAbortSignal());
+
+    const undeliveredReplyNotice = buildUndeliveredReplyNotice();
+    if (undeliveredReplyNotice) {
+      const delivered = await sendUndeliveredReplyNotice(undeliveredReplyNotice);
+      if (delivered) {
+        queuedFinal = true;
+        if (shouldRouteToOriginating) {
+          routedFinalCount += 1;
+        }
+        if (trackedTurnId) {
+          updateTrackedTurn(trackedTurnId, {
+            markVisible: true,
+            markProgress: true,
+          });
+        }
+      }
+    }
+
     const counts = dispatcher.getQueuedCounts();
     counts.final += routedFinalCount;
+    finishTrackedTurnRun({
+      status: "done",
+      phase: "done",
+    });
     commitInboundDedupeIfClaimed();
     recordAgentDispatchCompleted("completed");
     recordProcessed(
@@ -3500,6 +3749,11 @@ export async function dispatchReplyFromConfig(
       }
     }
     recordAgentDispatchCompleted("error", { error: String(err) });
+    finishTrackedTurnRun({
+      status: "error",
+      phase: "error",
+      error: formatErrorMessage(err),
+    });
     recordProcessed("error", { error: String(err) });
     markIdle("message_error");
     failDispatchReplyOperation(err);
