@@ -205,9 +205,18 @@ Likely tests:
 
 ### Slice 3C — stalled-turn watcher polish
 
-- emit machine-generated stalled-turn notices
-- separate `blocked` vs `stalled` where possible
-- tune thresholds and avoid duplicate notices/spam
+Status: partially landed.
+
+- machine-generated stalled-turn notices landed
+- stalled state is surfaced in inspection output
+- still open:
+  - separate `blocked` vs `stalled` where possible
+  - tune thresholds and avoid duplicate/spammy patterns in real Slack threads
+  - handle maintenance-only suppressed turns (for example pre-compaction memory flush) as a distinct UX case instead of generic suppression
+
+Related follow-on plan:
+
+- `docs/dev/slack-turn-maintenance-suppression-plan.md`
 
 ## Acceptance criteria
 

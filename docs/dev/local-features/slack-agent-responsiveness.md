@@ -21,15 +21,23 @@ The core belief is simple:
   - `5f9754034` — suppressed replies distinguished from delivery failures
   - `f8523c896` — `/why-silent`
   - `1f104770f` — explicit `reply_stranded` finalization
-- Slice 3 is planned next:
-  - richer turn inspection (`/turns`)
-  - explicit runtime nudging (`/nudge`)
-  - steering hooks (`/steer`)
-  - stalled-turn watcher / blocked-vs-stalled separation
+- Slice 3 is in progress on `ec-main`:
+  - `3d925d0cc` — `/turns`, `/nudge`, and recent-turn list support
+  - `8de818625` — stalled turn state surfaced in inspection commands
+  - `cdf6f5aee` — stalled-turn watcher notices
+  - `d81df866f` — `/turn-steer` without colliding with upstream subagent `/steer`
+- Remaining polish before live testing:
+  - command/help/doc consistency for `/turn-steer` vs upstream `/steer`
+  - verify stalled-watcher timing/no-duplicate behavior in real Slack threads
+  - handle maintenance-only suppressed turns (for example pre-compaction memory flush) as a distinct UX case instead of generic suppression
+  - decide whether to surface “recently steered” more explicitly outside `/turn-status`
+  - decide whether blocked-vs-stalled separation is needed before broader rollout
 - Design docs:
   - `docs/dev/slack-turn-visibility-and-steering.md`
   - `docs/dev/slack-turn-slice-2-delivery-attribution-plan.md`
   - `docs/dev/slack-turn-slice-3-steering-and-watchers-plan.md`
+  - `docs/dev/slack-turn-live-testing-polish-plan.md`
+  - `docs/dev/slack-turn-maintenance-suppression-plan.md`
 
 ## Problem statement
 
