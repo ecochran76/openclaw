@@ -1,5 +1,6 @@
 /** Main reply dispatch pipeline from finalized config/context to delivery payloads. */
 import crypto from "node:crypto";
+import fs from "node:fs";
 import { isParentOwnedBackgroundAcpSession } from "@openclaw/acp-core/session-interaction-mode";
 import {
   normalizeLowercaseStringOrEmpty,
@@ -124,13 +125,13 @@ import {
 } from "../reply-payload.js";
 import type { FinalizedMsgContext } from "../templating.js";
 import { normalizeVerboseLevel } from "../thinking.js";
-import { isSilentReplyText, SILENT_REPLY_TOKEN } from "../tokens.js";
 import {
   attachTrackedTurnRunId,
   buildTurnProgressLine,
   finishTrackedTurn,
   getActiveTrackedTurn,
   startTrackedTurn,
+  type TrackedTurnSuppressionReason,
   updateTrackedTurn,
 } from "../turn-tracker.js";
 import { resolveSessionRuntimeOverrideForProvider } from "./agent-runner-execution.js";
@@ -157,6 +158,7 @@ import { withFullRuntimeReplyConfig } from "./get-reply-fast-path.js";
 import type { ReplySessionBinding } from "./get-reply.types.js";
 import { claimInboundDedupe, commitInboundDedupe, releaseInboundDedupe } from "./inbound-dedupe.js";
 import { hasInboundAudio } from "./inbound-media.js";
+import { normalizeReplyPayload } from "./normalize-reply.js";
 import { resolveOriginMessageProvider } from "./origin-routing.js";
 import { waitForReplyDispatcherIdle } from "./reply-dispatcher.js";
 import type {
@@ -1282,6 +1284,7 @@ export async function dispatchReplyFromConfig(
     }
     return preparedSessionBinding;
   };
+  const initialMemoryFlushAt = sessionStoreEntry.entry?.memoryFlushAt;
   const sessionAgentId = resolveSessionAgentId({
     sessionKey: acpDispatchSessionKey,
     config: cfg,
@@ -2160,6 +2163,67 @@ export async function dispatchReplyFromConfig(
     }
   };
 
+  const didMemoryFlushDuringTurn = (): boolean => {
+    const latestEntry = (() => {
+      const directStorePath =
+        sessionStoreEntry.storePath ??
+        resolveStorePath(cfg.session?.store, { agentId: sessionAgentId });
+      const directSessionKey = sessionStoreEntry.sessionKey ?? sessionKey ?? ctx.SessionKey;
+      if (directStorePath && directSessionKey) {
+        try {
+          const raw = JSON.parse(fs.readFileSync(directStorePath, "utf8")) as Record<
+            string,
+            SessionEntry
+          >;
+          return resolveSessionStoreEntry({
+            store: raw,
+            sessionKey: directSessionKey,
+          }).existing;
+        } catch {
+          return readSessionEntry(directStorePath, directSessionKey);
+        }
+      }
+      return resolveSessionStoreLookup(ctx, cfg).entry;
+    })();
+    const latestMemoryFlushAt = latestEntry?.memoryFlushAt;
+    if (typeof initialMemoryFlushAt !== "number") {
+      return typeof latestMemoryFlushAt === "number";
+    }
+    if (typeof latestMemoryFlushAt !== "number" || latestMemoryFlushAt === initialMemoryFlushAt) {
+      const active = trackedTurnId && sessionKey ? getActiveTrackedTurn(sessionKey) : undefined;
+      return Boolean(
+        (active && initialMemoryFlushAt < active.startedAt) ||
+          Date.now() - initialMemoryFlushAt > 1_000,
+      );
+    }
+    return latestMemoryFlushAt > initialMemoryFlushAt;
+  };
+  const classifyPayloadVisibility = (
+    payload: ReplyPayload,
+  ):
+    | { visibility: "visible" | "empty" }
+    | { visibility: "suppressed"; suppressionReason: TrackedTurnSuppressionReason } => {
+    let skipReason: "empty" | "silent" | "heartbeat" | undefined;
+    const normalized = normalizeReplyPayload(payload, {
+      onSkip: (reason) => {
+        skipReason = reason;
+      },
+    });
+    if (normalized) {
+      return { visibility: "visible" };
+    }
+    if (skipReason === "heartbeat") {
+      return { visibility: "suppressed", suppressionReason: "heartbeat" };
+    }
+    if (skipReason === "silent") {
+      return {
+        visibility: "suppressed",
+        suppressionReason: didMemoryFlushDuringTurn() ? "maintenance" : "silent",
+      };
+    }
+    return { visibility: "empty" };
+  };
+
   const markTrackedTurnReplyProduced = () => {
     if (!trackedTurnId) {
       return;
@@ -2188,6 +2252,7 @@ export async function dispatchReplyFromConfig(
     updateTrackedTurn(trackedTurnId, {
       deliveryState: state,
       deliveryTarget,
+      suppressionReason: undefined,
       lastDeliveryAttemptAt: at,
       lastDeliverySuccessAt: at,
       lastDeliveryError: undefined,
@@ -2201,18 +2266,20 @@ export async function dispatchReplyFromConfig(
     updateTrackedTurn(trackedTurnId, {
       deliveryState: "delivery_failed",
       deliveryTarget,
+      suppressionReason: undefined,
       lastDeliveryAttemptAt: Date.now(),
       lastDeliveryError: error,
       markProgress: true,
     });
   };
-  const recordTrackedTurnSuppressedReply = () => {
+  const recordTrackedTurnSuppressedReply = (suppressionReason: TrackedTurnSuppressionReason) => {
     if (!trackedTurnId) {
       return;
     }
     updateTrackedTurn(trackedTurnId, {
       deliveryState: "suppressed",
       deliveryTarget,
+      suppressionReason,
       markProgress: true,
     });
   };
@@ -2257,21 +2324,30 @@ export async function dispatchReplyFromConfig(
               return;
             }
             const payload = { text: buildTurnProgressLine(active) } satisfies ReplyPayload;
-            markTrackedTurnReplyProduced();
-            recordTrackedTurnDeliveryAttempt();
+            const visibility = classifyPayloadVisibility(payload);
+            if (visibility.visibility === "visible") {
+              markTrackedTurnReplyProduced();
+              recordTrackedTurnDeliveryAttempt();
+            } else if (visibility.visibility === "suppressed") {
+              recordTrackedTurnSuppressedReply(visibility.suppressionReason);
+            }
             if (shouldRouteToOriginating) {
               const ok = await sendPayloadAsync(payload, undefined, false);
-              if (ok) {
-                recordTrackedTurnDeliverySuccess("block_sent");
-              } else {
-                recordTrackedTurnDeliveryFailure("route-reply failed");
+              if (visibility.visibility === "visible") {
+                if (ok) {
+                  recordTrackedTurnDeliverySuccess("block_sent");
+                } else {
+                  recordTrackedTurnDeliveryFailure("route-reply failed");
+                }
               }
             } else {
               const queued = dispatcher.sendBlockReply(payload);
-              if (queued) {
-                recordTrackedTurnDeliverySuccess("block_sent");
-              } else {
-                recordTrackedTurnDeliveryFailure("dispatcher rejected block reply");
+              if (visibility.visibility === "visible") {
+                if (queued) {
+                  recordTrackedTurnDeliverySuccess("block_sent");
+                } else {
+                  recordTrackedTurnDeliveryFailure("dispatcher rejected block reply");
+                }
               }
             }
             firstTurnNudgeSent = true;
@@ -2604,20 +2680,20 @@ export async function dispatchReplyFromConfig(
       throwIfFinalDeliveryAborted();
       const normalizedPayload = await normalizeReplyMediaPayload(ttsPayload);
       throwIfFinalDeliveryAborted();
-      const normalizedParts = resolveSendableOutboundReplyParts(normalizedPayload);
-      const isSuppressedFinalReply =
-        typeof normalizedPayload.text === "string" &&
-        isSilentReplyText(normalizedPayload.text, SILENT_REPLY_TOKEN) &&
-        !normalizedParts.hasMedia;
-      if (isSuppressedFinalReply && trackedTurnId) {
+      if (trackedTurnId) {
         updateTrackedTurn(trackedTurnId, {
-          deliveryState: "suppressed",
-          deliveryTarget,
+          phase: "delivery_prepare",
+          deliveryState: "pending",
+          markVisible: true,
           markProgress: true,
         });
-      } else if (hasVisibleFinalContent) {
+      }
+      const visibility = classifyPayloadVisibility(normalizedPayload);
+      if (visibility.visibility === "visible") {
         markTrackedTurnReplyProduced();
         recordTrackedTurnDeliveryAttempt();
+      } else if (visibility.visibility === "suppressed") {
+        recordTrackedTurnSuppressedReply(visibility.suppressionReason);
       }
       const result = await routeReplyToOriginating(normalizedPayload, {
         abortSignal,
@@ -2635,11 +2711,11 @@ export async function dispatchReplyFromConfig(
             metadata: sourceReplyTranscriptMirror,
             cfg,
           });
-          if (!isSuppressedFinalReply && hasVisibleFinalContent) {
+          if (visibility.visibility === "visible") {
             recordTrackedTurnDeliverySuccess("final_sent");
           }
-        } else if (!isSuppressedFinalReply && hasVisibleFinalContent) {
-          recordTrackedTurnDeliveryFailure("route-reply failed");
+        } else if (visibility.visibility === "visible") {
+          recordTrackedTurnDeliveryFailure(result.error ?? "route-reply failed");
         }
         return {
           queuedFinal: result.ok,
@@ -2697,10 +2773,10 @@ export async function dispatchReplyFromConfig(
           metadata: deliveredTranscriptMirror,
           cfg,
         });
-        if (!isSuppressedFinalReply && hasVisibleFinalContent) {
+        if (visibility.visibility === "visible") {
           recordTrackedTurnDeliverySuccess("final_sent");
         }
-      } else if (!isSuppressedFinalReply && hasVisibleFinalContent) {
+      } else if (visibility.visibility === "visible") {
         recordTrackedTurnDeliveryFailure("dispatcher rejected final reply");
       }
       return {

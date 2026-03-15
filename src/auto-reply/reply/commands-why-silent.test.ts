@@ -50,4 +50,53 @@ describe("/why-silent", () => {
     expect(result.reply?.text).toContain("Delivery target: originating channel");
     expect(result.reply?.text).toContain("Delivery error: route-reply failed");
   });
+  it("explains a stalled active turn", async () => {
+    const turn = startTrackedTurn({
+      sessionKey: "agent:main:main",
+      channel: "slack",
+      phase: "tool_wait",
+      startedAt: Date.now() - 180_000,
+    });
+    updateTrackedTurn(turn.turnId, {
+      activeTool: "exec",
+      markProgress: true,
+      at: Date.now() - 180_000,
+    });
+
+    const params = buildCommandTestParams("/why-silent", {} as OpenClawConfig, {
+      Provider: "slack",
+      Surface: "slack",
+    });
+
+    const result = await handleCommands(params);
+    expect(result.shouldContinue).toBe(false);
+    expect(result.reply?.text).toContain("turn appears stalled");
+    expect(result.reply?.text).toContain("Phase: stalled");
+    expect(result.reply?.text).toContain("Stalled threshold:");
+  });
+
+  it("explains a maintenance suppressed active turn", async () => {
+    const turn = startTrackedTurn({
+      sessionKey: "agent:main:main",
+      channel: "slack",
+      phase: "done",
+      startedAt: Date.now() - 60_000,
+    });
+    updateTrackedTurn(turn.turnId, {
+      markProgress: true,
+      deliveryState: "suppressed",
+      suppressionReason: "maintenance",
+    });
+
+    const params = buildCommandTestParams("/why-silent", {} as OpenClawConfig, {
+      Provider: "slack",
+      Surface: "slack",
+    });
+
+    const result = await handleCommands(params);
+    expect(result.shouldContinue).toBe(false);
+    expect(result.reply?.text).toContain("maintenance-only turn");
+    expect(result.reply?.text).toContain("intentionally produced no visible reply");
+    expect(result.reply?.text).toContain("Suppression: maintenance turn");
+  });
 });

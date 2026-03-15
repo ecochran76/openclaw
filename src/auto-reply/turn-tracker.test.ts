@@ -167,12 +167,14 @@ describe("turn tracker", () => {
         status: "done",
         phase: "done",
         deliveryState: "suppressed",
+        suppressionReason: "maintenance",
         durationClass: "medium",
         steerable: true,
       },
       now: 50_000,
     });
-    expect(recentWhy).toContain("intentionally produced no user-visible reply");
+    expect(recentWhy).toContain("maintenance-only turn");
     expect(recentWhy).toContain("Delivery: suppressed");
+    expect(recentWhy).toContain("Suppression: maintenance turn");
   });
 });

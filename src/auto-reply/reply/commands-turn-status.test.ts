@@ -60,4 +60,30 @@ describe("/turn-status", () => {
     expect(result.reply?.text).toContain("Delivery error: route-reply failed");
     expect(result.reply?.text).toContain("Run: run-abcd");
   });
+
+  it("reports maintenance suppression details", async () => {
+    const turn = startTrackedTurn({
+      sessionKey: "agent:main:main",
+      channel: "slack",
+      phase: "done",
+      startedAt: Date.now() - 30_000,
+    });
+    updateTrackedTurn(turn.turnId, {
+      replyProduced: false,
+      deliveryState: "suppressed",
+      suppressionReason: "maintenance",
+      markProgress: true,
+      markVisible: false,
+    });
+
+    const params = buildCommandTestParams("/turn-status", {} as OpenClawConfig, {
+      Provider: "slack",
+      Surface: "slack",
+    });
+
+    const result = await handleCommands(params);
+    expect(result.shouldContinue).toBe(false);
+    expect(result.reply?.text).toContain("Delivery: suppressed");
+    expect(result.reply?.text).toContain("Suppression: maintenance turn");
+  });
 });

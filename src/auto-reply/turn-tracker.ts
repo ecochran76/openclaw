@@ -25,6 +25,8 @@ export type TrackedTurnDeliveryState =
 
 export type TrackedTurnDeliveryTarget = "same_channel" | "originating_channel";
 
+export type TrackedTurnSuppressionReason = "silent" | "heartbeat" | "maintenance";
+
 export type TrackedTurnSnapshot = {
   turnId: string;
   runId?: string;
@@ -47,6 +49,7 @@ export type TrackedTurnSnapshot = {
   lastDeliverySuccessAt?: number;
   lastDeliveryError?: string;
   replyProduced?: boolean;
+  suppressionReason?: TrackedTurnSuppressionReason;
   lastError?: string;
 };
 
@@ -141,6 +144,7 @@ export function updateTrackedTurn(
       | "lastDeliverySuccessAt"
       | "lastDeliveryError"
       | "replyProduced"
+      | "suppressionReason"
     >
   > & { markProgress?: boolean; markVisible?: boolean; at?: number },
 ): TrackedTurnSnapshot | undefined {
@@ -182,6 +186,9 @@ export function updateTrackedTurn(
   }
   if (patch.replyProduced !== undefined) {
     current.replyProduced = patch.replyProduced;
+  }
+  if ("suppressionReason" in patch) {
+    current.suppressionReason = patch.suppressionReason;
   }
   if (patch.status) {
     current.status = patch.status;
@@ -302,6 +309,19 @@ function describeDeliveryTarget(target?: TrackedTurnDeliveryTarget): string {
   }
 }
 
+function describeSuppressionReason(reason?: TrackedTurnSuppressionReason): string | undefined {
+  switch (reason) {
+    case "silent":
+      return "ordinary silent reply";
+    case "heartbeat":
+      return "heartbeat suppression";
+    case "maintenance":
+      return "maintenance turn";
+    default:
+      return undefined;
+  }
+}
+
 export function buildTurnProgressLine(snapshot: TrackedTurnSnapshot): string {
   const toolSuffix = snapshot.activeTool ? ` (${snapshot.activeTool})` : "";
   return `working: ${describePhase(snapshot.phase)}${toolSuffix}`;
@@ -343,7 +363,13 @@ export function buildWhySilentText(params: {
     if (snapshot.deliveryState === "delivery_failed") {
       lines.push("Answer: the reply was produced, but delivery failed.");
     } else if (snapshot.deliveryState === "suppressed") {
-      lines.push("Answer: the turn is intentionally silent right now.");
+      if (snapshot.suppressionReason === "maintenance") {
+        lines.push(
+          "Answer: the turn is a maintenance-only turn that intentionally produced no visible reply.",
+        );
+      } else {
+        lines.push("Answer: the turn is intentionally silent right now.");
+      }
     } else if (snapshot.deliveryState === "reply_stranded") {
       lines.push("Answer: the turn looks stranded after producing a reply.");
     } else {
@@ -358,9 +384,15 @@ export function buildWhySilentText(params: {
         lines.push("Answer: the last turn finished, but no visible reply was sent.");
         break;
       case "suppressed":
-        lines.push(
-          "Answer: the last turn intentionally produced no user-visible reply (for example NO_REPLY or heartbeat suppression).",
-        );
+        if (snapshot.suppressionReason === "maintenance") {
+          lines.push(
+            "Answer: the last turn was a maintenance-only turn that intentionally produced no visible reply.",
+          );
+        } else {
+          lines.push(
+            "Answer: the last turn intentionally produced no user-visible reply (for example NO_REPLY or heartbeat suppression).",
+          );
+        }
         break;
       case "block_sent":
       case "final_sent":
@@ -374,6 +406,10 @@ export function buildWhySilentText(params: {
   lines.push(`Phase: ${describePhase(snapshot.phase)}`);
   lines.push(`State: ${params.active ? "active" : snapshot.status}`);
   lines.push(`Delivery: ${describeDeliveryState(snapshot.deliveryState)}`);
+  const suppressionReason = describeSuppressionReason(snapshot.suppressionReason);
+  if (suppressionReason) {
+    lines.push(`Suppression: ${suppressionReason}`);
+  }
   if (snapshot.deliveryTarget) {
     lines.push(`Delivery target: ${describeDeliveryTarget(snapshot.deliveryTarget)}`);
   }
@@ -419,6 +455,10 @@ export function buildTurnStatusText(params: {
   }
   lines.push(`Reply produced: ${snapshot.replyProduced ? "yes" : "no"}`);
   lines.push(`Delivery: ${describeDeliveryState(snapshot.deliveryState)}`);
+  const suppressionReason = describeSuppressionReason(snapshot.suppressionReason);
+  if (suppressionReason) {
+    lines.push(`Suppression: ${suppressionReason}`);
+  }
   if (snapshot.deliveryTarget) {
     lines.push(`Delivery target: ${describeDeliveryTarget(snapshot.deliveryTarget)}`);
   }

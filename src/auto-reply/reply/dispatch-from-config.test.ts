@@ -1,8 +1,13 @@
 // Tests dispatch-from-config runtime selection, hooks, and provider handoff.
+import fs from "node:fs";
+import os from "node:os";
+import path from "node:path";
 import { beforeAll, beforeEach, describe, expect, it, vi, type Mock } from "vitest";
 import { clearAgentHarnesses, registerAgentHarness } from "../../agents/harness/registry.js";
 import type { ChannelMessagingAdapter } from "../../channels/plugins/types.core.js";
 import type { OpenClawConfig } from "../../config/config.js";
+import { saveSessionStore } from "../../config/sessions.js";
+import type { SessionEntry } from "../../config/sessions/types.js";
 import {
   clearApprovalNativeRouteStateForTest,
   createApprovalNativeRouteReporter,
@@ -4627,6 +4632,76 @@ describe("dispatchReplyFromConfig", () => {
     expect((finalCalls[0]?.[0] as ReplyPayload | undefined)?.text).toBe("NO_REPLY");
     const recent = getRecentTrackedTurn(ctx.SessionKey ?? "agent:main:main");
     expect(recent?.deliveryState).toBe("suppressed");
+    expect(recent?.suppressionReason).toBe("silent");
+  });
+
+  it("classifies suppression as maintenance when memoryFlushAt advances during the turn", async () => {
+    setNoAbort();
+    const tempDir = fs.mkdtempSync(path.join(os.tmpdir(), "openclaw-test-"));
+    try {
+      const storePath = path.join(tempDir, "sessions.json");
+      const cfg: OpenClawConfig = {
+        ...emptyConfig,
+        session: {
+          ...emptyConfig.session,
+          store: storePath,
+        },
+      };
+      const dispatcher = createDispatcher();
+      const ctx = buildTestCtx({
+        Provider: "slack",
+        Surface: "slack",
+        SessionKey: "agent:main:main",
+      });
+      const sessionKey = ctx.SessionKey ?? "agent:main:main";
+      const initialEntry: SessionEntry = {
+        sessionId: "session-maintenance-test",
+        updatedAt: Date.now(),
+        memoryFlushAt: Date.now() - 10000,
+      };
+      sessionStoreMocks.currentEntry = initialEntry;
+      await saveSessionStore(storePath, {
+        [sessionKey]: initialEntry,
+      });
+
+      let resolveReply: (value: ReplyPayload | undefined) => void = () => {};
+      let markReplyReady: () => void = () => {};
+      const replyReady = new Promise<void>((resolve) => {
+        markReplyReady = resolve;
+      });
+      const dispatchPromise = dispatchReplyFromConfig({
+        ctx,
+        cfg,
+        dispatcher,
+        replyResolver: vi.fn(async (_ctx: MsgContext, opts?: GetReplyOptions) => {
+          await Promise.resolve(opts?.onAgentRunStart?.("run-maintenance"));
+          // Simulate a memory flush by advancing memoryFlushAt before sending NO_REPLY
+          const flushedEntry = {
+            ...initialEntry,
+            updatedAt: Date.now(),
+            memoryFlushAt: Date.now(),
+          };
+          sessionStoreMocks.currentEntry = flushedEntry;
+          await saveSessionStore(storePath, {
+            [sessionKey]: flushedEntry,
+          });
+          return await new Promise<ReplyPayload | undefined>((resolve) => {
+            resolveReply = resolve;
+            markReplyReady();
+          });
+        }),
+      });
+
+      await replyReady;
+      resolveReply({ text: "NO_REPLY" });
+      await dispatchPromise;
+
+      const recent = getRecentTrackedTurn(ctx.SessionKey ?? "agent:main:main");
+      expect(recent?.deliveryState).toBe("suppressed");
+      expect(recent?.suppressionReason).toBe("maintenance");
+    } finally {
+      fs.rmSync(tempDir, { recursive: true, force: true });
+    }
   });
 
   it("explicitly finalizes reply_stranded turns and emits the stranded notice", async () => {
