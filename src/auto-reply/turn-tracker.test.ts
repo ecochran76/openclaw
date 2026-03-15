@@ -1,11 +1,15 @@
 import { describe, expect, it, afterEach } from "vitest";
 import {
   attachTrackedTurnRunId,
+  buildNudgeText,
   buildTurnProgressLine,
+  buildTurnsText,
   buildTurnStatusText,
   buildTurnSummaryLine,
   buildWhySilentText,
   finishTrackedTurn,
+  getRecentTrackedTurns,
+  recordTrackedTurnSteer,
   resetTrackedTurnsForTests,
   startTrackedTurn,
   updateTrackedTurn,
@@ -39,6 +43,10 @@ describe("turn tracker", () => {
       replyProduced: true,
       at: 30_000,
     });
+    recordTrackedTurnSteer(turn.turnId, {
+      text: "focus on the failing delivery path only",
+      at: 35_000,
+    });
 
     const text = buildTurnStatusText({
       active: {
@@ -53,6 +61,9 @@ describe("turn tracker", () => {
         deliveryState: "block_sent",
         deliveryTarget: "same_channel",
         replyProduced: true,
+        steerCount: 1,
+        lastSteerAt: 35_000,
+        lastSteerText: "focus on the failing delivery path only",
         durationClass: "medium",
       },
       now: 70_000,
@@ -60,6 +71,9 @@ describe("turn tracker", () => {
 
     expect(text).toContain("State: active");
     expect(text).toContain("Phase: tool wait");
+    expect(text).toContain("Steers: 1");
+    expect(text).toContain("Last steer: 35s ago");
+    expect(text).toContain("Last steer text: focus on the failing delivery path only");
     expect(text).toContain("Tool: exec");
     expect(text).toContain("Reply produced: yes");
     expect(text).toContain("Delivery: block sent");
@@ -176,5 +190,155 @@ describe("turn tracker", () => {
     expect(recentWhy).toContain("maintenance-only turn");
     expect(recentWhy).toContain("Delivery: suppressed");
     expect(recentWhy).toContain("Suppression: maintenance turn");
+  });
+  it("lists recent turns and builds nudge text", () => {
+    const first = startTrackedTurn({
+      sessionKey: "agent:main:main",
+      startedAt: 0,
+      phase: "reasoning",
+    });
+    finishTrackedTurn({
+      turnId: first.turnId,
+      completedAt: 5_000,
+      status: "done",
+      deliveryState: "final_sent",
+    });
+    const second = startTrackedTurn({
+      sessionKey: "agent:main:main",
+      startedAt: 10_000,
+      phase: "tool_wait",
+    });
+    finishTrackedTurn({
+      turnId: second.turnId,
+      completedAt: 40_000,
+      status: "error",
+      phase: "error",
+      deliveryState: "delivery_failed",
+    });
+    const active = startTrackedTurn({
+      sessionKey: "agent:main:main",
+      startedAt: 50_000,
+      phase: "tool_wait",
+      channel: "slack",
+    });
+    updateTrackedTurn(active.turnId, { activeTool: "exec", markProgress: true, at: 60_000 });
+
+    const recent = getRecentTrackedTurns("agent:main:main");
+    expect(recent).toHaveLength(2);
+    const turnsText = buildTurnsText({
+      active: {
+        ...active,
+        activeTool: "exec",
+        lastProgressAt: 60_000,
+        durationClass: "short",
+        steerable: true,
+        steerCount: 1,
+        status: "active",
+      },
+      recents: recent,
+      now: 70_000,
+    });
+    expect(turnsText).toContain("🧭 Turns");
+    expect(turnsText).toContain(
+      "active · tool wait · medium · reply pending · steerable · steers:1 · exec",
+    );
+    expect(turnsText).toContain("error · error · medium · delivery failed");
+    expect(turnsText).toContain("done · done · short · final sent");
+
+    const turnsWithSuppression = buildTurnsText({
+      recents: [
+        {
+          ...second,
+          status: "error",
+          phase: "error",
+          completedAt: 40_000,
+          durationClass: "medium",
+          deliveryState: "suppressed",
+          suppressionReason: "maintenance",
+        },
+      ],
+      now: 70_000,
+    });
+    expect(turnsWithSuppression).toContain(
+      "error · error · medium · suppressed · maintenance turn",
+    );
+
+    const nudge = buildNudgeText({
+      active: {
+        ...active,
+        activeTool: "exec",
+        lastProgressAt: 60_000,
+        durationClass: "short",
+        steerable: true,
+        status: "active",
+      },
+      now: 70_000,
+    });
+    expect(nudge).toContain("working: tool wait (exec)");
+    expect(nudge).toContain("Last progress: 10s ago");
+  });
+
+  it("derives stalled state for long-silent active turns", () => {
+    const turn = startTrackedTurn({
+      sessionKey: "agent:main:main",
+      startedAt: 0,
+      phase: "tool_wait",
+      channel: "slack",
+    });
+    updateTrackedTurn(turn.turnId, {
+      activeTool: "exec",
+      markProgress: true,
+      at: 0,
+    });
+
+    const status = buildTurnStatusText({
+      active: {
+        ...turn,
+        activeTool: "exec",
+        lastProgressAt: 0,
+        status: "active",
+        steerable: true,
+      },
+      now: 180_000,
+    });
+    expect(status).toContain("Phase: stalled");
+    expect(status).toContain("Stalled threshold:");
+
+    const why = buildWhySilentText({
+      active: {
+        ...turn,
+        activeTool: "exec",
+        lastProgressAt: 0,
+        status: "active",
+        steerable: true,
+      },
+      now: 180_000,
+    });
+    expect(why).toContain("turn appears stalled");
+
+    const turns = buildTurnsText({
+      active: {
+        ...turn,
+        activeTool: "exec",
+        lastProgressAt: 0,
+        status: "active",
+        steerable: true,
+      },
+      now: 180_000,
+    });
+    expect(turns).toContain("active · stalled · long · reply pending · steerable · exec");
+
+    const nudge = buildNudgeText({
+      active: {
+        ...turn,
+        activeTool: "exec",
+        lastProgressAt: 0,
+        status: "active",
+        steerable: true,
+      },
+      now: 180_000,
+    });
+    expect(nudge).toContain("stalled: no recent progress (exec)");
+    expect(nudge).toContain("Stalled threshold:");
   });
 });

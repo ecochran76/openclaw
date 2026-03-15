@@ -31,6 +31,7 @@ export type TrackedTurnSnapshot = {
   turnId: string;
   runId?: string;
   sessionKey: string;
+  sessionId?: string;
   channel?: string;
   threadId?: string | number;
   startedAt: number;
@@ -51,10 +52,14 @@ export type TrackedTurnSnapshot = {
   replyProduced?: boolean;
   suppressionReason?: TrackedTurnSuppressionReason;
   lastError?: string;
+  steerCount?: number;
+  lastSteerAt?: number;
+  lastSteerText?: string;
 };
 
 const activeBySession = new Map<string, TrackedTurnSnapshot>();
-const recentBySession = new Map<string, TrackedTurnSnapshot>();
+const RECENT_TURN_LIMIT = 5;
+const recentListBySession = new Map<string, TrackedTurnSnapshot[]>();
 const turnIdToSession = new Map<string, string>();
 const runIdToTurnId = new Map<string, string>();
 
@@ -85,6 +90,7 @@ function applyElapsed(snapshot: TrackedTurnSnapshot, now = Date.now()): TrackedT
 
 export function startTrackedTurn(params: {
   sessionKey: string;
+  sessionId?: string;
   channel?: string;
   threadId?: string | number;
   startedAt?: number;
@@ -96,6 +102,7 @@ export function startTrackedTurn(params: {
   const snapshot: TrackedTurnSnapshot = {
     turnId: crypto.randomUUID(),
     sessionKey: params.sessionKey,
+    sessionId: params.sessionId,
     channel: params.channel,
     threadId: params.threadId,
     startedAt,
@@ -232,7 +239,9 @@ export function finishTrackedTurn(params: {
   }
   const finalized = applyElapsed(current, completedAt);
   activeBySession.delete(sessionKey);
-  recentBySession.set(sessionKey, finalized);
+  const recent = recentListBySession.get(sessionKey) ?? [];
+  recent.unshift(finalized);
+  recentListBySession.set(sessionKey, recent.slice(0, RECENT_TURN_LIMIT));
   if (current.runId) {
     runIdToTurnId.delete(current.runId);
   }
@@ -246,8 +255,41 @@ export function getActiveTrackedTurn(sessionKey: string): TrackedTurnSnapshot | 
 }
 
 export function getRecentTrackedTurn(sessionKey: string): TrackedTurnSnapshot | undefined {
-  const recent = recentBySession.get(sessionKey);
+  const recent = recentListBySession.get(sessionKey)?.[0];
   return recent ? clone(applyElapsed(recent)) : undefined;
+}
+
+export function getRecentTrackedTurns(
+  sessionKey: string,
+  limit = RECENT_TURN_LIMIT,
+): TrackedTurnSnapshot[] {
+  return (recentListBySession.get(sessionKey) ?? [])
+    .slice(0, limit)
+    .map((turn) => clone(applyElapsed(turn)));
+}
+
+export function recordTrackedTurnSteer(
+  turnId: string,
+  params: {
+    text: string;
+    at?: number;
+  },
+): TrackedTurnSnapshot | undefined {
+  const sessionKey = turnIdToSession.get(turnId);
+  if (!sessionKey) {
+    return undefined;
+  }
+  const current = activeBySession.get(sessionKey);
+  if (!current || current.turnId !== turnId) {
+    return undefined;
+  }
+  const at = params.at ?? Date.now();
+  current.steerCount = (current.steerCount ?? 0) + 1;
+  current.lastSteerAt = at;
+  current.lastSteerText = params.text;
+  current.updatedAt = at;
+  activeBySession.set(sessionKey, current);
+  return clone(applyElapsed(current, at));
 }
 
 export function formatTrackedTurnAgo(at?: number, now = Date.now()): string {
@@ -256,6 +298,18 @@ export function formatTrackedTurnAgo(at?: number, now = Date.now()): string {
   }
   const delta = Math.max(0, now - at);
   return formatDurationCompact(delta, { spaced: true }) ?? "0s";
+}
+
+function formatTrackedTurnTextPreview(text: string, maxChars = 120): string {
+  const compact = text.replace(/\s+/g, " ").trim();
+  if (compact.length <= maxChars) {
+    return compact;
+  }
+  return `${compact.slice(0, Math.max(0, maxChars - 3)).trimEnd()}...`;
+}
+
+function getTrackedTurnSteerCount(snapshot: TrackedTurnSnapshot): number {
+  return snapshot.steerCount ?? (snapshot.lastSteerAt ? 1 : 0);
 }
 
 function describePhase(phase: TrackedTurnPhase): string {
@@ -327,6 +381,34 @@ export function buildTurnProgressLine(snapshot: TrackedTurnSnapshot): string {
   return `working: ${describePhase(snapshot.phase)}${toolSuffix}`;
 }
 
+function buildTurnLine(
+  snapshot: TrackedTurnSnapshot,
+  opts?: { active?: boolean; index?: number },
+): string {
+  const label = opts?.active ? "active" : snapshot.status;
+  const parts = [
+    label,
+    describePhase(snapshot.phase),
+    snapshot.durationClass,
+    describeDeliveryState(snapshot.deliveryState),
+  ];
+  const suppressionReason = describeSuppressionReason(snapshot.suppressionReason);
+  if (suppressionReason) {
+    parts.push(suppressionReason);
+  }
+  if (snapshot.steerable && opts?.active) {
+    parts.push("steerable");
+  }
+  const steerCount = getTrackedTurnSteerCount(snapshot);
+  if (steerCount > 0) {
+    parts.push(`steers:${steerCount}`);
+  }
+  if (snapshot.activeTool) {
+    parts.push(snapshot.activeTool);
+  }
+  const prefix = typeof opts?.index === "number" ? `${opts.index + 1}. ` : "- ";
+  return `${prefix}${parts.join(" · ")}`;
+}
 export function buildTurnSummaryLine(params: {
   active?: TrackedTurnSnapshot;
   recent?: TrackedTurnSnapshot;
@@ -342,10 +424,56 @@ export function buildTurnSummaryLine(params: {
     snapshot.durationClass,
     describeDeliveryState(snapshot.deliveryState),
   ];
+  const suppressionReason = describeSuppressionReason(snapshot.suppressionReason);
+  if (suppressionReason) {
+    parts.push(suppressionReason);
+  }
   if (snapshot.activeTool) {
     parts.push(snapshot.activeTool);
   }
   return `${prefix}: ${parts.join(" · ")}`;
+}
+
+export function buildTurnsText(params: {
+  active?: TrackedTurnSnapshot;
+  recents?: TrackedTurnSnapshot[];
+  now?: number;
+}): string {
+  const active = params.active;
+  const recents = params.recents ?? [];
+  if (!active && recents.length === 0) {
+    return "🧭 Turns\nNo active or recent turns for this session.";
+  }
+  const lines = ["🧭 Turns"];
+  if (active) {
+    lines.push(buildTurnLine(active, { active: true }));
+  }
+  for (const [index, turn] of recents.entries()) {
+    lines.push(buildTurnLine(turn, { index }));
+  }
+  return lines.join("\n");
+}
+
+export function buildNudgeText(params: {
+  active?: TrackedTurnSnapshot;
+  recent?: TrackedTurnSnapshot;
+  now?: number;
+}): string {
+  const now = params.now ?? Date.now();
+  if (params.active) {
+    const active = params.active;
+    const lines = ["🧭 Nudge", buildTurnProgressLine(active)];
+    lines.push(`Delivery: ${describeDeliveryState(active.deliveryState)}`);
+    lines.push(`Last progress: ${formatTrackedTurnAgo(active.lastProgressAt, now)} ago`);
+    if (active.activeTool) {
+      lines.push(`Tool: ${active.activeTool}`);
+    }
+    return lines.join("\n");
+  }
+  if (params.recent) {
+    return `🧭 Nudge\nNo active turn to nudge.\nRecent: ${buildTurnLine(params.recent).slice(2)}`;
+  }
+  return "🧭 Nudge\nNo active turn to nudge.";
 }
 
 export function buildWhySilentText(params: {
@@ -450,6 +578,14 @@ export function buildTurnStatusText(params: {
   lines.push(`Phase: ${describePhase(snapshot.phase)}`);
   lines.push(`Duration: ${elapsedText} (${snapshot.durationClass})`);
   lines.push(`Steerable: ${snapshot.steerable ? "yes" : "no"}`);
+  const steerCount = getTrackedTurnSteerCount(snapshot);
+  if (steerCount > 0) {
+    lines.push(`Steers: ${steerCount}`);
+    lines.push(`Last steer: ${formatTrackedTurnAgo(snapshot.lastSteerAt, now)} ago`);
+    if (snapshot.lastSteerText) {
+      lines.push(`Last steer text: ${formatTrackedTurnTextPreview(snapshot.lastSteerText)}`);
+    }
+  }
   if (snapshot.activeTool) {
     lines.push(`Tool: ${snapshot.activeTool}`);
   }
@@ -490,7 +626,7 @@ export function buildTurnStatusText(params: {
 
 export function resetTrackedTurnsForTests(): void {
   activeBySession.clear();
-  recentBySession.clear();
+  recentListBySession.clear();
   turnIdToSession.clear();
   runIdToTurnId.clear();
 }
