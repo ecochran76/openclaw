@@ -236,6 +236,18 @@ export const AgentDefaultsSchema = z
     typingMode: TypingModeSchema.optional(),
     heartbeat: HeartbeatSchema,
     maxConcurrent: z.number().int().positive().optional(),
+    automation: z
+      .object({
+        maxConcurrent: z.number().int().positive().optional(),
+        defaultMaxTurns: z.number().int().positive().optional(),
+        defaultMaxTokens: z.number().int().positive().optional(),
+        defaultMaxDurationSeconds: z.number().int().positive().optional(),
+        model: AgentModelSchema.optional(),
+        thinking: z.string().optional(),
+        announceTimeoutMs: z.number().int().positive().optional(),
+      })
+      .strict()
+      .optional(),
     subagents: z
       .object({
         delegationMode: z.enum(["suggest", "prefer"]).optional(),

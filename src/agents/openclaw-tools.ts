@@ -40,6 +40,7 @@ import type { SpawnedToolContext } from "./spawned-context.js";
 import type { ToolFsPolicy } from "./tool-fs-policy.js";
 import { resolveToolLoopDetectionConfig } from "./tool-loop-detection-config.js";
 import { createAgentsListTool } from "./tools/agents-list-tool.js";
+import { createAutomationTool } from "./tools/automation-tool.js";
 import type { AnyAgentTool } from "./tools/common.js";
 import { createCronTool, type CronCreatorToolAllowlistEntry } from "./tools/cron-tool.js";
 import { createEmbeddedCallGateway } from "./tools/embedded-gateway-stub.js";
@@ -433,6 +434,16 @@ export function createOpenClawTools(
             ...(options?.cronSelfRemoveOnlyJobId
               ? { selfRemoveOnlyJobId: options.cronSelfRemoveOnlyJobId }
               : {}),
+          }),
+          createAutomationTool({
+            agentSessionKey: options?.agentSessionKey,
+            agentChannel: options?.agentChannel,
+            agentTo: options?.agentTo,
+            agentThreadId: options?.agentThreadId,
+            currentChannelId: options?.currentChannelId,
+            currentThreadTs: options?.currentThreadTs,
+            agentAccountId: options?.agentAccountId,
+            config: options?.config,
           }),
         ]),
     ...(messageTool && includeMessageTool ? [messageTool] : []),

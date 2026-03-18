@@ -458,6 +458,23 @@ export type AgentDefaultsConfig = {
   };
   /** Max concurrent agent runs across all conversations. Default: 4. */
   maxConcurrent?: number;
+  /** Bounded automation defaults. */
+  automation?: {
+    /** Max concurrent automation runs (global lane). Default behavior: 1. */
+    maxConcurrent?: number;
+    /** Default worker-turn budget when the caller does not supply a bound. */
+    defaultMaxTurns?: number;
+    /** Default total token budget when the caller does not supply a bound. */
+    defaultMaxTokens?: number;
+    /** Default wall-clock duration budget in seconds when the caller does not supply a bound. */
+    defaultMaxDurationSeconds?: number;
+    /** Default model selection for automation worker runs (string or {primary,fallbacks}). */
+    model?: AgentModelConfig;
+    /** Default thinking level for automation worker runs (e.g. "off", "low", "medium", "high"). */
+    thinking?: string;
+    /** Gateway timeout in ms for automation announce delivery calls (default: 90000). */
+    announceTimeoutMs?: number;
+  };
   /** Sub-agent defaults (spawned via sessions_spawn). */
   subagents?: {
     /** Prompt-only guidance for how strongly the main agent should delegate work. Default: "suggest". */

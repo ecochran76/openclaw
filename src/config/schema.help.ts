@@ -1162,6 +1162,22 @@ export const FIELD_HELP: Record<string, string> = {
   "agents.defaults.envelopeTimestamp":
     'Include absolute timestamps in message envelopes, direct agent prompt prefixes, and embedded model-input prefixes ("on" or "off").',
   "agents.defaults.envelopeElapsed": 'Include elapsed time in message envelopes ("on" or "off").',
+  "agents.defaults.automation":
+    "Bounded automation defaults for autonomous continuation runs, including lane concurrency, default stop caps, and worker model selection.",
+  "agents.defaults.automation.maxConcurrent":
+    "Maximum number of active automation runs allowed at once for this agent profile. Keep this low in Phase 1 to reduce queue contention and simplify operator visibility.",
+  "agents.defaults.automation.defaultMaxTurns":
+    "Default worker-turn cap applied when an automation run does not specify its own maxTurns bound. Use small numbers to keep continuation loops intentionally bounded.",
+  "agents.defaults.automation.defaultMaxTokens":
+    "Default total token budget applied when an automation run does not specify its own maxTokens bound. This caps aggregate worker usage across the full run, not per turn.",
+  "agents.defaults.automation.defaultMaxDurationSeconds":
+    "Default wall-clock duration cap in seconds applied when an automation run does not specify its own maxDurationSeconds bound. Keep this finite so unattended work always self-terminates.",
+  "agents.defaults.automation.model":
+    "Default model selection for automation worker turns. Accepts the usual agent model shape and can differ from the main conversational model when you want a cheaper or more specialized worker.",
+  "agents.defaults.automation.thinking":
+    "Default reasoning effort for automation worker turns. Use moderate settings first, then raise only when the run quality warrants the added latency and cost.",
+  "agents.defaults.automation.announceTimeoutMs":
+    "Gateway timeout in milliseconds used when automation runs send their final announce summary back to the requester channel. Raise this only when delivery paths are consistently slow.",
   "agents.defaults.models":
     "Configured model catalog and allowlist (keys are full provider/model IDs or literal provider/* entries for dynamic provider catalogs).",
   "agents.defaults.models.*.agentRuntime":
