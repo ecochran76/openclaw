@@ -7,8 +7,8 @@ function getDetails(result: { details?: unknown }): Record<string, unknown> {
 }
 
 function getStringDetail(details: Record<string, unknown>, key: string): string {
-  const value = details[key];
-  return typeof value === "string" ? value : "";
+  const value = details[key] as string | undefined;
+  return value ?? "";
 }
 
 describe("automation tool", () => {
