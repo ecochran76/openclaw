@@ -78,6 +78,7 @@ export function loadCommandHandlers(): CommandHandler[] {
     handleWhoamiCommand,
     handleCrestodianCommand,
     handleSubagentsCommand,
+    handleAutomationCommand,
     handleAcpCommand,
     handleMcpCommand,
     handlePluginsCommand,

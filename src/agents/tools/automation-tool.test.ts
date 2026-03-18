@@ -94,6 +94,39 @@ describe("automation tool", () => {
     await waitForAutomationRunToSettle(firstRunId);
   });
 
+  it("stores a pending steer note on an active run", async () => {
+    let release: (() => void) | undefined;
+    const pending = new Promise<void>((resolve) => {
+      release = resolve;
+    });
+    const executeWorkerTurn = vi.fn().mockImplementation(async () => {
+      await pending;
+      return {
+        outputText: "RESULT: progress\nPartial work saved.",
+        progressText: "Partial work saved.",
+      };
+    });
+
+    const tool = createAutomationTool(
+      { agentSessionKey: "agent:main:main" },
+      { executeWorkerTurn },
+    );
+    const runResult = await tool.execute("call-run", { action: "run", goal: "Long task" });
+    const runId = getStringDetail(getDetails(runResult), "runId");
+
+    const steerResult = await tool.execute("call-steer", {
+      action: "steer",
+      runId,
+      message: "Focus on tests first.",
+    });
+    expect(getStringDetail(getDetails(steerResult), "text")).toContain(
+      "Pending steer: Focus on tests first.",
+    );
+
+    release?.();
+    await waitForAutomationRunToSettle(runId);
+  });
+
   it("marks a run for stop and reports the stopped status after the active turn settles", async () => {
     let release: (() => void) | undefined;
     const pending = new Promise<void>((resolve) => {

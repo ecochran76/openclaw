@@ -28,7 +28,7 @@ import {
 } from "./workspace.js";
 
 export type BootstrapContextMode = "full" | "lightweight";
-type BootstrapContextRunKind = "default" | "heartbeat" | "cron";
+export type BootstrapContextRunKind = "default" | "heartbeat" | "cron" | "automation";
 
 const CONTINUATION_SCAN_MAX_TAIL_BYTES = 256 * 1024;
 const CONTINUATION_SCAN_MAX_RECORDS = 500;
@@ -211,7 +211,7 @@ function applyContextModeFilter(params: {
   if (runKind === "heartbeat") {
     return params.files.filter((file) => file.name === "HEARTBEAT.md");
   }
-  // cron/default lightweight mode keeps bootstrap context empty on purpose.
+  // cron/default/automation lightweight mode keeps bootstrap context empty on purpose.
   return [];
 }
 

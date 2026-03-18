@@ -77,5 +77,6 @@ export type AutomationStatusView = {
   elapsedSeconds: number;
   maxDurationSeconds: number;
   lastProgressText?: string;
+  pendingOperatorNote?: string;
   finalSummaryText?: string;
 };

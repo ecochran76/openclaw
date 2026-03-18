@@ -400,6 +400,19 @@ describe("resolveBootstrapContextForRun", () => {
     expect(files).toStrictEqual([]);
   });
 
+  it("keeps bootstrap context empty in lightweight automation mode", async () => {
+    const workspaceDir = await makeTempWorkspace("openclaw-bootstrap-");
+    await fs.writeFile(path.join(workspaceDir, "HEARTBEAT.md"), "check inbox", "utf8");
+
+    const files = await resolveBootstrapFilesForRun({
+      workspaceDir,
+      contextMode: "lightweight",
+      runKind: "automation",
+    });
+
+    expect(files).toEqual([]);
+  });
+
   it("drops HEARTBEAT.md for non-heartbeat runs when the heartbeat prompt section is disabled", async () => {
     const workspaceDir = await createHeartbeatAgentsWorkspace();
 

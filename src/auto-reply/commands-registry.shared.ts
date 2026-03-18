@@ -218,6 +218,15 @@ export function buildBuiltinChatCommands(
       ],
     }),
     defineChatCommand({
+      key: "automation",
+      nativeName: "automation",
+      description: "Run or inspect bounded automation for this session.",
+      textAlias: "/automation",
+      category: "tools",
+      argsParsing: "none",
+      acceptsArgs: true,
+    }),
+    defineChatCommand({
       key: "status",
       nativeName: "status",
       description: "Show current status.",

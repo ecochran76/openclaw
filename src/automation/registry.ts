@@ -156,6 +156,22 @@ export function markAutomationRunStopping(
   return updateAutomationRun(runId, { state: "stopping" }, options);
 }
 
+export function setAutomationRunPendingOperatorNote(
+  runId: AutomationRunId,
+  note: string,
+  options?: { now?: number },
+): AutomationRunRecord | undefined {
+  const current = automationRuns.get(runId);
+  if (!current || isAutomationRunTerminalState(current.state)) {
+    return current ? cloneRecord(current) : undefined;
+  }
+  const trimmed = note.trim();
+  if (!trimmed) {
+    return cloneRecord(current);
+  }
+  return updateAutomationRun(runId, { pendingOperatorNote: trimmed }, options);
+}
+
 export function stopAutomationRun(params: {
   runId: AutomationRunId;
   reason: AutomationStopReason;
@@ -237,6 +253,7 @@ export function buildAutomationStatusView(params: {
     elapsedSeconds,
     maxDurationSeconds: params.record.stop.maxDurationSeconds,
     lastProgressText: params.record.lastProgressText,
+    pendingOperatorNote: params.record.pendingOperatorNote,
     finalSummaryText: params.record.finalSummaryText,
   };
 }

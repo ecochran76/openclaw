@@ -537,6 +537,22 @@ describe("buildStatusMessage", () => {
     expect(normalized).toContain("Turn: active · tool wait · medium · delivery failed · exec");
   });
 
+  it("includes a compact automation summary when provided", () => {
+    const text = buildStatusMessage({
+      agent: {
+        model: "anthropic/pi:opus",
+      },
+      sessionKey: "agent:main:main",
+      queue: { mode: "collect", depth: 0 },
+      automationLine: "🤖 Automation: auto_000001 · running · 1/6 turns · 20s · steer pending",
+    });
+    const normalized = normalizeTestText(text);
+
+    expect(normalized).toContain(
+      "Automation: auto_000001 · running · 1/6 turns · 20s · steer pending",
+    );
+  });
+
   it("falls back to sessionEntry levels when resolved levels are not passed", () => {
     const text = buildStatusMessage({
       agent: {
@@ -2711,8 +2727,9 @@ describe("buildHelpMessage", () => {
     const text = buildHelpMessage({
       commands: { config: false, debug: false },
     } as unknown as OpenClawConfig);
-    expect(text).toContain("Skills");
+    expect(text).toContain("Tools");
     expect(text).toContain("/skill <name> [input]");
+    expect(text).toContain("/automation <run|list|status|steer|stop>");
     expect(text).not.toContain("/config");
     expect(text).not.toContain("/debug");
   });

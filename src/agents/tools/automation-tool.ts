@@ -3,9 +3,11 @@ import { Type } from "typebox";
 import { resolveAutomationConfig } from "../../automation/config.js";
 import {
   getAutomationRun,
+  isAutomationRunTerminalState,
   listAutomationRunsForRequester,
   resolveAutomationRunSelector,
   resetAutomationRegistryForTests,
+  setAutomationRunPendingOperatorNote,
 } from "../../automation/registry.js";
 import {
   requestAutomationRunStop,
@@ -36,7 +38,7 @@ import {
   ToolInputError,
 } from "./common.js";
 
-const AUTOMATION_ACTIONS = ["run", "list", "status", "stop"] as const;
+const AUTOMATION_ACTIONS = ["run", "list", "status", "steer", "stop"] as const;
 const CONTROL_RESULTS = ["completed", "progress", "blocked", "approval_required", "error"] as const;
 type ControlResult = (typeof CONTROL_RESULTS)[number];
 
@@ -47,6 +49,7 @@ const AutomationToolSchema = Type.Object({
   selector: Type.Optional(Type.String()),
   runId: Type.Optional(Type.String()),
   id: Type.Optional(Type.String()),
+  message: Type.Optional(Type.String()),
   model: Type.Optional(Type.String()),
   thinking: Type.Optional(Type.String()),
   maxTurns: Type.Optional(Type.Number({ minimum: 1 })),
@@ -209,6 +212,7 @@ function createDefaultWorkerTurnExecutor(opts: AutomationToolOptions, cliDeps: C
       message: buildWorkerControlPrompt(input.prompt),
       sessionKey: input.childSessionKey,
       agentId: resolveSessionAgentId({ sessionKey: input.childSessionKey, config: cfg }),
+      bootstrapContextRunKind: "automation",
     });
     return mapRunResultToWorkerTurnResult(runResult);
   };
@@ -250,7 +254,7 @@ export function createAutomationTool(
     name: "automation",
     ownerOnly: true,
     description:
-      "Run bounded background automation with explicit stop caps. Actions: run, list, status, stop.",
+      "Run bounded background automation with explicit stop caps. Actions: run, list, status, steer, stop.",
     parameters: AutomationToolSchema,
     execute: async (_toolCallId, args) => {
       const params = args as Record<string, unknown>;
@@ -341,6 +345,28 @@ export function createAutomationTool(
             index: index >= 0 ? index + 1 : undefined,
           }),
           run: getAutomationRun(record.runId) ?? record,
+        });
+      }
+
+      if (action === "steer") {
+        if (isAutomationRunTerminalState(record.state)) {
+          return jsonResult({
+            status: "error",
+            error: `automation run is not active: ${record.runId}`,
+          });
+        }
+        const message = readStringParam(params, "message", { required: true });
+        const updated = setAutomationRunPendingOperatorNote(record.runId, message) ?? record;
+        const runs = listAutomationRunsForRequester(requesterSessionKey);
+        const index = runs.findIndex((entry) => entry.runId === updated.runId);
+        return jsonResult({
+          status: "ok",
+          runId: updated.runId,
+          text: buildAutomationStatusText({
+            run: updated,
+            index: index >= 0 ? index + 1 : undefined,
+          }),
+          run: updated,
         });
       }
 

@@ -64,6 +64,7 @@ describe("automation status formatting", () => {
     expect(text).toContain("Tokens: 18.4k / 80k");
     expect(text).toContain("Duration: 6m 14s / 30m 0s");
     expect(text).toContain("Last progress: updated hero copy and CTA spacing; tests passing");
+    expect(text).not.toContain("Pending steer:");
     expect(text).toContain(
       "Next stop guards: max_turns, max_tokens, max_duration, approval_required",
     );
@@ -97,5 +98,17 @@ describe("automation status formatting", () => {
   it("formats a compact /status embedding line", () => {
     const line = buildAutomationCompactStatusLine({ run: baseRun, now: 374_000, index: 3 });
     expect(line).toBe("🤖 Automation: #3 (landing-page-polish) · running · 2/6 turns · 6m 14s");
+  });
+
+  it("shows pending steer guidance in status views", () => {
+    const steeredRun = {
+      ...baseRun,
+      pendingOperatorNote: "Focus on tests first.",
+    };
+    const text = buildAutomationStatusText({ run: steeredRun, now: 374_000, index: 3 });
+    const line = buildAutomationCompactStatusLine({ run: steeredRun, now: 374_000, index: 3 });
+
+    expect(text).toContain("Pending steer: Focus on tests first.");
+    expect(line).toContain("steer pending");
   });
 });

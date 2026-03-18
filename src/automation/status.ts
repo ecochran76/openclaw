@@ -111,6 +111,9 @@ export function buildAutomationStatusText(params: {
   if (view.lastProgressText) {
     lines.push(`Last progress: ${view.lastProgressText}`);
   }
+  if (view.pendingOperatorNote) {
+    lines.push(`Pending steer: ${view.pendingOperatorNote}`);
+  }
   lines.push("Next stop guards: max_turns, max_tokens, max_duration, approval_required");
   if (view.childSessionKey) {
     lines.push(`Session: ${view.childSessionKey}`);
@@ -152,5 +155,6 @@ export function buildAutomationCompactStatusLine(params: {
     "goal" in params.run
       ? buildAutomationStatusView({ record: params.run, now: params.now })
       : params.run;
-  return `🤖 Automation: ${resolveRunLabel(view, params.index)} · ${resolveListStatus(view)} · ${view.workerTurnsUsed}/${view.maxTurns} turns · ${formatDuration(view.elapsedSeconds)}`;
+  const pendingSteer = view.pendingOperatorNote ? " · steer pending" : "";
+  return `🤖 Automation: ${resolveRunLabel(view, params.index)} · ${resolveListStatus(view)} · ${view.workerTurnsUsed}/${view.maxTurns} turns · ${formatDuration(view.elapsedSeconds)}${pendingSteer}`;
 }

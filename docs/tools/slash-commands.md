@@ -260,11 +260,14 @@ plugins.
   <Accordion title="Subagents and ACP">
     | Command | Description |
     | --- | --- |
-    | `/subagents list\|log\|info` | Inspect sub-agent runs for the current session |
+    | `/subagents list\|kill\|log\|info\|send\|steer\|spawn` | Manage sub-agent runs for the current session |
+    | `/automation run\|list\|status\|steer\|stop` | Manage bounded multi-turn automation for the current session |
     | `/acp spawn\|cancel\|steer\|close\|sessions\|status\|set-mode\|set\|cwd\|permissions\|timeout\|model\|reset-options\|doctor\|install\|help` | Manage ACP sessions and runtime options |
-    | `/focus <target>` | Bind the current Discord thread or Telegram topic to a session target |
+    | `/focus <target>` | Bind the current Discord thread or Telegram topic/conversation to a session target |
     | `/unfocus` | Remove the current thread binding |
     | `/agents` | List thread-bound agents for the current session |
+    | `/kill <id\|#\|all>` | Abort one or all running sub-agents |
+    | `/subagents steer <id\|#> <message>` | Send steering to a running sub-agent. See [Steer](/tools/steer) |
   </Accordion>
 
   <Accordion title="Owner-only writes and admin">
