@@ -234,6 +234,11 @@ plugins.
     | `/tools [compact\|verbose]` | Show what the current agent can use right now |
     | `/status` | Show execution/runtime status, Gateway and system uptime, plugin health, plus provider usage/quota |
     | `/status plugins` | Show detailed plugin health: load errors, quarantines, channel failures, dependency issues, compatibility notices |
+    | `/turn-status` | Show the active turn state for this session. Alias: `/turnstatus` |
+    | `/why-silent` | Explain the current or recent silence state for this session. Alias: `/whysilent` |
+    | `/turns` | List active and recent tracked turns for this session |
+    | `/nudge` | Emit an immediate runtime status update for the active turn |
+    | `/turn-steer <text>` | Send guidance to the active steerable turn for this session |
     | `/goal [status\|start\|pause\|resume\|complete\|block\|clear] ...` | Manage the current session's durable [goal](/tools/goal) |
     | `/diagnostics [note]` | Owner-only support-report flow. Asks for exec approval every time |
     | `/crestodian <request>` | Run the Crestodian setup and repair helper from an owner DM |

@@ -2724,6 +2724,15 @@ describe("buildHelpMessage", () => {
   it("includes raw trace mode in help output", () => {
     expect(buildHelpMessage()).toContain("/trace on|off|raw");
   });
+
+  it("includes tracked-turn visibility commands in help output", () => {
+    const text = buildHelpMessage();
+    expect(text).toContain("/turn-status");
+    expect(text).toContain("/why-silent");
+    expect(text).toContain("/turns");
+    expect(text).toContain("/nudge");
+    expect(text).toContain("/turn-steer <text>");
+  });
 });
 
 describe("buildCommandsMessagePaginated", () => {
