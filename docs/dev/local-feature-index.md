@@ -67,8 +67,25 @@ This file is the durable map for:
   - Slice 3 is in progress on `ec-main` (`3d925d0cc`, `8de818625`, `cdf6f5aee`, `d81df866f`)
   - Slice 3 plan documented in `docs/dev/slack-turn-slice-3-steering-and-watchers-plan.md`
   - Pre-live-test polish checklist documented in `docs/dev/slack-turn-live-testing-polish-plan.md`
+- Common validation:
+  - `pnpm test -- src/auto-reply/reply/dispatch-from-config.test.ts`
+  - `pnpm test -- src/auto-reply/reply/commands-turn-status.test.ts`
+  - `pnpm test -- src/auto-reply/turn-tracker.test.ts`
 
-### 4. Upgrade / branch discipline
+### 4. Automation
+
+- Scope:
+  - bounded automation tool execution
+  - automation chat/status surface
+  - automation command wiring in auto-reply flows
+- Common validation:
+  - `pnpm test -- src/agents/openclaw-tools.automation.test.ts`
+  - `pnpm test -- src/auto-reply/reply/commands-automation.test.ts`
+  - `pnpm build`
+- Rebase note:
+  - keep automation commits grouped after Slack responsiveness commits when finishing a large `ec-main` rebase so tracked-turn changes settle before automation command/status wiring lands.
+
+### 5. Upgrade / branch discipline
 
 - Doc: `docs/dev/local-features/upgrade-branch-discipline.md`
 - Related playbook: `docs/dev/rebase-friendly-branching-playbook.md`
@@ -77,6 +94,17 @@ This file is the durable map for:
   - unattended upgrades target `ec-main` only
   - feature-branch sync must not block live deploys
   - cherry-pick deployable slices early; keep branches narrow
+
+## Current repair plan (2026-03-21)
+
+Active rebase completion order:
+
+1. finish the current conflict and any remaining **Slack responsiveness** commits as one coherent tracked-turn series,
+2. finish the remaining **automation** commits,
+3. run focused validation by local feature area,
+4. only then update/trim feature branches or promotion targets.
+
+This order is intentional. The remaining queue is not random churn; it is mostly a Slack responsiveness series followed by automation. Treating it as a coherent plan avoids semantic drift while resolving conflicts.
 
 ## Recent lessons worth remembering
 
