@@ -2056,7 +2056,7 @@ describe("sessions tools", () => {
     expect(relaySends).toHaveLength(4);
     expect(
       relaySends.map((entry) => entry.to).toSorted((a, b) => String(a).localeCompare(String(b))),
-    ).toEqual(["channel:req", "channel:req", "channel:target", "channel:target"]);
+    ).toEqual(["group:req", "group:req", "group:target", "group:target"]);
     expect(relaySends.every((entry) => (entry.message ?? "").includes(" -> "))).toBe(true);
     expect(relaySends.some((entry) => (entry.message ?? "").includes("ping"))).toBe(true);
     expect(relaySends.some((entry) => (entry.message ?? "").includes("done"))).toBe(true);
@@ -2164,7 +2164,7 @@ describe("sessions tools", () => {
       const request = opts as { method?: string; params?: Record<string, unknown> };
       if (request.method === "send") {
         const to = request.params?.to as string | undefined;
-        if (to === "channel:req") {
+        if (to === "group:req") {
           throw new Error("source relay failed");
         }
         sends.push({

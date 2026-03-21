@@ -4659,10 +4659,10 @@ describe("dispatchReplyFromConfig", () => {
         updatedAt: Date.now(),
         memoryFlushAt: Date.now() - 10000,
       };
-      sessionStoreMocks.currentEntry = initialEntry;
       await saveSessionStore(storePath, {
         [sessionKey]: initialEntry,
       });
+      sessionStoreMocks.currentEntry = initialEntry;
 
       let resolveReply: (value: ReplyPayload | undefined) => void = () => {};
       let markReplyReady: () => void = () => {};
@@ -4676,15 +4676,15 @@ describe("dispatchReplyFromConfig", () => {
         replyResolver: vi.fn(async (_ctx: MsgContext, opts?: GetReplyOptions) => {
           await Promise.resolve(opts?.onAgentRunStart?.("run-maintenance"));
           // Simulate a memory flush by advancing memoryFlushAt before sending NO_REPLY
-          const flushedEntry = {
+          const flushedEntry: SessionEntry = {
             ...initialEntry,
             updatedAt: Date.now(),
             memoryFlushAt: Date.now(),
           };
-          sessionStoreMocks.currentEntry = flushedEntry;
           await saveSessionStore(storePath, {
             [sessionKey]: flushedEntry,
           });
+          sessionStoreMocks.currentEntry = flushedEntry;
           return await new Promise<ReplyPayload | undefined>((resolve) => {
             resolveReply = resolve;
             markReplyReady();
