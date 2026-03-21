@@ -125,7 +125,7 @@ Credential types:
 OAuth logins create distinct profiles so multiple accounts can coexist.
 
 - Default: `provider:default` when no email is available.
-- OAuth with email: `provider:<email>` (for example `google-antigravity:user@gmail.com`).
+- OAuth with email: `provider:<email>` (for example `google-gemini-cli:user@gmail.com`).
 
 Profiles live in the per-agent `openclaw-agent.sqlite` auth profile store.
 

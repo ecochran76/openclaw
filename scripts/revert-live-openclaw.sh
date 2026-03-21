@@ -8,7 +8,7 @@ set -euo pipefail
 #
 # Examples:
 #   scripts/revert-live-openclaw.sh
-#   scripts/revert-live-openclaw.sh .patch-backups/openclaw-global-backup-20260225-185329.tgz
+#   scripts/revert-live-openclaw.sh /tmp/openclaw-live-patch-backups/openclaw-global-backup-20260225-185329.tgz
 #   scripts/revert-live-openclaw.sh --dry-run
 
 DRY_RUN=0
@@ -29,7 +29,8 @@ run() {
 }
 
 REPO_DIR="$(cd "$(dirname "$0")/.." && pwd)"
-BACKUP_DIR="${BACKUP_DIR:-$REPO_DIR/.patch-backups}"
+PATCH_TMP_ROOT="${OPENCLAW_PATCH_TMP_ROOT:-${TMPDIR:-/tmp}}"
+BACKUP_DIR="${BACKUP_DIR:-$PATCH_TMP_ROOT/openclaw-live-patch-backups}"
 
 if [[ -n "$BACKUP_ARG" ]]; then
   BACKUP_TGZ="$BACKUP_ARG"

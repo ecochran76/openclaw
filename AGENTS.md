@@ -137,7 +137,9 @@ Skills own workflows; root owns hard policy and routing.
 - Before handoff/push: prove touched surface. Before landing to `main`: issue proof plus appropriate full/broad proof unless scope is clearly narrow.
 - Pre-land/pre-commit code changes: mandatory fresh `$autoreview` until no accepted/actionable findings remain. Do not land code on CI, ClawSweeper, prior review comments, or your own manual review alone unless user explicitly opts out or scope is truly trivial/docs-only. If findings want refactor, refactor; no ugly fixes.
 - If proof is blocked, say exactly what is missing and why.
+- Live patch: never use `npm install -g /path/to/openclaw-repo` from a checkout. Build and install a tarball (`pnpm build && npm pack`) so ignored/stale `dist/` cannot leak; keep temporary tarballs/backups under `/tmp`, not the repo.
 - Do not land related failing format/lint/type/build/tests. If unrelated on latest `origin/main`, say so with scoped proof.
+- Fast commit escape hatch: use `scripts/committer --fast "<msg>" <file...>` only after the exact staged change set was already validated with equal-or-stronger gates, or after rerunning an isolated flaky failure with proof. State the gates/proof in handoff.
 - Docs/changelog-only and CI/workflow metadata-only: `git diff --check` plus relevant docs/workflow sanity; escalate only if scripts/config/generated/package/runtime behavior changed.
 - Prompt snapshots: CI truth is Linux Node 24. If macOS local passes but CI drifts, reproduce/generate in Linux before rerun.
 

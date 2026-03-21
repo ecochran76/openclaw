@@ -25,6 +25,7 @@ import {
   PACKAGE_DIST_INVENTORY_RELATIVE_PATH,
   writePackageDistInventory,
 } from "../src/infra/package-dist-inventory.ts";
+import { collectBundledDistEntryErrors } from "./check-bundled-dist-entries.ts";
 import { checkCliBootstrapExternalImports } from "./check-cli-bootstrap-imports.mjs";
 import {
   collectBundledExtensionManifestErrors,
@@ -57,6 +58,7 @@ import { sparkleBuildFloorsFromShortVersion, type SparkleBuildFloors } from "./s
 import { buildCmdExeCommandLine } from "./windows-cmd-helpers.mjs";
 
 export { collectBundledExtensionManifestErrors } from "./lib/bundled-extension-manifest.ts";
+export { collectBundledDistEntryErrors } from "./check-bundled-dist-entries.ts";
 export { packageNameFromSpecifier } from "./lib/plugin-package-dependencies.mjs";
 
 type PackFile = { path: string };
@@ -1177,6 +1179,7 @@ async function main() {
   runCriticalPluginSdkEntrypointImportSmoke();
   checkBundledExtensionMetadata();
   await writePackageDistInventory(process.cwd());
+  checkBundledDistEntries();
 
   const results = runPackDry();
   const files = results.flatMap((entry) => entry.files ?? []);

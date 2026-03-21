@@ -97,6 +97,19 @@ function rewritePackageEntry(entry) {
   return `./${rewritten}`;
 }
 
+function hasBundledRuntimeEntry(distPluginDir, entry) {
+  if (typeof entry !== "string" || entry.trim().length === 0) {
+    return false;
+  }
+  try {
+    const normalized = normalizeManifestRelativePath(entry);
+    const resolved = ensurePathInsideRoot(distPluginDir, normalized);
+    return fs.existsSync(resolved);
+  } catch {
+    return false;
+  }
+}
+
 function ensurePathInsideRoot(rootDir, rawPath) {
   const resolved = path.resolve(rootDir, rawPath);
   const relative = path.relative(rootDir, resolved);
@@ -321,13 +334,29 @@ export function copyBundledPluginMetadata(params = {}) {
       continue;
     }
     if (packageJson.openclaw && "extensions" in packageJson.openclaw) {
+      const rewrittenExtensions = rewritePackageExtensions(packageJson.openclaw.extensions);
+      const bundledExtensions = (rewrittenExtensions ?? []).filter((entry) =>
+        hasBundledRuntimeEntry(distPluginDir, entry),
+      );
+      const rewrittenSetupEntry =
+        typeof packageJson.openclaw.setupEntry === "string"
+          ? rewritePackageEntry(packageJson.openclaw.setupEntry)
+          : undefined;
+      const bundledSetupEntry =
+        rewrittenSetupEntry && hasBundledRuntimeEntry(distPluginDir, rewrittenSetupEntry)
+          ? rewrittenSetupEntry
+          : undefined;
       packageJson.openclaw = {
         ...packageJson.openclaw,
-        extensions: rewritePackageExtensions(packageJson.openclaw.extensions),
-        ...(typeof packageJson.openclaw.setupEntry === "string"
-          ? { setupEntry: rewritePackageEntry(packageJson.openclaw.setupEntry) }
-          : {}),
+        ...(bundledExtensions.length > 0 ? { extensions: bundledExtensions } : {}),
+        ...(bundledSetupEntry ? { setupEntry: bundledSetupEntry } : {}),
       };
+      if (bundledExtensions.length === 0) {
+        delete packageJson.openclaw.extensions;
+      }
+      if (!bundledSetupEntry) {
+        delete packageJson.openclaw.setupEntry;
+      }
     }
 
     writeTextFileIfChanged(distPackageJsonPath, `${JSON.stringify(packageJson, null, 2)}\n`);

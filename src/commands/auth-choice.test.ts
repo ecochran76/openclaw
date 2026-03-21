@@ -11,6 +11,8 @@ import * as providerAuthChoices from "../plugins/provider-auth-choices.js";
 import type { ProviderAuthMethod, ProviderAuthResult, ProviderPlugin } from "../plugins/types.js";
 import type { WizardPrompter } from "../wizard/prompts.js";
 import { applyAuthChoice } from "./auth-choice.apply.js";
+import { resolvePreferredProviderForAuthChoice } from "./auth-choice.js";
+import type { AuthChoice } from "./onboard-types.js";
 import {
   createAuthTestLifecycle,
   createExitThrowingRuntime,
@@ -492,6 +494,84 @@ async function createDefaultProviderPlugins(): Promise<ProviderPlugin[]> {
   });
 
   return [
+    {
+      id: "cloudflare-ai-gateway",
+      label: "Cloudflare AI Gateway",
+      auth: [
+        {
+          id: "api-key",
+          label: "Cloudflare AI Gateway API key",
+          kind: "api_key",
+          wizard: {
+            choiceId: "cloudflare-ai-gateway-api-key",
+            choiceLabel: "Cloudflare AI Gateway API key",
+            groupId: "cloudflare-ai-gateway",
+            groupLabel: "Cloudflare AI Gateway",
+          },
+          run: async (ctx) => {
+            const opts = (ctx.opts ?? {}) as Record<string, unknown>;
+            const directAccountId = normalizeText(opts.cloudflareAiGatewayAccountId);
+            const directGatewayId = normalizeText(opts.cloudflareAiGatewayGatewayId);
+            const directKey = normalizeText(opts.cloudflareAiGatewayApiKey);
+            const env = ctx.env ?? process.env;
+            let input: TestSecretInput;
+
+            if (directKey) {
+              input = directKey;
+            } else if (ctx.secretInputMode === "ref") {
+              input = await resolveRefApiKeyInput({
+                env,
+                envVar: "CLOUDFLARE_AI_GATEWAY_API_KEY",
+                prompter: ctx.prompter,
+              });
+            } else {
+              const envValue = normalizeText(env.CLOUDFLARE_AI_GATEWAY_API_KEY);
+              if (
+                envValue &&
+                (await ctx.prompter.confirm?.({
+                  message: "Use CLOUDFLARE_AI_GATEWAY_API_KEY from environment?",
+                }))
+              ) {
+                input = envValue;
+              } else {
+                input = normalizeText(
+                  await ctx.prompter.text({
+                    message: "Enter Cloudflare AI Gateway API key",
+                  }),
+                );
+              }
+            }
+
+            const accountId =
+              directAccountId ||
+              normalizeText(
+                await ctx.prompter.text({
+                  message: "Enter Cloudflare account ID",
+                }),
+              );
+            const gatewayId =
+              directGatewayId ||
+              normalizeText(
+                await ctx.prompter.text({
+                  message: "Enter Cloudflare AI Gateway ID",
+                }),
+              );
+            return {
+              profiles: [
+                {
+                  profileId: "cloudflare-ai-gateway:default",
+                  credential: buildApiKeyCredential("cloudflare-ai-gateway", input, {
+                    accountId,
+                    gatewayId,
+                  }),
+                },
+              ],
+              defaultModel: "cloudflare-ai-gateway/claude-sonnet-4-5",
+            };
+          },
+        },
+      ],
+    },
     await createApiKeyProvider({
       providerId: "google",
       label: "Gemini API key",
@@ -511,6 +591,16 @@ async function createDefaultProviderPlugins(): Promise<ProviderPlugin[]> {
       envVar: "HUGGINGFACE_HUB_TOKEN",
       promptMessage: "Enter Hugging Face API key",
       defaultModel: "huggingface/Qwen/Qwen3-Coder-480B-A35B-Instruct",
+    }),
+    await createApiKeyProvider({
+      providerId: "litellm",
+      label: "LiteLLM API key",
+      choiceId: "litellm-api-key",
+      optionKey: "litellmApiKey",
+      flagName: "--litellm-api-key",
+      envVar: "LITELLM_API_KEY",
+      promptMessage: "Enter LiteLLM API key",
+      defaultModel: "litellm/default",
     }),
     await createApiKeyProvider({
       providerId: "openai",
@@ -572,6 +662,62 @@ async function createDefaultProviderPlugins(): Promise<ProviderPlugin[]> {
       defaultModel: "synthetic/Synthetic-1",
     }),
     {
+      id: "chutes",
+      label: "Chutes",
+      auth: [
+        {
+          id: "oauth",
+          label: "Chutes OAuth",
+          kind: "oauth",
+          wizard: {
+            choiceId: "chutes",
+            choiceLabel: "Chutes OAuth",
+            groupId: "chutes",
+            groupLabel: "Chutes",
+          },
+          run: async (ctx) => {
+            const state = "state_test";
+            const authUrl = `https://auth.chutes.ai/oauth/authorize?state=${state}`;
+            ctx.runtime.log(authUrl);
+            const callback = normalizeText(
+              await ctx.prompter.text({
+                message: "Paste the redirect URL",
+              }),
+            );
+            const callbackUrl = callback.startsWith("?")
+              ? new URL(`http://localhost/callback${callback}`)
+              : new URL(callback);
+            if (callbackUrl.searchParams.get("state") !== state) {
+              throw new Error("Invalid OAuth state");
+            }
+            const tokenResponse = await fetch("https://api.chutes.ai/idp/token");
+            const tokenPayload = (await tokenResponse.json()) as {
+              access_token: string;
+              refresh_token: string;
+              expires_in: number;
+            };
+            const userResponse = await fetch("https://api.chutes.ai/idp/userinfo");
+            const userPayload = (await userResponse.json()) as { username: string };
+            return {
+              profiles: [
+                {
+                  profileId: `chutes:${userPayload.username}`,
+                  credential: {
+                    type: "oauth",
+                    provider: "chutes",
+                    access: tokenPayload.access_token,
+                    refresh: tokenPayload.refresh_token,
+                    expires: Date.now() + tokenPayload.expires_in * 1000,
+                    email: userPayload.username,
+                  },
+                },
+              ],
+            };
+          },
+        },
+      ],
+    },
+    {
       id: "zai",
       label: "Z.AI",
       auth: [createZaiMethod("zai-api-key"), createZaiMethod("zai-coding-global")],
@@ -584,11 +730,15 @@ describe("applyAuthChoice", () => {
     "OPENCLAW_STATE_DIR",
     "OPENCLAW_AGENT_DIR",
     "ANTHROPIC_API_KEY",
+    "CHUTES_CLIENT_ID",
+    "CLOUDFLARE_AI_GATEWAY_API_KEY",
     "OPENROUTER_API_KEY",
     "HF_TOKEN",
     "HUGGINGFACE_HUB_TOKEN",
     "GEMINI_API_KEY",
+    "LITELLM_API_KEY",
     "OPENCODE_API_KEY",
+    "SSH_TTY",
     "SYNTHETIC_API_KEY",
   ]);
   let authTestRoot: string | null = null;
@@ -1306,6 +1456,523 @@ describe("applyAuthChoice", () => {
           result.config.models?.providers?.[scenario.expectProviderConfigUndefined],
         ).toBeUndefined();
       }
+    }
+  });
+  it("sets default model when selecting github-copilot", async () => {
+    await setupTempState();
+
+    resolvePluginProviders.mockReturnValue([
+      {
+        id: "github-copilot",
+        label: "GitHub Copilot",
+        auth: [
+          {
+            id: "device",
+            label: "GitHub device login",
+            kind: "device_code",
+            run: vi.fn(async () => ({
+              profiles: [
+                {
+                  profileId: "github-copilot:github",
+                  credential: {
+                    type: "token",
+                    provider: "github-copilot",
+                    token: "github-device-token",
+                  },
+                },
+              ],
+              defaultModel: "github-copilot/gpt-4o",
+            })),
+          },
+        ],
+      },
+    ] as never);
+
+    const prompter = createPrompter({});
+    const runtime = createExitThrowingRuntime();
+
+    const stdin = process.stdin as NodeJS.ReadStream & { isTTY?: boolean };
+    const hadOwnIsTTY = Object.prototype.hasOwnProperty.call(stdin, "isTTY");
+    const previousIsTTYDescriptor = Object.getOwnPropertyDescriptor(stdin, "isTTY");
+    Object.defineProperty(stdin, "isTTY", {
+      configurable: true,
+      enumerable: true,
+      get: () => true,
+    });
+
+    try {
+      const result = await applyAuthChoice({
+        authChoice: "github-copilot",
+        config: {},
+        prompter,
+        runtime,
+        setDefaultModel: true,
+      });
+
+      expect(resolveAgentModelPrimaryValue(result.config.agents?.defaults?.model)).toBe(
+        "github-copilot/gpt-4o",
+      );
+    } finally {
+      if (previousIsTTYDescriptor) {
+        Object.defineProperty(stdin, "isTTY", previousIsTTYDescriptor);
+      } else if (!hadOwnIsTTY) {
+        delete (stdin as { isTTY?: boolean }).isTTY;
+      }
+    }
+  });
+
+  it("does not persist literal 'undefined' when API key prompts return undefined", async () => {
+    const scenarios = [
+      {
+        authChoice: "synthetic-api-key" as const,
+        envKey: "SYNTHETIC_API_KEY",
+        profileId: "synthetic:default",
+        provider: "synthetic",
+      },
+    ];
+
+    for (const scenario of scenarios) {
+      await setupTempState();
+      delete process.env[scenario.envKey];
+
+      const text = vi.fn(async () => undefined as unknown as string);
+      const prompter = createPrompter({ text });
+      const runtime = createExitThrowingRuntime();
+
+      const result = await applyAuthChoice({
+        authChoice: scenario.authChoice,
+        config: {},
+        prompter,
+        runtime,
+        setDefaultModel: false,
+      });
+
+      expect(result.config.auth?.profiles?.[scenario.profileId]).toMatchObject({
+        provider: scenario.provider,
+        mode: "api_key",
+      });
+
+      const profile = await readAuthProfile(scenario.profileId);
+      expect(profile?.key).toBe("");
+      expect(profile?.key).not.toBe("undefined");
+    }
+  });
+
+  it("ignores legacy LiteLLM oauth profiles when selecting litellm-api-key", async () => {
+    await setupTempState();
+    process.env.LITELLM_API_KEY = "sk-litellm-test"; // pragma: allowlist secret
+
+    seedTestAuthProfile({
+      profileId: "litellm:legacy",
+      credential: {
+        type: "oauth",
+        provider: "litellm",
+        access: "access-token",
+        refresh: "refresh-token",
+        expires: Date.now() + 60_000,
+      },
+      agentDir: resolveAgentDir({} as OpenClawConfig, "main"),
+    });
+
+    const text = vi.fn();
+    const confirm = vi.fn(async () => true);
+    const { prompter, runtime } = createApiKeyPromptHarness({ text, confirm });
+
+    const result = await applyAuthChoice({
+      authChoice: "litellm-api-key",
+      config: {
+        auth: {
+          profiles: {
+            "litellm:legacy": { provider: "litellm", mode: "oauth" },
+          },
+          order: { litellm: ["litellm:legacy"] },
+        },
+      },
+      prompter,
+      runtime,
+      setDefaultModel: true,
+    });
+
+    expect(confirm).toHaveBeenCalledWith(
+      expect.objectContaining({
+        message: expect.stringContaining("LITELLM_API_KEY"),
+      }),
+    );
+    expect(text).not.toHaveBeenCalled();
+    expect(result.config.auth?.profiles?.["litellm:default"]).toMatchObject({
+      provider: "litellm",
+      mode: "api_key",
+    });
+
+    expect(await readAuthProfile("litellm:default")).toMatchObject({
+      type: "api_key",
+      key: "sk-litellm-test",
+    });
+  });
+
+  it("configures cloudflare ai gateway via env key and explicit opts", async () => {
+    const scenarios: Array<{
+      envGatewayKey?: string;
+      textValues: string[];
+      confirmValue: boolean;
+      opts?: {
+        secretInputMode?: "ref"; // pragma: allowlist secret
+        cloudflareAiGatewayAccountId?: string;
+        cloudflareAiGatewayGatewayId?: string;
+        cloudflareAiGatewayApiKey?: string;
+      };
+      expectEnvPrompt: boolean;
+      expectedTextCalls: number;
+      expectedKey?: string;
+      expectedKeyRef?: { source: string; provider: string; id: string };
+      expectedMetadata: { accountId: string; gatewayId: string };
+    }> = [
+      {
+        envGatewayKey: "cf-gateway-test-key",
+        textValues: ["cf-account-id", "cf-gateway-id"],
+        confirmValue: true,
+        expectEnvPrompt: true,
+        expectedTextCalls: 2,
+        expectedKey: "cf-gateway-test-key",
+        expectedMetadata: {
+          accountId: "cf-account-id",
+          gatewayId: "cf-gateway-id",
+        },
+      },
+      {
+        envGatewayKey: "cf-gateway-ref-key",
+        textValues: ["CLOUDFLARE_AI_GATEWAY_API_KEY", "cf-account-id-ref", "cf-gateway-id-ref"],
+        confirmValue: true,
+        opts: {
+          secretInputMode: "ref", // pragma: allowlist secret
+        },
+        expectEnvPrompt: false,
+        expectedTextCalls: 3,
+        expectedKeyRef: { source: "env", provider: "default", id: "CLOUDFLARE_AI_GATEWAY_API_KEY" },
+        expectedMetadata: {
+          accountId: "cf-account-id-ref",
+          gatewayId: "cf-gateway-id-ref",
+        },
+      },
+      {
+        textValues: [],
+        confirmValue: false,
+        opts: {
+          cloudflareAiGatewayAccountId: "acc-direct",
+          cloudflareAiGatewayGatewayId: "gw-direct",
+          cloudflareAiGatewayApiKey: "cf-direct-key", // pragma: allowlist secret
+        },
+        expectEnvPrompt: false,
+        expectedTextCalls: 0,
+        expectedKey: "cf-direct-key",
+        expectedMetadata: {
+          accountId: "acc-direct",
+          gatewayId: "gw-direct",
+        },
+      },
+    ];
+    for (const scenario of scenarios) {
+      await setupTempState();
+      delete process.env.CLOUDFLARE_AI_GATEWAY_API_KEY;
+      if (scenario.envGatewayKey) {
+        process.env.CLOUDFLARE_AI_GATEWAY_API_KEY = scenario.envGatewayKey;
+      }
+
+      const text = vi.fn();
+      for (const textValue of scenario.textValues) {
+        text.mockResolvedValueOnce(textValue);
+      }
+      const confirm = vi.fn(async () => scenario.confirmValue);
+      const { prompter, runtime } = createApiKeyPromptHarness({ text, confirm });
+
+      const result = await applyAuthChoice({
+        authChoice: "cloudflare-ai-gateway-api-key",
+        config: {},
+        prompter,
+        runtime,
+        setDefaultModel: true,
+        opts: scenario.opts,
+      });
+
+      if (scenario.expectEnvPrompt) {
+        expect(confirm).toHaveBeenCalledWith(
+          expect.objectContaining({
+            message: expect.stringContaining("CLOUDFLARE_AI_GATEWAY_API_KEY"),
+          }),
+        );
+      } else {
+        expect(confirm).not.toHaveBeenCalled();
+      }
+      expect(text).toHaveBeenCalledTimes(scenario.expectedTextCalls);
+      expect(result.config.auth?.profiles?.["cloudflare-ai-gateway:default"]).toMatchObject({
+        provider: "cloudflare-ai-gateway",
+        mode: "api_key",
+      });
+      expect(resolveAgentModelPrimaryValue(result.config.agents?.defaults?.model)).toBe(
+        "cloudflare-ai-gateway/claude-sonnet-4-5",
+      );
+
+      const profile = await readAuthProfile("cloudflare-ai-gateway:default");
+      if (scenario.expectedKeyRef) {
+        expect(profile?.keyRef).toEqual(scenario.expectedKeyRef);
+      } else {
+        expect(profile?.key).toBe(scenario.expectedKey);
+      }
+      expect(profile?.metadata).toEqual(scenario.expectedMetadata);
+    }
+    delete process.env.CLOUDFLARE_AI_GATEWAY_API_KEY;
+  });
+
+  it("writes Chutes OAuth credentials when selecting chutes (remote/manual)", async () => {
+    await setupTempState();
+    process.env.SSH_TTY = "1";
+    process.env.CHUTES_CLIENT_ID = "cid_test";
+
+    const fetchSpy = vi.fn(async (input: string | URL) => {
+      const url = typeof input === "string" ? input : input.toString();
+      if (url === "https://api.chutes.ai/idp/token") {
+        return new Response(
+          JSON.stringify({
+            access_token: "at_test",
+            refresh_token: "rt_test",
+            expires_in: 3600,
+          }),
+          { status: 200, headers: { "Content-Type": "application/json" } },
+        );
+      }
+      if (url === "https://api.chutes.ai/idp/userinfo") {
+        return new Response(JSON.stringify({ username: "remote-user" }), {
+          status: 200,
+          headers: { "Content-Type": "application/json" },
+        });
+      }
+      return new Response("not found", { status: 404 });
+    });
+    vi.stubGlobal("fetch", fetchSpy);
+
+    const runtime = createExitThrowingRuntime();
+    const text: WizardPrompter["text"] = vi.fn(async (params) => {
+      if (params.message.startsWith("Paste the redirect URL")) {
+        const runtimeLog = runtime.log as ReturnType<typeof vi.fn>;
+        const lastLog = runtimeLog.mock.calls.at(-1)?.[0];
+        const urlLine = typeof lastLog === "string" ? lastLog : String(lastLog ?? "");
+        const urlMatch = urlLine.match(/https?:\/\/\S+/)?.[0] ?? "";
+        const state = urlMatch ? new URL(urlMatch).searchParams.get("state") : null;
+        if (!state) {
+          throw new Error("missing state in oauth URL");
+        }
+        return `?code=code_manual&state=${state}`;
+      }
+      return "code_manual";
+    });
+    const { prompter } = createApiKeyPromptHarness({ text });
+
+    const result = await applyAuthChoice({
+      authChoice: "chutes",
+      config: {},
+      prompter,
+      runtime,
+      setDefaultModel: false,
+    });
+
+    expect(text).toHaveBeenCalledWith(
+      expect.objectContaining({
+        message: expect.stringContaining("Paste the redirect URL"),
+      }),
+    );
+    expect(result.config.auth?.profiles?.["chutes:remote-user"]).toMatchObject({
+      provider: "chutes",
+      mode: "oauth",
+    });
+
+    expect(await readAuthProfile("chutes:remote-user")).toMatchObject({
+      provider: "chutes",
+      access: "at_test",
+      refresh: "rt_test",
+      email: "remote-user",
+    });
+  });
+
+  it("writes portal OAuth credentials for plugin providers", async () => {
+    const scenarios: Array<{
+      authChoice: "minimax-global-oauth";
+      label: string;
+      authId: string;
+      authLabel: string;
+      providerId: string;
+      profileId: string;
+      baseUrl: string;
+      api: "openai-completions" | "anthropic-messages";
+      defaultModel: string;
+      apiKey: string;
+      selectValue?: string;
+    }> = [
+      {
+        authChoice: "minimax-global-oauth",
+        label: "MiniMax",
+        authId: "oauth",
+        authLabel: "MiniMax OAuth (Global)",
+        providerId: "minimax-portal",
+        profileId: "minimax-portal:default",
+        baseUrl: "https://api.minimax.io/anthropic",
+        api: "anthropic-messages",
+        defaultModel: "minimax-portal/MiniMax-M2.7",
+        apiKey: "minimax-oauth", // pragma: allowlist secret
+      },
+    ];
+    for (const scenario of scenarios) {
+      await setupTempState();
+
+      resolvePluginProviders.mockReturnValue([
+        {
+          id: scenario.providerId,
+          label: scenario.label,
+          auth: [
+            {
+              id: scenario.authId,
+              label: scenario.authLabel,
+              kind: "device_code",
+              wizard: { choiceId: scenario.authChoice },
+              run: vi.fn(async () => ({
+                profiles: [
+                  {
+                    profileId: scenario.profileId,
+                    credential: {
+                      type: "oauth",
+                      provider: scenario.providerId,
+                      access: "access",
+                      refresh: "refresh",
+                      expires: Date.now() + 60 * 60 * 1000,
+                    },
+                  },
+                ],
+                configPatch: {
+                  models: {
+                    providers: {
+                      [scenario.providerId]: {
+                        baseUrl: scenario.baseUrl,
+                        apiKey: scenario.apiKey,
+                        api: scenario.api,
+                        models: [],
+                      },
+                    },
+                  },
+                },
+                defaultModel: scenario.defaultModel,
+              })),
+            },
+          ],
+        },
+      ] as never);
+
+      const prompter = createPrompter(
+        scenario.selectValue
+          ? { select: vi.fn(async () => scenario.selectValue as never) as WizardPrompter["select"] }
+          : {},
+      );
+      const runtime = createExitThrowingRuntime();
+
+      const result = await applyAuthChoice({
+        authChoice: scenario.authChoice,
+        config: {},
+        prompter,
+        runtime,
+        setDefaultModel: true,
+      });
+
+      expect(result.config.auth?.profiles?.[scenario.profileId]).toMatchObject({
+        provider: scenario.providerId,
+        mode: "oauth",
+      });
+      expect(resolveAgentModelPrimaryValue(result.config.agents?.defaults?.model)).toBe(
+        scenario.defaultModel,
+      );
+      expect(result.config.models?.providers?.[scenario.providerId]).toMatchObject({
+        baseUrl: scenario.baseUrl,
+        apiKey: scenario.apiKey,
+      });
+      expect(await readAuthProfile(scenario.profileId)).toMatchObject({
+        provider: scenario.providerId,
+        access: "access",
+        refresh: "refresh",
+      });
+    }
+  });
+
+  it("writes Gemini CLI OAuth credentials for the google plugin onboarding choice", async () => {
+    await setupTempState();
+
+    resolvePluginProviders.mockReturnValue([
+      {
+        id: "google-gemini-cli",
+        label: "Gemini CLI OAuth",
+        auth: [
+          {
+            id: "oauth",
+            label: "Google OAuth",
+            kind: "oauth",
+            wizard: { choiceId: "google-gemini-cli" },
+            run: vi.fn(async () => ({
+              profiles: [
+                {
+                  profileId: "google-gemini-cli:user@gmail.com",
+                  credential: {
+                    type: "oauth",
+                    provider: "google-gemini-cli",
+                    access: "access",
+                    refresh: "refresh",
+                    expires: Date.now() + 60 * 60 * 1000,
+                    email: "user@gmail.com",
+                  },
+                },
+              ],
+              defaultModel: "google-gemini-cli/gemini-3.1-pro-preview",
+            })),
+          },
+        ],
+      },
+    ] as never);
+
+    const prompter = createPrompter({});
+    const runtime = createExitThrowingRuntime();
+
+    const result = await applyAuthChoice({
+      authChoice: "google-gemini-cli",
+      config: {},
+      prompter,
+      runtime,
+      setDefaultModel: true,
+    });
+
+    expect(result.config.auth?.profiles?.["google-gemini-cli:user@gmail.com"]).toMatchObject({
+      provider: "google-gemini-cli",
+      mode: "oauth",
+      email: "user@gmail.com",
+    });
+    expect(resolveAgentModelPrimaryValue(result.config.agents?.defaults?.model)).toBe(
+      "google-gemini-cli/gemini-3.1-pro-preview",
+    );
+    expect(await readAuthProfile("google-gemini-cli:user@gmail.com")).toMatchObject({
+      provider: "google-gemini-cli",
+      access: "access",
+      refresh: "refresh",
+      email: "user@gmail.com",
+    });
+  });
+});
+
+describe("resolvePreferredProviderForAuthChoice", () => {
+  it("maps known and unknown auth choices", async () => {
+    const scenarios = [
+      { authChoice: "github-copilot" as const, expectedProvider: "github-copilot" },
+      { authChoice: "mistral-api-key" as const, expectedProvider: "mistral" },
+      { authChoice: "ollama" as const, expectedProvider: "ollama" },
+      { authChoice: "unknown" as AuthChoice, expectedProvider: undefined },
+    ] as const;
+    for (const scenario of scenarios) {
+      await expect(
+        resolvePreferredProviderForAuthChoice({ choice: scenario.authChoice }),
+      ).resolves.toBe(scenario.expectedProvider);
     }
   });
 });

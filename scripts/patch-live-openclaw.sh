@@ -9,7 +9,8 @@ set -euo pipefail
 #
 # Env overrides:
 #   OPENCLAW_REPO_DIR=/path/to/openclaw.git
-#   BACKUP_DIR=/path/to/backups
+#   BACKUP_DIR=/tmp/openclaw-live-patch-backups
+#   OPENCLAW_PATCH_TMP_ROOT=/tmp
 #   OPENCLAW_PATCH_EXPECT_BRANCH=ec-main
 #   OPENCLAW_PATCH_REQUIRE_EXPECTED_BRANCH=1
 #   OPENCLAW_PATCH_SKIP_RESTART=1
@@ -65,18 +66,47 @@ PATCH_NOTIFY_REPLY_TO="${OPENCLAW_PATCH_NOTIFY_REPLY_TO:-}"
 PATCH_NOTIFY_ACCOUNT="${OPENCLAW_PATCH_NOTIFY_ACCOUNT:-}"
 PATCH_RESTART_WARNING_TEXT="${OPENCLAW_PATCH_RESTART_WARNING_TEXT:-}"
 
-PATCH_NOTIFY_CHANNEL="${OPENCLAW_PATCH_NOTIFY_CHANNEL:-}"
-PATCH_NOTIFY_TARGET="${OPENCLAW_PATCH_NOTIFY_TARGET:-}"
-PATCH_NOTIFY_REPLY_TO="${OPENCLAW_PATCH_NOTIFY_REPLY_TO:-}"
-PATCH_NOTIFY_ACCOUNT="${OPENCLAW_PATCH_NOTIFY_ACCOUNT:-}"
-PATCH_RESTART_WARNING_TEXT="${OPENCLAW_PATCH_RESTART_WARNING_TEXT:-}"
-
 run() {
   if [[ "$DRY_RUN" == "1" ]]; then
     printf '[dry-run] %s\n' "$*"
   else
     eval "$@"
   fi
+}
+
+pack_tarball() {
+  local pack_json filename
+  if [[ "$DRY_RUN" == "1" ]]; then
+    printf '[dry-run] %s\n' "'$NPM_BIN' pack --ignore-scripts --json --pack-destination '$PACK_DIR'"
+    return 0
+  fi
+
+  pack_json="$("$NPM_BIN" pack --ignore-scripts --json --pack-destination "$PACK_DIR")"
+  filename="$(printf '%s' "$pack_json" | node -e '
+const fs = require("fs");
+const raw = fs.readFileSync(0, "utf8");
+let parsed;
+try {
+  parsed = JSON.parse(raw);
+} catch (error) {
+  console.error(`error: failed to parse npm pack --json output: ${error instanceof Error ? error.message : String(error)}`);
+  process.exit(1);
+}
+const first = Array.isArray(parsed) ? parsed[0] : parsed;
+const filename = first?.filename;
+if (typeof filename !== "string" || filename.trim().length === 0) {
+  console.error("error: npm pack --json produced no filename");
+  process.exit(1);
+}
+process.stdout.write(filename);
+')"
+
+  if [[ -z "$filename" ]]; then
+    echo "error: npm pack --json produced no filename" >&2
+    exit 1
+  fi
+
+  printf '%s\n' "$PACK_DIR/$filename"
 }
 
 send_patch_notification() {
@@ -156,10 +186,18 @@ has_systemd_gateway_service() {
 }
 
 REPO_DIR="${OPENCLAW_REPO_DIR:-$(cd "$(dirname "$0")/.." && pwd)}"
-BACKUP_DIR="${BACKUP_DIR:-$REPO_DIR/.patch-backups}"
+PATCH_TMP_ROOT="${OPENCLAW_PATCH_TMP_ROOT:-${TMPDIR:-/tmp}}"
+BACKUP_DIR="${BACKUP_DIR:-$PATCH_TMP_ROOT/openclaw-live-patch-backups}"
 TIMESTAMP="$(date +%Y%m%d-%H%M%S)"
+PATCH_WORK_DIR="$(mktemp -d "$PATCH_TMP_ROOT/openclaw-live-patch-$TIMESTAMP.XXXXXX")"
+PACK_DIR="$PATCH_WORK_DIR/pack"
 
-if [[ ! -d "$REPO_DIR/.git" ]]; then
+cleanup() {
+  rm -rf "$PATCH_WORK_DIR"
+}
+trap cleanup EXIT
+
+if ! git -C "$REPO_DIR" rev-parse --is-inside-work-tree >/dev/null 2>&1; then
   echo "error: REPO_DIR is not a git repo: $REPO_DIR" >&2
   exit 1
 fi
@@ -191,6 +229,7 @@ if [[ -L "$PACKAGE_DIR" && "$(readlink -f "$PACKAGE_DIR")" == "$REPO_DIR" ]]; th
 fi
 
 run "mkdir -p '$BACKUP_DIR'"
+run "mkdir -p '$PACK_DIR'"
 
 if [[ -d "$PACKAGE_DIR" ]]; then
   run "tar -czf '$BACKUP_TGZ' -C '$(dirname "$PACKAGE_DIR")' '$(basename "$PACKAGE_DIR")'"
@@ -202,6 +241,7 @@ fi
 run "pnpm install --frozen-lockfile"
 run "pnpm build"
 run "pnpm ui:build"
+run "node --import tsx scripts/check-bundled-dist-entries.ts"
 
 if [[ "$DRY_RUN" != "1" && ! -f "$REPO_DIR/dist/control-ui/index.html" ]]; then
   echo "error: missing Control UI assets after ui:build: $REPO_DIR/dist/control-ui/index.html" >&2
@@ -225,17 +265,17 @@ else
   echo "warning: no configured smoke tests found; skipping targeted pre-install test run"
 fi
 
-# Create tarball and install globally
-run "rm -f ./openclaw-*.tgz"
-run "'$NPM_BIN' pack"
+# Create the tarball outside the repo checkout and install that artifact.
+# Never install directly from the repo path; npm can copy a stale ignored dist/
+# tree without running this repo's real build/prepack flow.
+PKG_TGZ="$(pack_tarball)"
 
 if [[ "$DRY_RUN" == "1" ]]; then
-  echo "[dry-run] would install latest ./openclaw-*.tgz globally"
+  echo "[dry-run] would install latest $PACK_DIR/openclaw-*.tgz globally"
   echo "done (dry-run)"
   exit 0
 fi
 
-PKG_TGZ="$(ls -1t ./openclaw-*.tgz | head -n1)"
 if [[ -z "$PKG_TGZ" ]]; then
   echo "error: npm pack did not produce a tarball" >&2
   exit 1

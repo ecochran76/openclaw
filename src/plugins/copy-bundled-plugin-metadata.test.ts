@@ -105,6 +105,12 @@ describe("copyBundledPluginMetadata", () => {
       packageOpenClaw: { extensions: ["./index.ts"] },
     });
     fs.mkdirSync(path.join(pluginDir, "skills", "acp-router"), { recursive: true });
+    fs.mkdirSync(path.join(repoRoot, "dist", "extensions", "acpx"), { recursive: true });
+    fs.writeFileSync(
+      path.join(repoRoot, "dist", "extensions", "acpx", "index.js"),
+      "export default {}\n",
+      "utf8",
+    );
     fs.writeFileSync(
       path.join(pluginDir, "skills", "acp-router", "SKILL.md"),
       "# ACP Router\n",
@@ -189,6 +195,44 @@ describe("copyBundledPluginMetadata", () => {
         },
       },
     });
+  });
+
+  it("drops runtime entry metadata when the built bundled entrypoints are absent", () => {
+    const repoRoot = makeRepoRoot("openclaw-bundled-plugin-missing-runtime-");
+    const pluginDir = path.join(repoRoot, "extensions", "googlechat");
+    fs.mkdirSync(path.join(repoRoot, "dist", "extensions", "googlechat"), { recursive: true });
+    writeJson(path.join(pluginDir, "openclaw.plugin.json"), {
+      id: "googlechat",
+      channels: ["googlechat"],
+      configSchema: { type: "object" },
+    });
+    writeJson(path.join(pluginDir, "package.json"), {
+      name: "@openclaw/googlechat",
+      version: "2026.3.14",
+      openclaw: {
+        extensions: ["./index.ts"],
+        setupEntry: "./setup-entry.ts",
+        channel: { id: "googlechat", label: "Google Chat" },
+      },
+    });
+
+    copyBundledPluginMetadata({ repoRoot });
+
+    const packageJson = JSON.parse(
+      fs.readFileSync(
+        path.join(repoRoot, "dist", "extensions", "googlechat", "package.json"),
+        "utf8",
+      ),
+    ) as { openclaw?: { extensions?: string[]; setupEntry?: string; channel?: { id?: string } } };
+
+    expect(packageJson.openclaw?.extensions).toBeUndefined();
+    expect(packageJson.openclaw?.setupEntry).toBeUndefined();
+    expect(packageJson.openclaw?.channel?.id).toBe("googlechat");
+    expect(
+      fs.existsSync(
+        path.join(repoRoot, "dist", "extensions", "googlechat", "openclaw.plugin.json"),
+      ),
+    ).toBe(true);
   });
 
   it("relocates node_modules-backed skill paths into bundled-skills and rewrites the manifest", () => {
