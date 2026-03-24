@@ -74,13 +74,20 @@ This file is the durable map for:
 
 ### 4. Automation
 
+- Doc: `docs/dev/local-features/automation.md`
 - Scope:
   - bounded automation tool execution
   - automation chat/status surface
   - automation command wiring in auto-reply flows
+- Current status:
+  - landed on `ec-main` as a coherent series during the `2026.3.23` forward-port
+  - depends on the newer runtime-loaded command registration shape
+  - should be replayed after Slack responsiveness work during large rebases
 - Common validation:
   - `pnpm test -- src/agents/openclaw-tools.automation.test.ts`
   - `pnpm test -- src/auto-reply/reply/commands-automation.test.ts`
+  - `pnpm test -- src/auto-reply/reply/commands-automation-status.test.ts`
+  - `pnpm test -- src/config/config.automation-defaults.test.ts`
   - `pnpm build`
 - Rebase note:
   - keep automation commits grouped after Slack responsiveness commits when finishing a large `ec-main` rebase so tracked-turn changes settle before automation command/status wiring lands.

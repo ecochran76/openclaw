@@ -189,3 +189,58 @@ When a large rebase is already in flight, finish it in **feature order**, not pu
 4. **Automation** commits after responsiveness, followed by focused validation.
 
 Do not rewrite the runbook mid-conflict. Finish the mechanical rebase first, then update docs and validation guidance from the stabilized `ec-main` result.
+
+## Upgrade notes from the 2026-03-23 forward-port onto upstream `2026.3.23`
+
+The `ec-main` forward-port onto current upstream was viable, but not as a blind rebase.
+
+The durable lesson is that future upgrades should preserve newer upstream seams and reapply local behavior onto them, instead of restoring older local structural choices.
+
+### Conflict seams that mattered
+
+- `src/auto-reply/reply/commands-core.ts` and related command wiring:
+  - upstream now prefers runtime-loaded command registration
+  - local commands such as `/profile`, `/profiles`, and automation status should be wired through `src/auto-reply/reply/commands-handlers.runtime.ts`, not by reviving older static registration tables
+- tracked-turn / status surfaces:
+  - `src/auto-reply/reply/dispatch-from-config.ts`
+  - `src/auto-reply/turn-tracker.ts`
+  - `src/auto-reply/status.ts`
+  - these files now carry a coherent local responsiveness layer; replaying later commits without the underlying tracked-turn helpers is fragile
+- session / A2A schema surfaces:
+  - `src/config/schema.base.generated.ts`
+  - `src/config/schema.help.ts`
+  - `src/config/schema.labels.ts`
+  - `src/config/zod-schema.session.ts`
+  - upgrades here often look like random config churn but are really generated-schema drift
+- profile/auth runtime snapshot behavior:
+  - `src/agents/auth-profiles/store.ts`
+  - `src/infra/provider-usage.auth.ts`
+  - `src/infra/provider-usage.load.ts`
+  - preserve current runtime-snapshot ordering/normalization semantics rather than backporting older store shapes
+- packaging and live-patch scripts:
+  - `scripts/copy-bundled-plugin-metadata.mjs`
+  - `scripts/patch-live-openclaw.sh`
+  - `scripts/release-check.ts`
+  - these now act as upgrade safety rails and should be kept aligned with release/install expectations
+
+### Porting rules that survived this upgrade
+
+- prefer upstream runtime-loader and helper-based shapes when local behavior can be layered onto them
+- keep large rebases in feature order:
+  1. profiles/auth
+  2. Slack/A2A
+  3. Slack responsiveness
+  4. automation
+- when session config changed, reconcile generated schema files early instead of chasing downstream type/test noise
+- run `pnpm check` and `pnpm build` from the finished integration head before repointing `ec-main`
+- expect `pnpm build` to go quiet during runtime postbuild packaging; verify completion before treating silence as failure
+
+### Likely future breakpoints
+
+If upstream keeps moving in the same direction, the next upgrades are most likely to hurt in:
+
+- auto-reply command registration and command metadata
+- tracked-turn/state inspection commands
+- session/A2A config schema generation
+- auth/profile normalization and usage reporting
+- packaging/postbuild/release-check scripts
