@@ -337,6 +337,33 @@ latest_release_tag() {
     | head -n1
 }
 
+normalize_reported_version() {
+  local raw="${1:-}"
+  raw="${raw#OpenClaw}"
+  raw="${raw//[[:space:]]/}"
+  raw="${raw%%(*}"
+  printf '%s' "$raw"
+}
+
+extract_reported_build_sha() {
+  local raw="${1:-}"
+  if [[ "$raw" =~ \(([0-9a-f]{7,})\) ]]; then
+    printf '%s' "${BASH_REMATCH[1]}"
+  fi
+}
+
+normalize_expected_release_version() {
+  local raw="${1:-}"
+  raw="${raw#v}"
+  printf '%s' "$raw"
+}
+
+normalize_expected_release_base_version() {
+  local raw
+  raw="$(normalize_expected_release_version "${1:-}")"
+  printf '%s' "${raw%%-*}"
+}
+
 ensure_local_branch() {
   local branch="$1"
   if git show-ref --verify --quiet "refs/heads/$branch"; then
@@ -479,8 +506,9 @@ else
 fi
 
 PHASE="VERIFY"
-CLI_VERSION_RAW="$(openclaw --version 2>/dev/null | tr -d '[:space:]')"
-CLI_VERSION="$CLI_VERSION_RAW"
+CLI_VERSION_RAW="$(openclaw --version 2>/dev/null || true)"
+CLI_VERSION="$(normalize_reported_version "$CLI_VERSION_RAW")"
+CLI_BUILD_SHA="$(extract_reported_build_sha "$CLI_VERSION_RAW")"
 if [[ -z "$CLI_VERSION" ]]; then
   log "error: failed to read openclaw --version"
   exit 1
@@ -499,6 +527,8 @@ process.stdin.on("end", () => {
   }
 });
 ' || true)"
+GATEWAY_APP_VERSION_NORMALIZED="$(normalize_reported_version "$GATEWAY_APP_VERSION")"
+GATEWAY_BUILD_SHA="$(extract_reported_build_sha "$GATEWAY_APP_VERSION")"
 
 if [[ "$TARGET_KIND" != "ref" ]]; then
   if [[ -z "$EXPECTED_VERSION" ]]; then
@@ -506,14 +536,28 @@ if [[ "$TARGET_KIND" != "ref" ]]; then
     exit 1
   fi
 
-  if [[ "$CLI_VERSION" != "$EXPECTED_VERSION" ]]; then
-    log "error: CLI version mismatch (expected $EXPECTED_VERSION, got $CLI_VERSION)"
+  EXPECTED_VERSION_NORMALIZED="$(normalize_expected_release_version "$EXPECTED_VERSION")"
+  EXPECTED_BASE_VERSION="$(normalize_expected_release_base_version "$EXPECTED_VERSION")"
+
+  if [[ "$CLI_VERSION" != "$EXPECTED_VERSION_NORMALIZED" && "$CLI_VERSION" != "$EXPECTED_BASE_VERSION" ]]; then
+    log "error: CLI version mismatch (expected $EXPECTED_VERSION_NORMALIZED or base $EXPECTED_BASE_VERSION, got $CLI_VERSION_RAW)"
     exit 1
   fi
 
-  if [[ -n "$GATEWAY_APP_VERSION" && "$GATEWAY_APP_VERSION" != "$EXPECTED_VERSION" ]]; then
-    log "error: gateway app version mismatch (expected $EXPECTED_VERSION, got $GATEWAY_APP_VERSION)"
+  if [[ -n "$CLI_BUILD_SHA" && "$CLI_BUILD_SHA" != "${NEW_HEAD_SHA:0:${#CLI_BUILD_SHA}}" ]]; then
+    log "error: CLI build sha mismatch (expected ${NEW_HEAD_SHA:0:${#CLI_BUILD_SHA}}, got $CLI_BUILD_SHA)"
     exit 1
+  fi
+
+  if [[ -n "$GATEWAY_APP_VERSION_NORMALIZED" ]]; then
+    if [[ "$GATEWAY_APP_VERSION_NORMALIZED" != "$EXPECTED_VERSION_NORMALIZED" && "$GATEWAY_APP_VERSION_NORMALIZED" != "$EXPECTED_BASE_VERSION" ]]; then
+      log "error: gateway app version mismatch (expected $EXPECTED_VERSION_NORMALIZED or base $EXPECTED_BASE_VERSION, got $GATEWAY_APP_VERSION)"
+      exit 1
+    fi
+    if [[ -n "$GATEWAY_BUILD_SHA" && "$GATEWAY_BUILD_SHA" != "${NEW_HEAD_SHA:0:${#GATEWAY_BUILD_SHA}}" ]]; then
+      log "error: gateway build sha mismatch (expected ${NEW_HEAD_SHA:0:${#GATEWAY_BUILD_SHA}}, got $GATEWAY_BUILD_SHA)"
+      exit 1
+    fi
   fi
 else
   log "Note: ref-based upgrade selected; skipping CalVer version checks (cli=$CLI_VERSION${GATEWAY_APP_VERSION:+ gateway=$GATEWAY_APP_VERSION})"
