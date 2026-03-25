@@ -1414,7 +1414,6 @@ describe("sessions tools", () => {
       maxPingPongTurns: 0,
       a2aTimeoutSeconds: 7,
     });
-
     expect(result.details).toMatchObject({ status: "ok", reply: "done" });
     const agentCalls = calls.filter((call) => call.method === "agent");
     const waitCalls = calls.filter((call) => call.method === "agent.wait");
