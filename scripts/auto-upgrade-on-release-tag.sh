@@ -333,7 +333,7 @@ fi
 
 latest_release_tag() {
   git tag --merged "$UPSTREAM_REMOTE/main" --list --sort=-version:refname \
-    | grep -E '^v?[0-9]{4}\.[0-9]{1,2}\.[0-9]+$' \
+    | grep -E '^v?[0-9]{4}\.[0-9]{1,2}\.[0-9]+(-[0-9]+)?$' \
     | head -n1
 }
 
