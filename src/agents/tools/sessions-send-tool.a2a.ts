@@ -8,6 +8,8 @@ import type { CallGatewayOptions } from "../../gateway/call.js";
 import { formatErrorMessage } from "../../infra/errors.js";
 import { createSubsystemLogger } from "../../logging/subsystem.js";
 import type { GatewayMessageChannel } from "../../utils/message-channel.js";
+import { buildRelaySummary, relayTurn } from "../a2a/relay-delivery.js";
+import type { RelayResult, RelayTargetResult } from "../a2a/types.js";
 import { resolveNestedAgentLaneForSession } from "../lanes.js";
 import {
   type AssistantReplySnapshot,
@@ -19,7 +21,6 @@ import { resolveAnnounceTarget } from "./sessions-announce-target.js";
 import {
   type AnnounceTarget,
   buildAgentToAgentAnnounceContext,
-  buildAgentToAgentRelayText,
   buildAgentToAgentReplyContext,
   isAnnounceSkip,
   isNonDeliverableSessionsReply,
@@ -74,198 +75,6 @@ async function deliverAnnounceReply(params: {
   }
 }
 
-type RelayTargetStatus = "sent" | "failed" | "blocked" | "skipped";
-type RelayStatus =
-  | "disabled"
-  | "not_applicable"
-  | "sent"
-  | "partial"
-  | "failed"
-  | "blocked"
-  | "pending";
-
-export type RelayTargetResult = {
-  role: "source" | "target";
-  channel?: string;
-  to?: string;
-  accountId?: string;
-  threadId?: string;
-  status: RelayTargetStatus;
-  messageId?: string;
-  error?: string;
-};
-
-export type RelayResult = {
-  status: RelayStatus;
-  mode: "target-only" | "dual-channel";
-  mirrorTurns: "round1" | "all";
-  targets: RelayTargetResult[];
-};
-
-type RelayAttemptResult = {
-  status: Exclude<RelayStatus, "disabled" | "pending">;
-  targets: RelayTargetResult[];
-  requiredFailure: boolean;
-};
-
-function buildRelaySummary(params: {
-  policy?: RelayPolicy;
-  targets: RelayTargetResult[];
-  blocked?: boolean;
-}): RelayResult {
-  const mode = params.policy?.mode ?? "target-only";
-  const mirrorTurns = params.policy?.mirrorTurns ?? "round1";
-  if (params.policy?.enabled !== true) {
-    return { status: "disabled", mode, mirrorTurns, targets: [] };
-  }
-  if (params.blocked) {
-    return { status: "blocked", mode, mirrorTurns, targets: params.targets };
-  }
-  if (params.targets.length === 0) {
-    return { status: "not_applicable", mode, mirrorTurns, targets: [] };
-  }
-  const sentCount = params.targets.filter((target) => target.status === "sent").length;
-  const failureCount = params.targets.filter(
-    (target) => target.status === "failed" || target.status === "blocked",
-  ).length;
-  if (failureCount === 0) {
-    return {
-      status: sentCount > 0 ? "sent" : "not_applicable",
-      mode,
-      mirrorTurns,
-      targets: params.targets,
-    };
-  }
-  if (sentCount === 0) {
-    return { status: "failed", mode, mirrorTurns, targets: params.targets };
-  }
-  return { status: "partial", mode, mirrorTurns, targets: params.targets };
-}
-
-async function relayTurn(params: {
-  runContextId: string;
-  relayPolicy?: RelayPolicy;
-  sourceRelayTarget?: AnnounceTarget | null;
-  targetRelayTarget?: AnnounceTarget | null;
-  fromAgent: string;
-  toAgent: string;
-  text: string;
-}): Promise<RelayAttemptResult> {
-  const policy = params.relayPolicy;
-  if (policy?.enabled !== true) {
-    return { status: "not_applicable", targets: [], requiredFailure: false };
-  }
-  if (!params.text.trim()) {
-    return { status: "not_applicable", targets: [], requiredFailure: false };
-  }
-  const relayText = buildAgentToAgentRelayText({
-    handoffId: params.runContextId,
-    fromAgent: params.fromAgent,
-    toAgent: params.toAgent,
-    text: params.text,
-    verbosity: policy.verbosity,
-  });
-  if (!relayText.trim()) {
-    return { status: "not_applicable", targets: [], requiredFailure: false };
-  }
-
-  const targetSpecs = (
-    policy.mode === "dual-channel"
-      ? [
-          { role: "source" as const, target: params.sourceRelayTarget },
-          { role: "target" as const, target: params.targetRelayTarget },
-        ]
-      : [{ role: "target" as const, target: params.targetRelayTarget }]
-  ).map(({ role, target }) => ({
-    role,
-    target,
-    required: true,
-  }));
-
-  const results: RelayTargetResult[] = [];
-  for (const [index, spec] of targetSpecs.entries()) {
-    if (!spec.target) {
-      const unresolved: RelayTargetResult = {
-        role: spec.role,
-        status: policy.requireDelivery ? "blocked" : "failed",
-        error: "No relay target could be resolved.",
-      };
-      results.push(unresolved);
-      if (spec.required && policy.requireDelivery) {
-        return { status: "blocked", targets: results, requiredFailure: true };
-      }
-      continue;
-    }
-
-    try {
-      const response = await sessionsSendA2ADeps.callGateway<{
-        messageId?: string;
-        id?: string;
-        threadId?: string;
-      }>({
-        method: "send",
-        params: {
-          to: spec.target.to,
-          message: relayText,
-          channel: spec.target.channel,
-          accountId: spec.target.accountId,
-          threadId: spec.target.threadId,
-          idempotencyKey: `${params.runContextId}:relay:${params.fromAgent}:${params.toAgent}:${spec.role}:${index}`,
-        },
-        timeoutMs: 10_000,
-      });
-      results.push({
-        role: spec.role,
-        channel: spec.target.channel,
-        to: spec.target.to,
-        accountId: spec.target.accountId,
-        threadId:
-          (typeof response?.threadId === "string" ? response.threadId : undefined) ??
-          spec.target.threadId,
-        status: "sent",
-        messageId:
-          typeof response?.messageId === "string"
-            ? response.messageId
-            : typeof response?.id === "string"
-              ? response.id
-              : undefined,
-      });
-    } catch (err) {
-      const error = formatErrorMessage(err);
-      const failed: RelayTargetResult = {
-        role: spec.role,
-        channel: spec.target.channel,
-        to: spec.target.to,
-        accountId: spec.target.accountId,
-        threadId: spec.target.threadId,
-        status: policy.requireDelivery ? "blocked" : "failed",
-        error,
-      };
-      results.push(failed);
-      log.warn("sessions_send relay delivery failed", {
-        runId: params.runContextId,
-        channel: spec.target.channel,
-        to: spec.target.to,
-        role: spec.role,
-        error,
-      });
-      if (spec.required && policy.requireDelivery) {
-        return { status: "blocked", targets: results, requiredFailure: true };
-      }
-    }
-  }
-
-  const summary = buildRelaySummary({ policy, targets: results });
-  return {
-    status:
-      summary.status === "disabled" || summary.status === "pending"
-        ? "not_applicable"
-        : summary.status,
-    targets: results,
-    requiredFailure: false,
-  };
-}
-
 export async function runSessionsSendA2AFlow(params: {
   targetSessionKey: string;
   displayKey: string;
@@ -309,15 +118,20 @@ export async function runSessionsSendA2AFlow(params: {
       }
     }
 
-    const initialRelay = await relayTurn({
-      runContextId,
-      relayPolicy: params.relayPolicy,
-      sourceRelayTarget: params.sourceRelayTarget,
-      targetRelayTarget: params.targetRelayTarget,
-      fromAgent: params.requesterAgentId ?? "requester",
-      toAgent: params.targetAgentId ?? "target",
-      text: params.message,
-    });
+    const initialRelay = await relayTurn(
+      {
+        runContextId,
+        relayPolicy: params.relayPolicy,
+        sourceRelayTarget: params.sourceRelayTarget,
+        targetRelayTarget: params.targetRelayTarget,
+        fromAgent: params.requesterAgentId ?? "requester",
+        toAgent: params.targetAgentId ?? "target",
+        text: params.message,
+      },
+      {
+        callGateway: sessionsSendA2ADeps.callGateway,
+      },
+    );
     relayTargets.push(...initialRelay.targets);
     if (initialRelay.requiredFailure) {
       return {
@@ -344,6 +158,9 @@ export async function runSessionsSendA2AFlow(params: {
         fromAgent: params.targetAgentId ?? "target",
         toAgent: params.requesterAgentId ?? "requester",
         text: latestReply,
+      },
+      {
+        callGateway: sessionsSendA2ADeps.callGateway,
       });
       relayTargets.push(...roundOneRelay.targets);
       if (roundOneRelay.requiredFailure) {
@@ -434,15 +251,20 @@ export async function runSessionsSendA2AFlow(params: {
             currentRole === "requester"
               ? (params.targetAgentId ?? "target")
               : (params.requesterAgentId ?? "requester");
-          const relayAttempt = await relayTurn({
-            runContextId,
-            relayPolicy: params.relayPolicy,
-            sourceRelayTarget: params.sourceRelayTarget,
-            targetRelayTarget: params.targetRelayTarget,
-            fromAgent,
-            toAgent,
-            text: replyText,
-          });
+          const relayAttempt = await relayTurn(
+            {
+              runContextId,
+              relayPolicy: params.relayPolicy,
+              sourceRelayTarget: params.sourceRelayTarget,
+              targetRelayTarget: params.targetRelayTarget,
+              fromAgent,
+              toAgent,
+              text: replyText,
+            },
+            {
+              callGateway: sessionsSendA2ADeps.callGateway,
+            },
+          );
           relayTargets.push(...relayAttempt.targets);
           if (relayAttempt.requiredFailure) {
             return {
