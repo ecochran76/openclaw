@@ -1,20 +1,16 @@
-import { describe, expect, it, vi } from "vitest";
+import { beforeEach, describe, expect, it, vi } from "vitest";
 import type { OpenClawConfig } from "../../config/config.js";
 
 const hoisted = vi.hoisted(() => {
   const ensureAuthProfileStoreMock = vi.fn();
   const writeOAuthCredentialsMock = vi.fn();
   const updateConfigMock = vi.fn();
-  const createManualAuthorizationMock = vi.fn();
-  const completeManualAuthorizationMock = vi.fn();
-  const looksLikeCallbackInputMock = vi.fn();
+  const getChatReauthCapabilityMock = vi.fn();
   return {
     ensureAuthProfileStoreMock,
     writeOAuthCredentialsMock,
     updateConfigMock,
-    createManualAuthorizationMock,
-    completeManualAuthorizationMock,
-    looksLikeCallbackInputMock,
+    getChatReauthCapabilityMock,
   };
 });
 
@@ -31,10 +27,8 @@ vi.mock("../../commands/models/shared.js", () => ({
   updateConfig: hoisted.updateConfigMock,
 }));
 
-vi.mock("../../commands/openai-codex-oauth.js", () => ({
-  createOpenAICodexManualAuthorization: hoisted.createManualAuthorizationMock,
-  completeOpenAICodexManualAuthorization: hoisted.completeManualAuthorizationMock,
-  looksLikeOpenAICodexCallbackInput: hoisted.looksLikeCallbackInputMock,
+vi.mock("./reauth-capabilities.js", () => ({
+  getChatReauthCapability: hoisted.getChatReauthCapabilityMock,
 }));
 
 const { buildCommandTestParams } = await import("./commands.test-harness.js");
@@ -45,19 +39,31 @@ const cfg = {
 } satisfies OpenClawConfig;
 
 describe("/reauth commands", () => {
+  beforeEach(() => {
+    hoisted.ensureAuthProfileStoreMock.mockReset();
+    hoisted.writeOAuthCredentialsMock.mockReset();
+    hoisted.updateConfigMock.mockReset();
+    hoisted.getChatReauthCapabilityMock.mockReset();
+  });
+
   it("starts a pending OpenAI Codex reauth flow", async () => {
     hoisted.ensureAuthProfileStoreMock.mockReturnValue({
       profiles: {
         "openai:dillan": { provider: "openai", type: "oauth", access: "a" },
       },
     });
-    hoisted.createManualAuthorizationMock.mockReturnValue({
-      state: "state-1",
-      verifier: "verifier-1",
-      authorizationUrl: "https://auth.example.test/start",
-      redirectUri: "http://localhost:1455/auth/callback",
-      createdAt: 1,
-      expiresAt: 2,
+    hoisted.getChatReauthCapabilityMock.mockReturnValue({
+      provider: "openai",
+      looksLikeCallbackInput: vi.fn(() => false),
+      createPendingAuthorization: vi.fn(() => ({
+        state: "state-1",
+        verifier: "verifier-1",
+        authorizationUrl: "https://auth.example.test/start",
+        redirectUri: "http://localhost:1455/auth/callback",
+        createdAt: 1,
+        expiresAt: 2,
+      })),
+      completePendingAuthorization: vi.fn(),
     });
 
     const params = buildCommandTestParams("/reauth dillan", cfg);
@@ -73,12 +79,16 @@ describe("/reauth commands", () => {
   });
 
   it("completes a pasted callback flow", async () => {
-    hoisted.looksLikeCallbackInputMock.mockReturnValue(true);
-    hoisted.completeManualAuthorizationMock.mockResolvedValue({
-      access: "access-token",
-      refresh: "refresh-token",
-      expires: 123,
-      accountId: "acct_123",
+    hoisted.getChatReauthCapabilityMock.mockReturnValue({
+      provider: "openai",
+      looksLikeCallbackInput: vi.fn(() => true),
+      createPendingAuthorization: vi.fn(),
+      completePendingAuthorization: vi.fn(async () => ({
+        access: "access-token",
+        refresh: "refresh-token",
+        expires: 123,
+        accountId: "acct_123",
+      })),
     });
     hoisted.writeOAuthCredentialsMock.mockResolvedValue("openai:dillan");
     hoisted.updateConfigMock.mockResolvedValue(cfg);
@@ -92,7 +102,7 @@ describe("/reauth commands", () => {
       sessionId: "s1",
       updatedAt: 1,
       pendingOAuthReauth: {
-        kind: "openai",
+        kind: "oauth",
         provider: "openai",
         profileId: "openai:dillan",
         state: "state-1",
@@ -115,5 +125,26 @@ describe("/reauth commands", () => {
       expect.objectContaining({ profileId: "openai:dillan", syncSiblingAgents: true }),
     );
     expect(params.sessionEntry.pendingOAuthReauth).toBeUndefined();
+  });
+
+  it("falls back to CLI guidance for providers without chat reauth support", async () => {
+    hoisted.ensureAuthProfileStoreMock.mockReturnValue({
+      profiles: {
+        "anthropic:work": { provider: "anthropic", type: "oauth", access: "a" },
+      },
+    });
+    hoisted.getChatReauthCapabilityMock.mockReturnValue(null);
+
+    const params = buildCommandTestParams("/reauth anthropic:work", cfg);
+    params.agentDir = "/tmp/agent";
+    params.sessionEntry = { sessionId: "s1", updatedAt: 1 };
+    params.sessionStore = {};
+
+    const result = await handleReauthCommand(params, true);
+
+    expect(result?.reply?.text).toContain("Slack re-auth is not available for anthropic:work");
+    expect(result?.reply?.text).toContain(
+      "openclaw models auth login --provider anthropic --profile-id anthropic:work",
+    );
   });
 });

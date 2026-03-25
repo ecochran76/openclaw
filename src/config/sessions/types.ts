@@ -47,8 +47,8 @@ export type {
 };
 
 export type PendingOAuthReauth = {
-  kind: "openai";
-  provider: "openai";
+  kind: "oauth";
+  provider: string;
   profileId: string;
   state: string;
   verifier: string;

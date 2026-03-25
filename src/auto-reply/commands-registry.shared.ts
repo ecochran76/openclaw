@@ -1022,7 +1022,7 @@ export function buildBuiltinChatCommands(
     defineChatCommand({
       key: "reauth",
       nativeName: "reauth",
-      description: "Start or inspect a Slack OAuth re-auth flow for the current session.",
+      description: "Start or inspect a chat-native OAuth re-auth flow for the current session.",
       textAlias: "/reauth",
       argsParsing: "none",
       acceptsArgs: true,

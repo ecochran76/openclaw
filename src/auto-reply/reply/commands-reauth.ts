@@ -1,11 +1,6 @@
 import { ensureAuthProfileStore } from "../../agents/auth-profiles.js";
 import { formatCliCommand } from "../../cli/command-format.js";
 import { updateConfig } from "../../commands/models/shared.js";
-import {
-  completeOpenAICodexManualAuthorization,
-  createOpenAICodexManualAuthorization,
-  looksLikeOpenAICodexCallbackInput,
-} from "../../commands/openai-codex-oauth.js";
 import { updateSessionStore } from "../../config/sessions.js";
 import type { PendingOAuthReauth } from "../../config/sessions/types.js";
 import { logVerbose } from "../../globals.js";
@@ -13,6 +8,7 @@ import {
   applyAuthProfileConfig,
   writeOAuthCredentials,
 } from "../../plugins/provider-auth-helpers.js";
+import { getChatReauthCapability } from "./reauth-capabilities.js";
 import type { CommandHandler } from "./commands-types.js";
 
 type ParsedReauthCommand =
@@ -100,9 +96,13 @@ export const handlePendingReauthInput: CommandHandler = async (params) => {
   if (!pending) {
     return null;
   }
+  const capability = getChatReauthCapability(pending.provider);
+  if (!capability) {
+    return null;
+  }
 
   const rawBody = resolveMessageBody(params);
-  if (!looksLikeOpenAICodexCallbackInput(rawBody)) {
+  if (!capability.looksLikeCallbackInput(rawBody)) {
     return null;
   }
 
@@ -128,20 +128,22 @@ export const handlePendingReauthInput: CommandHandler = async (params) => {
   }
 
   try {
-    const creds = await completeOpenAICodexManualAuthorization({
+    const creds = await capability.completePendingAuthorization({
       input: rawBody,
-      state: pending.state,
-      verifier: pending.verifier,
-      redirectUri: pending.redirectUri,
+      pending: {
+        state: pending.state,
+        verifier: pending.verifier,
+        redirectUri: pending.redirectUri,
+      },
     });
-    const profileId = await writeOAuthCredentials("openai", creds, params.agentDir, {
+    const profileId = await writeOAuthCredentials(pending.provider, creds, params.agentDir, {
       syncSiblingAgents: true,
       profileId: pending.profileId,
     });
     await updateConfig((cfg) =>
       applyAuthProfileConfig(cfg, {
         profileId,
-        provider: "openai",
+        provider: pending.provider,
         mode: "oauth",
       }),
     );
@@ -227,8 +229,9 @@ export const handleReauthCommand: CommandHandler = async (params, allowTextComma
     : null;
   const existing = store?.profiles[profileId];
   const provider = existing?.provider ?? "openai";
+  const capability = getChatReauthCapability(provider);
 
-  if (provider !== "openai") {
+  if (!capability) {
     return {
       shouldContinue: false,
       reply: { text: formatSlackReauthUnsupported(profileId, provider) },
@@ -244,10 +247,10 @@ export const handleReauthCommand: CommandHandler = async (params, allowTextComma
   }
 
   const pending: PendingOAuthReauth = {
-    kind: "openai",
-    provider: "openai",
+    kind: "oauth",
+    provider,
     profileId,
-    ...createOpenAICodexManualAuthorization({ originator: "pi" }),
+    ...capability.createPendingAuthorization({ originator: "pi" }),
   };
   params.sessionEntry.pendingOAuthReauth = pending;
   await persistSessionEntry(params);
