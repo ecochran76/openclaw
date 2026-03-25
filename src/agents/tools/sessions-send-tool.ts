@@ -31,6 +31,7 @@ import {
   type GatewayMessageChannel,
   INTERNAL_MESSAGE_CHANNEL,
 } from "../../utils/message-channel.js";
+import { attemptIngressEcho } from "../a2a/ingress-echo.js";
 import { listAgentIds } from "../agent-scope.js";
 import {
   type EmbeddedAgentQueueMessageOptions,
@@ -69,7 +70,6 @@ import {
   resolveVisibleSessionReference,
 } from "./sessions-helpers.js";
 import {
-  buildAgentToAgentIngressEchoText,
   buildAgentToAgentMessageContext,
   clampA2ATimeoutSeconds,
   clampPingPongTurns,
@@ -179,18 +179,6 @@ function normalizeSessionsSendArguments(args: unknown): Record<string, unknown> 
   }
   return params;
 }
-
-type SessionsSendIngressEchoResult =
-  | {
-      status: "sent";
-      channel: string;
-      to: string;
-      accountId?: string;
-      threadId?: string;
-      messageId?: string;
-    }
-  | { status: "skipped"; reason: string }
-  | { status: "failed" | "blocked"; error: string };
 
 function resolveConfiguredAgentMainSessionKey(params: {
   cfg: OpenClawConfig;
@@ -437,59 +425,6 @@ async function startAgentRun(params: {
         ...params.extraResult,
       }),
     };
-  }
-}
-
-async function deliverA2AIngressEcho(params: {
-  callGateway: GatewayCaller;
-  displayKey: string;
-  message: string;
-  requireDelivery: boolean;
-  requesterChannel?: GatewayMessageChannel;
-  requesterSessionKey?: string;
-  targetSessionKey: string;
-}): Promise<SessionsSendIngressEchoResult> {
-  const target = await resolveAnnounceTarget({
-    sessionKey: params.targetSessionKey,
-    displayKey: params.displayKey,
-  });
-  if (!target) {
-    const error = "No deliverable target found for A2A ingress echo.";
-    return params.requireDelivery
-      ? { status: "blocked", error }
-      : { status: "skipped", reason: error };
-  }
-  try {
-    const response = await params.callGateway<{ messageId?: string }>({
-      method: "send",
-      params: {
-        to: target.to,
-        message: buildAgentToAgentIngressEchoText({
-          requesterSessionKey: params.requesterSessionKey,
-          requesterChannel: params.requesterChannel,
-          targetSessionKey: params.displayKey,
-          message: params.message,
-        }),
-        channel: target.channel,
-        accountId: target.accountId,
-        threadId: target.threadId,
-        idempotencyKey: crypto.randomUUID(),
-      },
-      timeoutMs: 10_000,
-    });
-    return {
-      status: "sent",
-      channel: target.channel,
-      to: target.to,
-      ...(target.accountId ? { accountId: target.accountId } : {}),
-      ...(target.threadId ? { threadId: target.threadId } : {}),
-      ...(typeof response?.messageId === "string" && response.messageId
-        ? { messageId: response.messageId }
-        : {}),
-    };
-  } catch (err) {
-    const error = formatErrorMessage(err);
-    return params.requireDelivery ? { status: "blocked", error } : { status: "failed", error };
   }
 }
 
@@ -887,9 +822,34 @@ export function createSessionsSendTool(opts?: {
               }).catch(() => undefined)
             : undefined;
       const ingressEchoPolicy = resolveIngressEchoPolicy(cfg);
-      let ingressEcho: SessionsSendIngressEchoResult | { status: "disabled" | "not_applicable" } = {
-        status: ingressEchoPolicy.enabled ? "not_applicable" : "disabled",
-      };
+      const ingressEchoExecution = await attemptIngressEcho(
+        {
+          policy: ingressEchoPolicy,
+          sessionKey: resolvedKey,
+          displayKey,
+          message,
+          requesterSessionKey: opts?.agentSessionKey,
+          requesterChannel: opts?.agentChannel,
+        },
+        {
+          callGateway: gatewayCall,
+          resolveAnnounceTarget,
+        },
+      );
+      const ingressEcho: Record<string, unknown> = ingressEchoExecution.ingressEcho;
+      if (ingressEchoExecution.requiredFailure) {
+        return jsonResult({
+          runId: crypto.randomUUID(),
+          status: "error",
+          error:
+            typeof ingressEchoExecution.ingressEcho.error === "string"
+              ? ingressEchoExecution.ingressEcho.error
+              : "Ingress echo delivery failed.",
+          sessionKey: displayKey,
+          resolvedTarget: resolvedTargetDisplay,
+          ingressEcho,
+        });
+      }
 
       const allowNestedSessionsSend =
         cfg.session?.agentToAgent?.guard?.allowNestedSessionsSend === true;
@@ -1013,28 +973,6 @@ export function createSessionsSendTool(opts?: {
         mirrorTurns: relayPolicy.mirrorTurns,
         targets: [],
       };
-
-      if (!skipA2AFlow && ingressEchoPolicy.enabled) {
-        ingressEcho = await deliverA2AIngressEcho({
-          callGateway: gatewayCall,
-          displayKey,
-          message,
-          requireDelivery: ingressEchoPolicy.requireDelivery,
-          requesterSessionKey,
-          requesterChannel,
-          targetSessionKey: resolvedKey,
-        });
-      }
-      if (ingressEcho.status === "blocked") {
-        return jsonResult({
-          runId,
-          status: "error",
-          error: ingressEcho.error,
-          sessionKey: displayKey,
-          resolvedTarget: resolvedTargetDisplay,
-          ingressEcho,
-        });
-      }
 
       const startA2AFlow = async (
         roundOneReply?: string,
