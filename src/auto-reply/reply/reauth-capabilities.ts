@@ -1,10 +1,10 @@
-import type { OAuthCredentials } from "@mariozechner/pi-ai/oauth";
+import type { OAuthCredentials } from "@earendil-works/pi-ai/oauth";
 import type { PendingOAuthReauth } from "../../config/sessions/types.js";
 import {
   completeOpenAICodexManualAuthorization,
   createOpenAICodexManualAuthorization,
   looksLikeOpenAICodexCallbackInput,
-} from "../../commands/openai-codex-oauth.js";
+} from "../../plugins/provider-openai-chatgpt-oauth.js";
 
 export type ChatReauthCapability = {
   provider: string;

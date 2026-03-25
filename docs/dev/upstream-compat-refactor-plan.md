@@ -45,7 +45,7 @@ Recommended first slice:
 Primary files to watch in this phase:
 
 - `src/auto-reply/reply/commands-reauth.ts`
-- `src/commands/openai-codex-oauth.ts`
+- `src/plugins/provider-openai-codex-oauth.ts`
 - `src/commands/models/auth.ts`
 - `src/plugins/provider-auth-helpers.ts`
 
@@ -53,5 +53,6 @@ Primary validation entry points:
 
 - `pnpm test -- src/auto-reply/reply/commands-reauth.test.ts`
 - `pnpm test -- src/commands/openai-codex-oauth.test.ts`
+- `pnpm test -- src/plugins/provider-openai-codex-oauth.chat-reauth.test.ts`
 - `pnpm test -- src/commands/models/auth.test.ts`
 - `pnpm build`

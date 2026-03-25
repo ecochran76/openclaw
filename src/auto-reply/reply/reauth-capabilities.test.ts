@@ -6,7 +6,7 @@ const hoisted = vi.hoisted(() => ({
   completeManualAuthorizationMock: vi.fn(),
 }));
 
-vi.mock("../../commands/openai-codex-oauth.js", () => ({
+vi.mock("../../plugins/provider-openai-chatgpt-oauth.js", () => ({
   looksLikeOpenAICodexCallbackInput: hoisted.looksLikeCallbackInputMock,
   createOpenAICodexManualAuthorization: hoisted.createManualAuthorizationMock,
   completeOpenAICodexManualAuthorization: hoisted.completeManualAuthorizationMock,
