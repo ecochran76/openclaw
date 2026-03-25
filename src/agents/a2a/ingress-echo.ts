@@ -82,10 +82,15 @@ export async function attemptIngressEcho(
 
   let announceTarget: AnnounceTarget | null = null;
   try {
-    announceTarget = await resolveAnnounceTarget({
-      sessionKey: params.sessionKey,
-      displayKey: params.displayKey,
-    });
+    announceTarget = await resolveAnnounceTarget(
+      {
+        sessionKey: params.sessionKey,
+        displayKey: params.displayKey,
+      },
+      {
+        callGateway: gatewayCall,
+      },
+    );
   } catch (err) {
     const error = errorText(err);
     return {

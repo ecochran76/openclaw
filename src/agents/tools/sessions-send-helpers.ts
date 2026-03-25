@@ -11,7 +11,7 @@ import { resolveSessionConversationRef } from "../../channels/plugins/session-co
 import { normalizeChannelId as normalizeChatChannelId } from "../../channels/registry.js";
 import type { OpenClawConfig } from "../../config/types.openclaw.js";
 import { ANNOUNCE_SKIP_TOKEN, REPLY_SKIP_TOKEN } from "./sessions-send-tokens.js";
-export { isNonDeliverableSessionsReply } from "./sessions-send-tokens.js";
+export { isAnnounceSkip, isNonDeliverableSessionsReply, isReplySkip } from "./sessions-send-tokens.js";
 
 const DEFAULT_PING_PONG_TURNS = 5;
 const MAX_PING_PONG_TURNS = 20;

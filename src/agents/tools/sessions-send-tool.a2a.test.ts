@@ -3,11 +3,15 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import type { CallGatewayOptions } from "../../gateway/call.js";
 import { setActivePluginRegistry } from "../../plugins/runtime.js";
+import { createTestRegistry } from "../../test-utils/channel-plugins.js";
 import { createSessionConversationTestRegistry } from "../../test-utils/session-conversation-registry.js";
 import { readLatestAssistantReplySnapshot, waitForAgentRun } from "../run-wait.js";
 import { runAgentStep } from "./agent-step.js";
 import type { SessionListRow } from "./sessions-helpers.js";
-import { runSessionsSendA2AFlow, testing } from "./sessions-send-tool.a2a.js";
+import {
+  runSessionsSendA2AFlow,
+  __testing as sessionsSendA2AStaticTesting,
+} from "./sessions-send-tool.a2a.js";
 
 const callGatewayMock = vi.hoisted(() => vi.fn());
 
@@ -62,8 +66,9 @@ describe("runSessionsSendA2AFlow announce delivery", () => {
       text: "Test announce reply",
       fingerprint: "test-announce-reply",
     });
-    testing.setDepsForTest({
+    sessionsSendA2AStaticTesting.setDepsForTest({
       callGateway,
+      runAgentStep: async (...args) => await vi.mocked(runAgentStep)(...args),
     });
   });
 
@@ -76,7 +81,7 @@ describe("runSessionsSendA2AFlow announce delivery", () => {
   }
 
   afterEach(() => {
-    testing.setDepsForTest();
+    sessionsSendA2AStaticTesting.setDepsForTest();
     vi.restoreAllMocks();
   });
 
@@ -359,4 +364,159 @@ describe("runSessionsSendA2AFlow announce delivery", () => {
       expect(gatewayCalls.find((call) => call.method === "send")).toBeUndefined();
     },
   );
+});
+
+const dynamicCallGatewayMock = vi.fn();
+const runAgentStepMock = vi.fn();
+let announceTargetTesting: (typeof import("./sessions-announce-target.js"))["__testing"];
+let resolveAnnounceTarget: (typeof import("./sessions-announce-target.js"))["resolveAnnounceTarget"];
+let sessionsSendA2ADynamicTesting: (typeof import("./sessions-send-tool.a2a.js"))["__testing"];
+let runSessionsSendA2AFlowDynamic: (typeof import("./sessions-send-tool.a2a.js"))["runSessionsSendA2AFlow"];
+
+async function loadFreshModules() {
+  vi.resetModules();
+  vi.doMock("../../gateway/call.js", () => ({
+    callGateway: (opts: unknown) => dynamicCallGatewayMock(opts),
+  }));
+  vi.doMock("./agent-step.js", () => ({
+    readLatestAssistantReply: vi.fn(),
+    runAgentStep: (...args: unknown[]) => runAgentStepMock(...args),
+  }));
+  ({ __testing: announceTargetTesting, resolveAnnounceTarget } =
+    await import("./sessions-announce-target.js"));
+  ({
+    __testing: sessionsSendA2ADynamicTesting,
+    runSessionsSendA2AFlow: runSessionsSendA2AFlowDynamic,
+  } = await import("./sessions-send-tool.a2a.js"));
+}
+
+describe("sessions-send-tool.a2a announce target injection", () => {
+  beforeEach(async () => {
+    dynamicCallGatewayMock.mockReset();
+    runAgentStepMock.mockReset();
+    setActivePluginRegistry(createTestRegistry([]));
+    await loadFreshModules();
+    sessionsSendA2ADynamicTesting.setDepsForTest();
+    announceTargetTesting.setDepsForTest();
+  });
+
+  it("uses the injected announce target resolver instead of the built-in resolver", async () => {
+    const resolveAnnounceTargetMock = vi.fn(async () => ({
+      channel: "discord",
+      to: "group:dev",
+      accountId: "default",
+      threadId: "7",
+    }));
+
+    sessionsSendA2ADynamicTesting.setDepsForTest({
+      callGateway: async (opts) => await dynamicCallGatewayMock(opts),
+      resolveAnnounceTarget: resolveAnnounceTargetMock,
+      runAgentStep: async (...args) => await runAgentStepMock(...args),
+    });
+    dynamicCallGatewayMock.mockImplementation(async (request: { method?: string }) => {
+      if (request.method === "send") {
+        return { messageId: "msg-1" };
+      }
+      throw new Error(`unexpected gateway call: ${request.method ?? "unknown"}`);
+    });
+    runAgentStepMock.mockResolvedValue("announce payload");
+
+    await runSessionsSendA2AFlowDynamic({
+      targetSessionKey: "agent:main:main",
+      displayKey: "agent:main:main",
+      message: "hello",
+      announceTimeoutMs: 1_000,
+      maxPingPongTurns: 0,
+      roundOneReply: "round one reply",
+    });
+
+    expect(resolveAnnounceTargetMock).toHaveBeenCalledTimes(1);
+    expect(resolveAnnounceTargetMock).toHaveBeenCalledWith(
+      {
+        sessionKey: "agent:main:main",
+        displayKey: "agent:main:main",
+      },
+      {
+        callGateway: expect.any(Function),
+      },
+    );
+    expect(dynamicCallGatewayMock).toHaveBeenCalledTimes(1);
+    expect(dynamicCallGatewayMock).toHaveBeenCalledWith({
+      method: "send",
+      params: {
+        to: "group:dev",
+        message: "announce payload",
+        channel: "discord",
+        accountId: "default",
+        threadId: "7",
+        idempotencyKey: expect.any(String),
+      },
+      timeoutMs: 10_000,
+    });
+  });
+
+  it("hydrates announce targets through the injected callGateway dependency", async () => {
+    setActivePluginRegistry(
+      createTestRegistry([
+        {
+          pluginId: "whatsapp",
+          source: "test",
+          plugin: {
+            id: "whatsapp",
+            meta: {
+              id: "whatsapp",
+              label: "WhatsApp",
+              selectionLabel: "WhatsApp",
+              docsPath: "/channels/whatsapp",
+              blurb: "WhatsApp test stub.",
+              preferSessionLookupForAnnounceTarget: true,
+            },
+            capabilities: { chatTypes: ["direct", "group"] },
+            config: {
+              listAccountIds: () => ["default"],
+              resolveAccount: () => ({}),
+            },
+          },
+        },
+      ]),
+    );
+
+    announceTargetTesting.setDepsForTest({
+      callGateway: async (opts) => await dynamicCallGatewayMock(opts),
+    });
+    dynamicCallGatewayMock.mockResolvedValueOnce({
+      sessions: [
+        {
+          key: "agent:main:whatsapp:group:123@g.us",
+          deliveryContext: {
+            channel: "whatsapp",
+            to: "123@g.us",
+            accountId: "work",
+            threadId: 42,
+          },
+        },
+      ],
+    });
+
+    const target = await resolveAnnounceTarget({
+      sessionKey: "agent:main:whatsapp:group:123@g.us",
+      displayKey: "agent:main:whatsapp:group:123@g.us",
+    });
+
+    expect(target).toEqual({
+      channel: "whatsapp",
+      to: "123@g.us",
+      accountId: "work",
+      threadId: "42",
+    });
+    expect(dynamicCallGatewayMock).toHaveBeenCalledTimes(1);
+    expect(dynamicCallGatewayMock).toHaveBeenCalledWith({
+      method: "sessions.list",
+      params: {
+        includeGlobal: true,
+        includeUnknown: true,
+        limit: 200,
+      },
+    });
+  });
 });

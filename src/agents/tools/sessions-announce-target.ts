@@ -17,10 +17,25 @@ async function callGatewayLazy<T = unknown>(opts: CallGatewayOptions): Promise<T
   return callGateway<T>(opts);
 }
 
+type GatewayCaller = <T = unknown>(opts: CallGatewayOptions) => Promise<T>;
+
+const defaultSessionsAnnounceTargetDeps = {
+  callGateway: callGatewayLazy,
+};
+
+let sessionsAnnounceTargetDeps: {
+  callGateway: GatewayCaller;
+} = defaultSessionsAnnounceTargetDeps;
+
+type ResolveAnnounceTargetDeps = {
+  callGateway?: GatewayCaller;
+};
+
 export async function resolveAnnounceTarget(params: {
   sessionKey: string;
   displayKey: string;
-}): Promise<AnnounceTarget | null> {
+}, deps?: ResolveAnnounceTargetDeps): Promise<AnnounceTarget | null> {
+  const gatewayCall = deps?.callGateway ?? sessionsAnnounceTargetDeps.callGateway;
   const parsed = resolveAnnounceTargetFromKey(params.sessionKey);
   const parsedDisplay = resolveAnnounceTargetFromKey(params.displayKey);
   const fallback = parsed ?? parsedDisplay ?? null;
@@ -38,7 +53,7 @@ export async function resolveAnnounceTarget(params: {
   }
 
   try {
-    const list = await callGatewayLazy<{ sessions: Array<SessionListRow> }>({
+    const list = await gatewayCall<{ sessions: Array<SessionListRow> }>({
       method: "sessions.list",
       params: {
         includeGlobal: true,
@@ -62,3 +77,14 @@ export async function resolveAnnounceTarget(params: {
 
   return fallback;
 }
+
+export const __testing = {
+  setDepsForTest(overrides?: Partial<{ callGateway: GatewayCaller }>) {
+    sessionsAnnounceTargetDeps = overrides
+      ? {
+          ...defaultSessionsAnnounceTargetDeps,
+          ...overrides,
+        }
+      : defaultSessionsAnnounceTargetDeps;
+  },
+};

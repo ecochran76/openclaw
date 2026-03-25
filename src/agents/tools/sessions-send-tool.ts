@@ -911,15 +911,25 @@ export function createSessionsSendTool(opts?: {
       const targetAgentId = resolveAgentIdFromSessionKey(resolvedKey) ?? "target";
       const sourceRelayTarget =
         requesterSessionKey && requesterSessionKey !== resolvedKey
-          ? await resolveAnnounceTarget({
-              sessionKey: requesterSessionKey,
-              displayKey: requesterSessionKey,
-            })
+          ? await resolveAnnounceTarget(
+              {
+                sessionKey: requesterSessionKey,
+                displayKey: requesterSessionKey,
+              },
+              {
+                callGateway: gatewayCall,
+              },
+            )
           : null;
-      const targetRelayTarget = await resolveAnnounceTarget({
-        sessionKey: resolvedKey,
-        displayKey,
-      });
+      const targetRelayTarget = await resolveAnnounceTarget(
+        {
+          sessionKey: resolvedKey,
+          displayKey,
+        },
+        {
+          callGateway: gatewayCall,
+        },
+      );
 
       // Skip the A2A ping-pong + announce flow when the current caller is the
       // parent of a parent-owned child session it spawned itself and another

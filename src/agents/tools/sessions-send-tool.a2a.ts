@@ -31,16 +31,22 @@ import {
 const log = createSubsystemLogger("agents/sessions-send");
 
 type GatewayCaller = <T = unknown>(opts: CallGatewayOptions) => Promise<T>;
+type AnnounceTargetResolver = typeof resolveAnnounceTarget;
+type AgentStepRunner = typeof runAgentStep;
 
 const defaultSessionsSendA2ADeps = {
   callGateway: async <T = unknown>(opts: CallGatewayOptions): Promise<T> => {
     const { callGateway } = await import("../../gateway/call.js");
     return callGateway<T>(opts);
   },
+  resolveAnnounceTarget,
+  runAgentStep,
 };
 
 let sessionsSendA2ADeps: {
   callGateway: GatewayCaller;
+  resolveAnnounceTarget: AnnounceTargetResolver;
+  runAgentStep: AgentStepRunner;
 } = defaultSessionsSendA2ADeps;
 
 async function deliverAnnounceReply(params: {
@@ -150,18 +156,20 @@ export async function runSessionsSendA2AFlow(params: {
       latestReply &&
       (params.relayPolicy?.mirrorTurns === "round1" || params.relayPolicy?.mirrorTurns === "all")
     ) {
-      const roundOneRelay = await relayTurn({
-        runContextId,
-        relayPolicy: params.relayPolicy,
-        sourceRelayTarget: params.sourceRelayTarget,
-        targetRelayTarget: params.targetRelayTarget,
-        fromAgent: params.targetAgentId ?? "target",
-        toAgent: params.requesterAgentId ?? "requester",
-        text: latestReply,
-      },
-      {
-        callGateway: sessionsSendA2ADeps.callGateway,
-      });
+      const roundOneRelay = await relayTurn(
+        {
+          runContextId,
+          relayPolicy: params.relayPolicy,
+          sourceRelayTarget: params.sourceRelayTarget,
+          targetRelayTarget: params.targetRelayTarget,
+          fromAgent: params.targetAgentId ?? "target",
+          toAgent: params.requesterAgentId ?? "requester",
+          text: latestReply,
+        },
+        {
+          callGateway: sessionsSendA2ADeps.callGateway,
+        },
+      );
       relayTargets.push(...roundOneRelay.targets);
       if (roundOneRelay.requiredFailure) {
         return {
@@ -180,10 +188,15 @@ export async function runSessionsSendA2AFlow(params: {
 
     const announceTarget =
       params.targetRelayTarget ??
-      (await resolveAnnounceTarget({
-        sessionKey: params.targetSessionKey,
-        displayKey: params.displayKey,
-      }));
+      (await sessionsSendA2ADeps.resolveAnnounceTarget(
+        {
+          sessionKey: params.targetSessionKey,
+          displayKey: params.displayKey,
+        },
+        {
+          callGateway: sessionsSendA2ADeps.callGateway,
+        },
+      ));
     const targetChannel = announceTarget?.channel ?? "unknown";
 
     // A same-session send is a human-facing source-channel reply, not a true
@@ -227,7 +240,7 @@ export async function runSessionsSendA2AFlow(params: {
           turn,
           maxTurns: params.maxPingPongTurns,
         });
-        const replyText = await runAgentStep({
+        const replyText = await sessionsSendA2ADeps.runAgentStep({
           sessionKey: currentSessionKey,
           message: incomingMessage,
           extraSystemPrompt: replyPrompt,
@@ -295,7 +308,7 @@ export async function runSessionsSendA2AFlow(params: {
         roundOneReply: primaryReply,
         latestReply,
       });
-      const announceReply = await runAgentStep({
+      const announceReply = await sessionsSendA2ADeps.runAgentStep({
         sessionKey: params.targetSessionKey,
         message: "Agent-to-agent announce step.",
         extraSystemPrompt: announcePrompt,
@@ -329,8 +342,12 @@ export async function runSessionsSendA2AFlow(params: {
   return { relay: buildRelaySummary({ policy: params.relayPolicy, targets: relayTargets }) };
 }
 
-export const testing = {
-  setDepsForTest(overrides?: Partial<{ callGateway: GatewayCaller }>) {
+export const __testing = {
+  setDepsForTest(overrides?: Partial<{
+    callGateway: GatewayCaller;
+    resolveAnnounceTarget: AnnounceTargetResolver;
+    runAgentStep: AgentStepRunner;
+  }>) {
     sessionsSendA2ADeps = overrides
       ? {
           ...defaultSessionsSendA2ADeps,
@@ -339,4 +356,3 @@ export const testing = {
       : defaultSessionsSendA2ADeps;
   },
 };
-export { testing as __testing };
