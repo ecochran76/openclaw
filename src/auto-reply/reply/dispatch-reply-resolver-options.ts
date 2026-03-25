@@ -8,7 +8,6 @@ export function createDispatchReplyResolverOptions(params: {
   observer: Pick<DeliveryObserver, "startRun" | "updateActiveTurn">;
   onToolResult: NonNullable<GetReplyOptions["onToolResult"]>;
   onBlockReply: NonNullable<GetReplyOptions["onBlockReply"]>;
-  beforeBlockReply?: (payload: ReplyPayload) => void;
 }): GetReplyOptions {
   return {
     ...params.replyOptions,
@@ -54,7 +53,6 @@ export function createDispatchReplyResolverOptions(params: {
       await params.onToolResult(payload);
     },
     onBlockReply: async (payload: ReplyPayload, context?: BlockReplyContext) => {
-      params.beforeBlockReply?.(payload);
       await params.onBlockReply(payload, context);
     },
   };

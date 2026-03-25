@@ -8014,6 +8014,22 @@ describe("dispatchReplyFromConfig", () => {
     expect(finalPayload?.mediaUrl).toBe("https://example.com/tts-synth.opus");
     expect(finalPayload?.text).toBeUndefined();
   });
+
+  it("does not synthesize final TTS from reasoning-only generic block replies", async () => {
+    setNoAbort();
+    ttsMocks.state.synthesizeFinalAudio = true;
+    const dispatcher = createDispatcher();
+    const ctx = buildTestCtx({ Provider: "whatsapp", Surface: "whatsapp" });
+    const replyResolver = async (_ctx: MsgContext, opts?: GetReplyOptions) => {
+      await opts?.onBlockReply?.({ text: "Reasoning:\n_thinking..._", isReasoning: true });
+      return undefined;
+    };
+
+    await dispatchReplyFromConfig({ ctx, cfg: emptyConfig, dispatcher, replyResolver });
+
+    expect(dispatcher.sendBlockReply).not.toHaveBeenCalled();
+    expect(dispatcher.sendFinalReply).not.toHaveBeenCalled();
+  });
 });
 
 describe("before_dispatch hook", () => {

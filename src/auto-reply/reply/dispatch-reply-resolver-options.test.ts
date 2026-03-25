@@ -69,23 +69,18 @@ describe("createDispatchReplyResolverOptions", () => {
     const onBlockReply = vi.fn(async (payload: ReplyPayload, context) => {
       calls.push(`block:${payload.text ?? ""}:${context?.timeoutMs ?? 0}`);
     });
-    const beforeBlockReply = vi.fn((payload: ReplyPayload) => {
-      calls.push(`before:${payload.text ?? ""}`);
-    });
 
     const opts = createDispatchReplyResolverOptions({
       observer,
       onToolResult,
       onBlockReply,
-      beforeBlockReply,
     });
 
     await opts.onToolResult?.({ text: "tool payload" });
     await opts.onBlockReply?.({ text: "block payload" }, { timeoutMs: 25 });
 
     expect(onToolResult).toHaveBeenCalledWith({ text: "tool payload" });
-    expect(beforeBlockReply).toHaveBeenCalledWith({ text: "block payload" });
     expect(onBlockReply).toHaveBeenCalledWith({ text: "block payload" }, { timeoutMs: 25 });
-    expect(calls).toEqual(["tool:tool payload", "before:block payload", "block:block payload:25"]);
+    expect(calls).toEqual(["tool:tool payload", "block:block payload:25"]);
   });
 });
