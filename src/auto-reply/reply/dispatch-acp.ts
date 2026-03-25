@@ -263,6 +263,7 @@ async function finalizeAcpTurnOutput(params: {
   sessionTtsAuto?: TtsAutoMode;
   ttsChannel?: string;
   ttsAccountId?: string;
+  shouldRouteToOriginating: boolean;
   shouldEmitResolvedIdentityNotice: boolean;
 }): Promise<boolean> {
   await params.delivery.settleVisibleText();
@@ -325,6 +326,7 @@ async function finalizeAcpTurnOutput(params: {
   // Some ACP parent surfaces only expose terminal replies, so block routing alone is not enough
   // to prove the final result was visible to the user.
   const shouldDeliverTextFallback =
+    params.shouldRouteToOriginating &&
     ttsMode !== "all" &&
     accumulatedVisibleBlockText.trim().length > 0 &&
     !finalMediaDelivered &&
@@ -642,6 +644,7 @@ export async function tryDispatchAcpReply(params: {
         sessionTtsAuto: params.sessionTtsAuto,
         ttsChannel: params.ttsChannel,
         ttsAccountId: effectiveDispatchAccountId,
+        shouldRouteToOriginating: params.shouldRouteToOriginating,
         shouldEmitResolvedIdentityNotice,
       })) || queuedFinal;
 
