@@ -4,6 +4,10 @@ This index tracks **repo-local deltas on `ec-main`** that matter for rebases, li
 
 Read this before doing branch surgery, release integration, or automation changes that touch `ec-main`.
 
+Related compatibility plan:
+
+- `docs/dev/upstream-compat-refactor-plan.md`
+
 ## Why this exists
 
 OpenClaw upstream moves quickly. Local changes become expensive when they are only preserved in branch names, chat history, or human memory.
