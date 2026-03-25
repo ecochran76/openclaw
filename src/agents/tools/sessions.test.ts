@@ -37,6 +37,15 @@ vi.mock("../../config/config.js", async () => {
   };
 });
 vi.mock("./sessions-send-tool.a2a.js", () => ({
+  prepareSessionsSendA2AFlow: vi.fn(async (params: Record<string, unknown>) => ({
+    flowParams: params,
+    defaultRelay: {
+      status: params.timeoutSeconds === 0 ? "pending" : "not_applicable",
+      mode: "target-only",
+      mirrorTurns: "none",
+      targets: [],
+    },
+  })),
   runSessionsSendA2AFlow: vi.fn(),
 }));
 

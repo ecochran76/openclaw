@@ -77,7 +77,7 @@ import {
   resolvePingPongTurns,
   resolveRelayPolicy,
 } from "./sessions-send-helpers.js";
-import { runSessionsSendA2AFlow } from "./sessions-send-tool.a2a.js";
+import { prepareSessionsSendA2AFlow, runSessionsSendA2AFlow } from "./sessions-send-tool.a2a.js";
 
 function parseNaturalSessionSelector(value?: string): {
   agentId?: string;
@@ -905,32 +905,23 @@ export function createSessionsSendTool(opts?: {
         inputProvenance,
       };
       const relayPolicy = resolveRelayPolicy(cfg);
-      const requesterAgentId = requesterSessionKey
-        ? (resolveAgentIdFromSessionKey(requesterSessionKey) ?? "requester")
-        : "requester";
-      const targetAgentId = resolveAgentIdFromSessionKey(resolvedKey) ?? "target";
-      const sourceRelayTarget =
-        requesterSessionKey && requesterSessionKey !== resolvedKey
-          ? await resolveAnnounceTarget(
-              {
-                sessionKey: requesterSessionKey,
-                displayKey: requesterSessionKey,
-              },
-              {
-                callGateway: gatewayCall,
-              },
-            )
-          : null;
-      const targetRelayTarget = await resolveAnnounceTarget(
+      const { flowParams, defaultRelay } = await prepareSessionsSendA2AFlow(
         {
-          sessionKey: resolvedKey,
+          targetSessionKey: resolvedKey,
           displayKey,
+          message,
+          announceTimeoutMs: a2aStepTimeoutMs,
+          maxPingPongTurns,
+          timeoutSeconds,
+          relayPolicy,
+          requesterSessionKey,
+          requesterChannel,
         },
         {
           callGateway: gatewayCall,
+          resolveAnnounceTarget,
         },
       );
-
       // Skip the A2A ping-pong + announce flow when the current caller is the
       // parent of a parent-owned child session it spawned itself and another
       // parent-visible result path already exists.
@@ -973,17 +964,9 @@ export function createSessionsSendTool(opts?: {
       const delivery = skipA2AFlow
         ? ({ status: "skipped", mode: "announce" } as const)
         : ({ status: "pending", mode: "announce" } as const);
-      const defaultRelay = {
-        status: relayPolicy.enabled
-          ? timeoutSeconds === 0 && !skipA2AFlow
-            ? "pending"
-            : "not_applicable"
-          : "disabled",
-        mode: relayPolicy.mode,
-        mirrorTurns: relayPolicy.mirrorTurns,
-        targets: [],
-      };
-
+      const effectiveDefaultRelay = skipA2AFlow
+        ? ({ ...defaultRelay, status: "not_applicable" } as const)
+        : defaultRelay;
       const startA2AFlow = async (
         roundOneReply?: string,
         waitRunId?: string,
@@ -991,33 +974,37 @@ export function createSessionsSendTool(opts?: {
         flowDisplayKey = displayKey,
       ) => {
         if (skipA2AFlow) {
-          return { relay: defaultRelay };
+          return { relay: effectiveDefaultRelay };
         }
-        const flowTargetRelayTarget =
-          flowTargetSessionKey === resolvedKey
-            ? targetRelayTarget
-            : await resolveAnnounceTarget({
-                sessionKey: flowTargetSessionKey,
-                displayKey: flowDisplayKey,
-              });
+        const effectiveFlowParams =
+          flowTargetSessionKey === resolvedKey && flowDisplayKey === displayKey
+            ? flowParams
+            : (
+                await prepareSessionsSendA2AFlow(
+                  {
+                    targetSessionKey: flowTargetSessionKey,
+                    displayKey: flowDisplayKey,
+                    message,
+                    announceTimeoutMs: a2aStepTimeoutMs,
+                    maxPingPongTurns,
+                    timeoutSeconds,
+                    relayPolicy,
+                    requesterSessionKey,
+                    requesterChannel,
+                  },
+                  {
+                    callGateway: gatewayCall,
+                    resolveAnnounceTarget,
+                  },
+                )
+              ).flowParams;
         return (
           (await runSessionsSendA2AFlow({
-            targetSessionKey: flowTargetSessionKey,
-            displayKey: flowDisplayKey,
-            message,
-            announceTimeoutMs: a2aStepTimeoutMs,
-            maxPingPongTurns,
-            requesterSessionKey,
-            requesterChannel,
+            ...effectiveFlowParams,
             baseline: baselineReply,
             roundOneReply,
             waitRunId,
-            relayPolicy,
-            sourceRelayTarget,
-            targetRelayTarget: flowTargetRelayTarget,
-            requesterAgentId,
-            targetAgentId: resolveAgentIdFromSessionKey(flowTargetSessionKey) ?? targetAgentId,
-          })) ?? { relay: defaultRelay }
+          })) ?? { relay: effectiveDefaultRelay }
         );
       };
 
@@ -1048,7 +1035,7 @@ export function createSessionsSendTool(opts?: {
           resolvedTarget: resolvedTargetDisplay,
           delivery,
           ingressEcho,
-          relay: defaultRelay,
+          relay: effectiveDefaultRelay,
         });
       }
 
@@ -1123,7 +1110,7 @@ export function createSessionsSendTool(opts?: {
       }
       const reply = result.replyText;
       const a2aResult = await startA2AFlow(reply ?? undefined);
-      const relay = a2aResult.relay ?? defaultRelay;
+      const relay = a2aResult.relay ?? effectiveDefaultRelay;
       if (relayPolicy.enabled && (relay.status === "blocked" || relay.status === "failed")) {
         return jsonResult({
           runId,
