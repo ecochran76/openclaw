@@ -14,6 +14,7 @@ import {
 } from "../agents/auth-health.js";
 import {
   type AuthCredentialReasonCode,
+  CLAUDE_CLI_PROFILE_ID,
   ensureAuthProfileStore,
   hasAnyAuthProfileStoreSource,
   hasLocalAuthProfileStoreSource,
@@ -26,11 +27,20 @@ import {
   classifyOAuthRefreshFailure,
   type OAuthRefreshFailureReason,
 } from "../agents/auth-profiles/oauth-refresh-failure.js";
+import { updateAuthProfileStoreWithLock } from "../agents/auth-profiles/store.js";
 import { buildProviderAuthRecoveryHint } from "../agents/provider-auth-recovery-hint.js";
 import type { OpenClawConfig } from "../config/types.openclaw.js";
 import { formatErrorMessage } from "../infra/errors.js";
+import {
+  CODEX_CLI_PROFILE_ID as OPENAI_CODEX_CLI_PROFILE_ID,
+  isDeprecatedOpenAICodexCliProfileId,
+  OPENAI_CODEX_PROVIDER_ID,
+  OPENAI_CODEX_PROVIDER_LABEL,
+} from "../plugins/provider-openai-codex-cli-profile.js";
+import { resolvePluginProviders } from "../plugins/providers.runtime.js";
 import { isRecord } from "../utils.js";
 import type { DoctorPrompter } from "./doctor-prompter.js";
+export { maybeRepairLegacyOAuthProfileIds } from "./doctor-auth-legacy-oauth.js";
 
 const OPENAI_PROVIDER_ID = "openai";
 const LEGACY_CODEX_PROVIDER_ID = "openai-codex";
@@ -41,6 +51,141 @@ const DOCTOR_REAUTH_PROVIDER_ALIASES: Readonly<Record<string, string>> = {
   [LEGACY_CODEX_PROVIDER_ID]: OPENAI_PROVIDER_ID,
 };
 
+function pruneAuthOrder(
+  order: Record<string, string[]> | undefined,
+  profileIds: Set<string>,
+): { next: Record<string, string[]> | undefined; changed: boolean } {
+  if (!order) {
+    return { next: order, changed: false };
+  }
+  let changed = false;
+  const next: Record<string, string[]> = {};
+  for (const [provider, list] of Object.entries(order)) {
+    const filtered = list.filter((id) => !profileIds.has(id));
+    if (filtered.length !== list.length) {
+      changed = true;
+    }
+    if (filtered.length > 0) {
+      next[provider] = filtered;
+    }
+  }
+  return { next: Object.keys(next).length > 0 ? next : undefined, changed };
+}
+
+function pruneAuthProfiles(
+  cfg: OpenClawConfig,
+  profileIds: Set<string>,
+): { next: OpenClawConfig; changed: boolean } {
+  const profiles = cfg.auth?.profiles;
+  const order = cfg.auth?.order;
+  const nextProfiles = profiles ? { ...profiles } : undefined;
+  let changed = false;
+
+  if (nextProfiles) {
+    for (const id of profileIds) {
+      if (id in nextProfiles) {
+        delete nextProfiles[id];
+        changed = true;
+      }
+    }
+  }
+
+  const prunedOrder = pruneAuthOrder(order, profileIds);
+  if (prunedOrder.changed) {
+    changed = true;
+  }
+
+  if (!changed) {
+    return { next: cfg, changed: false };
+  }
+
+  const nextAuth =
+    nextProfiles || prunedOrder.next
+      ? {
+          ...cfg.auth,
+          profiles: nextProfiles && Object.keys(nextProfiles).length > 0 ? nextProfiles : undefined,
+          order: prunedOrder.next,
+        }
+      : undefined;
+
+  return {
+    next: {
+      ...cfg,
+      auth: nextAuth,
+    },
+    changed: true,
+  };
+}
+
+export async function maybeRemoveDeprecatedCliAuthProfiles(
+  cfg: OpenClawConfig,
+  prompter: DoctorPrompter,
+): Promise<OpenClawConfig> {
+  const store = ensureAuthProfileStore(undefined, { allowKeychainPrompt: false });
+  const providers = resolvePluginProviders({
+    config: cfg,
+    env: process.env,
+    mode: "setup",
+  });
+  const deprecatedEntries = providers.flatMap((provider) =>
+    (provider.deprecatedProfileIds ?? [])
+      .filter((profileId) => store.profiles[profileId] || cfg.auth?.profiles?.[profileId])
+      .map((profileId) => ({
+        profileId,
+        providerId: provider.id,
+        providerLabel: provider.label,
+      })),
+  );
+  if (
+    !deprecatedEntries.some((entry) => entry.profileId === OPENAI_CODEX_CLI_PROFILE_ID) &&
+    (store.profiles[OPENAI_CODEX_CLI_PROFILE_ID] ||
+      cfg.auth?.profiles?.[OPENAI_CODEX_CLI_PROFILE_ID])
+  ) {
+    deprecatedEntries.push({
+      profileId: OPENAI_CODEX_CLI_PROFILE_ID,
+      providerId: OPENAI_CODEX_PROVIDER_ID,
+      providerLabel: OPENAI_CODEX_PROVIDER_LABEL,
+    });
+  }
+  const deprecated = new Set(deprecatedEntries.map((entry) => entry.profileId));
+
+  if (deprecated.size === 0) {
+    return cfg;
+  }
+
+  const lines = ["Deprecated external CLI auth profiles detected (no longer supported):"];
+  for (const entry of deprecatedEntries) {
+    const authHint = buildProviderAuthRecoveryHint({
+      provider: entry.providerId,
+      config: cfg,
+      env: process.env,
+    }).replace(/^Run /, "use ");
+    lines.push(`- ${entry.profileId} (${entry.providerLabel}): ${authHint}`);
+  }
+  note(lines.join("\n"), "Auth profiles");
+
+  const shouldRemove = await prompter.confirm({
+    message: "Remove deprecated external CLI auth profiles from config and store now?",
+    initialValue: true,
+  });
+  if (!shouldRemove) {
+    return cfg;
+  }
+
+  const pruned = pruneAuthProfiles(cfg, deprecated);
+  if (pruned.changed) {
+    await updateAuthProfileStoreWithLock({
+      updater: (mutableStore) => {
+        for (const profileId of deprecated) {
+          delete mutableStore.profiles[profileId];
+          delete mutableStore.usageStats?.[profileId];
+        }
+        return true;
+      },
+    });
+  }
+  return pruned.next;
+}
 function hasConfiguredCodexOAuthProfile(cfg: OpenClawConfig): boolean {
   return Object.values(cfg.auth?.profiles ?? {}).some(
     (profile) =>
@@ -233,6 +378,16 @@ async function resolveAuthIssueHint(
 ): Promise<string | null> {
   if (issue.reasonCode === "invalid_expires") {
     return "Invalid token expires metadata. Set a future Unix ms timestamp or remove expires.";
+  }
+  if (issue.provider === "anthropic" && issue.profileId === CLAUDE_CLI_PROFILE_ID) {
+    return `Deprecated profile. ${buildProviderAuthRecoveryHint({
+      provider: "anthropic",
+    })}`;
+  }
+  if (issue.provider === OPENAI_PROVIDER_ID && isDeprecatedOpenAICodexCliProfileId(issue.profileId)) {
+    return `Deprecated profile. ${buildProviderAuthRecoveryHint({
+      provider: OPENAI_PROVIDER_ID,
+    })}`;
   }
   const providerHint = await formatAuthDoctorHint({
     cfg,

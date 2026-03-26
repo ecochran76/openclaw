@@ -6,7 +6,6 @@
 import { normalizeProviderId } from "@openclaw/model-catalog-core/provider-id";
 import {
   readClaudeCliCredentialsCached,
-  readCodexCliCredentialsCached,
   readMiniMaxCliCredentialsCached,
 } from "../cli-credentials.js";
 import {
@@ -14,16 +13,16 @@ import {
   EXTERNAL_CLI_SYNC_TTL_MS,
   MINIMAX_CLI_PROFILE_ID,
   OPENAI_CODEX_DEFAULT_PROFILE_ID,
+  log,
 } from "./constants.js";
-import { log } from "./constants.js";
 import { isSafeToCopyOAuthIdentity } from "./oauth-identity.js";
 import {
   areOAuthCredentialsEquivalent,
-  hasUsableOAuthCredential,
   isSafeToAdoptBootstrapOAuthIdentity,
   shouldBootstrapFromExternalCliCredential,
 } from "./oauth-shared.js";
 import type { AuthProfileStore, OAuthCredential } from "./types.js";
+import { buildOpenAICodexExternalCliSyncProvider } from "../../plugins/provider-openai-codex-cli-profile.js";
 
 export {
   areOAuthCredentialsEquivalent,
@@ -79,18 +78,6 @@ export function isSafeToUseExternalCliCredential(
 
 const EXTERNAL_CLI_SYNC_PROVIDERS: ExternalCliSyncProvider[] = [
   {
-    profileId: OPENAI_CODEX_DEFAULT_PROFILE_ID,
-    profileAliases: ["openai:default"],
-    provider: "openai",
-    aliases: ["openai", "codex", "codex-cli", "codex-app-server"],
-    readCredentials: (options) =>
-      readCodexCliCredentialsCached({
-        ttlMs: EXTERNAL_CLI_SYNC_TTL_MS,
-        allowKeychainPrompt: options?.allowKeychainPrompt,
-      }),
-    bootstrapOnly: true,
-  },
-  {
     profileId: CLAUDE_CLI_PROFILE_ID,
     provider: "claude-cli",
     readCredentials: (options) => {
@@ -109,6 +96,10 @@ const EXTERNAL_CLI_SYNC_PROVIDERS: ExternalCliSyncProvider[] = [
     provider: "minimax-portal",
     aliases: ["minimax", "minimax-cli"],
     readCredentials: () => readMiniMaxCliCredentialsCached({ ttlMs: EXTERNAL_CLI_SYNC_TTL_MS }),
+  },
+  {
+    ...buildOpenAICodexExternalCliSyncProvider(EXTERNAL_CLI_SYNC_TTL_MS),
+    bootstrapOnly: true,
   },
 ];
 
