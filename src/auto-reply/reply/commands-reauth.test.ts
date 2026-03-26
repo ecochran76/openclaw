@@ -27,9 +27,13 @@ vi.mock("../../commands/models/shared.js", () => ({
   updateConfig: hoisted.updateConfigMock,
 }));
 
-vi.mock("./reauth-capabilities.js", () => ({
-  getChatReauthCapability: hoisted.getChatReauthCapabilityMock,
-}));
+vi.mock("./reauth-capabilities.js", async (importOriginal) => {
+  const actual = await importOriginal<typeof import("./reauth-capabilities.js")>();
+  return {
+    ...actual,
+    getChatReauthCapability: hoisted.getChatReauthCapabilityMock,
+  };
+});
 
 const { buildCommandTestParams } = await import("./commands.test-harness.js");
 const { handlePendingReauthInput, handleReauthCommand } = await import("./commands-reauth.js");
@@ -138,6 +142,31 @@ describe("/reauth commands", () => {
     const params = buildCommandTestParams("/reauth anthropic:work", cfg);
     params.agentDir = "/tmp/agent";
     params.sessionEntry = { sessionId: "s1", updatedAt: 1 };
+    params.sessionStore = {};
+
+    const result = await handleReauthCommand(params, true);
+
+    expect(result?.reply?.text).toContain("Slack re-auth is not available for anthropic:work");
+    expect(result?.reply?.text).toContain(
+      "openclaw models auth login --provider anthropic --profile-id anthropic:work",
+    );
+  });
+
+  it("uses the auth-profile override provider for bare reauth labels", async () => {
+    hoisted.ensureAuthProfileStoreMock.mockReturnValue({
+      profiles: {
+        "anthropic:work": { provider: "anthropic", type: "oauth", access: "a" },
+      },
+    });
+    hoisted.getChatReauthCapabilityMock.mockReturnValue(null);
+
+    const params = buildCommandTestParams("/reauth work", cfg);
+    params.agentDir = "/tmp/agent";
+    params.sessionEntry = {
+      sessionId: "s1",
+      updatedAt: 1,
+      authProfileOverride: "anthropic:personal",
+    };
     params.sessionStore = {};
 
     const result = await handleReauthCommand(params, true);

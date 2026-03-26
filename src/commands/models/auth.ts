@@ -25,6 +25,7 @@ import {
   externalCliDiscoveryForProviderAuth,
   removeProviderAuthProfilesWithLock,
 } from "../../agents/auth-profiles.js";
+import { normalizeRequestedProfileId } from "../../agents/auth-profiles/profile-id.js";
 import {
   listProfilesForProvider,
   promoteAuthProfileInOrder,
@@ -70,6 +71,7 @@ import { isRemoteEnvironment } from "../../infra/remote-env.js";
 import { loadValidConfigOrThrow, resolveKnownAgentId, updateConfig } from "./shared.js";
 
 type UpsertAuthProfileParams = Parameters<typeof upsertAuthProfileWithLock>[0];
+export { normalizeRequestedProfileId } from "../../agents/auth-profiles/profile-id.js";
 
 function resolveManualTokenExpiryMs(expiresIn: string | undefined): number | undefined {
   const normalizedExpiresIn = normalizeStringifiedOptionalString(expiresIn);
@@ -931,18 +933,6 @@ function credentialMode(credential: AuthProfileCredential): "api_key" | "oauth" 
     return "token";
   }
   return "oauth";
-}
-
-/** Expands a bare requested profile label into a provider-scoped profile id. */
-export function normalizeRequestedProfileId(provider: string, raw?: string): string | undefined {
-  const requested = raw?.trim();
-  if (!requested) {
-    return undefined;
-  }
-  if (requested.includes(":")) {
-    return requested;
-  }
-  return `${provider}:${requested}`;
 }
 
 /** Applies an optional profile-id override to a single returned login profile. */

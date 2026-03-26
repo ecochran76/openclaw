@@ -12,14 +12,19 @@ vi.mock("../../plugins/provider-openai-chatgpt-oauth.js", () => ({
   completeOpenAICodexManualAuthorization: hoisted.completeManualAuthorizationMock,
 }));
 
-const { getChatReauthCapability } = await import("./reauth-capabilities.js");
+const {
+  getChatReauthCapability,
+  getDefaultChatReauthProvider,
+  resolveChatReauthProvider,
+  resolveRequestedChatReauthProfileId,
+} = await import("./reauth-capabilities.js");
 
 describe("getChatReauthCapability", () => {
   it("returns null for unsupported providers", () => {
     expect(getChatReauthCapability("anthropic")).toBeNull();
   });
 
-  it("adapts the openai-codex chat reauth flow", async () => {
+  it("adapts the openai chat reauth flow", async () => {
     hoisted.looksLikeCallbackInputMock.mockReturnValue(true);
     hoisted.createManualAuthorizationMock.mockReturnValue({
       state: "state-1",
@@ -36,7 +41,7 @@ describe("getChatReauthCapability", () => {
       accountId: "acct_123",
     });
 
-    const capability = getChatReauthCapability("openai-codex");
+    const capability = getChatReauthCapability("openai");
     expect(capability).not.toBeNull();
     expect(capability?.looksLikeCallbackInput("http://localhost:1455/auth/callback?code=x")).toBe(
       true,
@@ -59,6 +64,42 @@ describe("getChatReauthCapability", () => {
 
   it("uses openai as the canonical chat reauth provider", () => {
     expect(getChatReauthCapability("openai")?.provider).toBe("openai");
+    expect(getChatReauthCapability("openai-codex")?.provider).toBe("openai");
+  });
+});
+
+describe("chat reauth provider resolution", () => {
+  it("reports the default chat reauth provider", () => {
+    expect(getDefaultChatReauthProvider()).toBe("openai");
+  });
+
+  it("prefixes bare profile labels with the auth-profile override provider", () => {
+    expect(
+      resolveRequestedChatReauthProfileId({
+        requestedProfileId: "work",
+        sessionAuthProfileOverride: "anthropic:personal",
+      }),
+    ).toBe("anthropic:work");
+  });
+
+  it("falls back to the default chat reauth provider for bare labels", () => {
+    expect(
+      resolveRequestedChatReauthProfileId({
+        requestedProfileId: "dillan",
+      }),
+    ).toBe("openai:dillan");
+  });
+
+  it("derives the provider from the normalized profile id first", () => {
+    expect(
+      resolveChatReauthProvider({
+        profileId: "anthropic:work",
+        storedProvider: "openai",
+      }),
+    ).toBe("anthropic");
+  });
+
+  it("accepts legacy openai-codex providers as chat reauth aliases", () => {
     expect(getChatReauthCapability("openai-codex")?.provider).toBe("openai");
   });
 });

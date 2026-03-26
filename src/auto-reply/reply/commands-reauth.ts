@@ -8,24 +8,17 @@ import {
   applyAuthProfileConfig,
   writeOAuthCredentials,
 } from "../../plugins/provider-auth-helpers.js";
-import { getChatReauthCapability } from "./reauth-capabilities.js";
 import type { CommandHandler } from "./commands-types.js";
+import {
+  getChatReauthCapability,
+  resolveChatReauthProvider,
+  resolveRequestedChatReauthProfileId,
+} from "./reauth-capabilities.js";
 
 type ParsedReauthCommand =
-  | { kind: "start"; profileId?: string }
+  | { kind: "start"; requestedProfileId?: string }
   | { kind: "status" }
   | { kind: "cancel" };
-
-function normalizeRequestedProfileId(provider: string, raw?: string): string | undefined {
-  const requested = raw?.trim();
-  if (!requested) {
-    return undefined;
-  }
-  if (requested.includes(":")) {
-    return requested;
-  }
-  return `${provider}:${requested}`;
-}
 
 function resolveMessageBody(params: Parameters<CommandHandler>[0]): string {
   return String(
@@ -52,7 +45,7 @@ function parseReauthCommand(raw: string): ParsedReauthCommand | { error: string 
   if (tokens.length !== 1) {
     return { error: "Usage: /reauth [profile-id|status|cancel]" };
   }
-  return { kind: "start", profileId: normalizeRequestedProfileId("openai", tokens[0]) };
+  return { kind: "start", requestedProfileId: tokens[0] };
 }
 
 async function persistSessionEntry(params: Parameters<CommandHandler>[0]): Promise<boolean> {
@@ -215,8 +208,10 @@ export const handleReauthCommand: CommandHandler = async (params, allowTextComma
     };
   }
 
-  const profileId =
-    parsed.profileId?.trim() || params.sessionEntry.authProfileOverride?.trim() || undefined;
+  const profileId = resolveRequestedChatReauthProfileId({
+    requestedProfileId: parsed.requestedProfileId,
+    sessionAuthProfileOverride: params.sessionEntry.authProfileOverride,
+  });
   if (!profileId) {
     return {
       shouldContinue: false,
@@ -228,7 +223,17 @@ export const handleReauthCommand: CommandHandler = async (params, allowTextComma
     ? ensureAuthProfileStore(params.agentDir, { allowKeychainPrompt: false })
     : null;
   const existing = store?.profiles[profileId];
-  const provider = existing?.provider ?? "openai";
+  const provider = resolveChatReauthProvider({
+    profileId,
+    storedProvider: existing?.provider,
+    sessionAuthProfileOverride: params.sessionEntry.authProfileOverride,
+  });
+  if (!provider) {
+    return {
+      shouldContinue: false,
+      reply: { text: "⚠️ Usage: /reauth <provider:profile-id>" },
+    };
+  }
   const capability = getChatReauthCapability(provider);
 
   if (!capability) {
