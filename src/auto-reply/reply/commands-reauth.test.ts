@@ -146,7 +146,7 @@ describe("/reauth commands", () => {
 
     const result = await handleReauthCommand(params, true);
 
-    expect(result?.reply?.text).toContain("Slack re-auth is not available for anthropic:work");
+    expect(result?.reply?.text).toContain("Thread re-auth is not available for anthropic:work");
     expect(result?.reply?.text).toContain(
       "openclaw models auth login --provider anthropic --profile-id anthropic:work",
     );
@@ -171,7 +171,7 @@ describe("/reauth commands", () => {
 
     const result = await handleReauthCommand(params, true);
 
-    expect(result?.reply?.text).toContain("Slack re-auth is not available for anthropic:work");
+    expect(result?.reply?.text).toContain("Thread re-auth is not available for anthropic:work");
     expect(result?.reply?.text).toContain(
       "openclaw models auth login --provider anthropic --profile-id anthropic:work",
     );

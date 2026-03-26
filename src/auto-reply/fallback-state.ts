@@ -1,5 +1,6 @@
 /** Formats model-fallback notice state for UI/status messages and persisted transition tracking. */
 import { normalizeOptionalString } from "@openclaw/normalization-core/string-coerce";
+import { supportsChatReauthProvider } from "../agents/auth-profiles/chat-reauth.js";
 import { formatAuthRecoveryHint } from "../agents/auth-profiles/reauth-guidance.js";
 import { formatRawAssistantErrorForUi } from "../agents/embedded-agent-helpers.js";
 import { areRuntimeModelRefsEquivalent } from "../agents/model-runtime-aliases.js";
@@ -130,9 +131,7 @@ export function buildAuthFailureNotice(params: {
   const selected = formatProviderModelRef(params.selectedProvider, params.selectedModel);
   const active = formatProviderModelRef(params.activeProvider, params.activeModel);
   const profileId = params.authProfileId?.trim();
-  const hasChatReauthProvider =
-    params.selectedProvider === "openai" || params.selectedProvider === "openai-codex";
-  if (!hasChatReauthProvider && !profileId) {
+  if (!supportsChatReauthProvider(params.selectedProvider) && !profileId) {
     return null;
   }
   const recoveryHint = formatAuthRecoveryHint({

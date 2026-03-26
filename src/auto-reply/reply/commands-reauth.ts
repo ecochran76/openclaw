@@ -43,7 +43,7 @@ function parseReauthCommand(raw: string): ParsedReauthCommand | { error: string 
   }
   const tokens = argText.split(/\s+/).filter(Boolean);
   if (tokens.length !== 1) {
-    return { error: "Usage: /reauth [profile-id|status|cancel]" };
+    return { error: "Usage: /reauth [provider:profile-id|profile-id|status|cancel]" };
   }
   return { kind: "start", requestedProfileId: tokens[0] };
 }
@@ -77,9 +77,9 @@ function formatPendingReauthMessage(pending: PendingOAuthReauth): string {
   ].join("\n");
 }
 
-function formatSlackReauthUnsupported(profileId: string, provider: string): string {
+function formatThreadReauthUnsupported(profileId: string, provider: string): string {
   return [
-    `⚠️ Slack re-auth is not available for ${profileId} (${provider}).`,
+    `⚠️ Thread re-auth is not available for ${profileId} (${provider}).`,
     `Use ${formatCliCommand(`openclaw models auth login --provider ${provider} --profile-id ${profileId}`)} instead.`,
   ].join("\n");
 }
@@ -239,7 +239,7 @@ export const handleReauthCommand: CommandHandler = async (params, allowTextComma
   if (!capability) {
     return {
       shouldContinue: false,
-      reply: { text: formatSlackReauthUnsupported(profileId, provider) },
+      reply: { text: formatThreadReauthUnsupported(profileId, provider) },
     };
   }
   if (existing && existing.type !== "oauth") {
