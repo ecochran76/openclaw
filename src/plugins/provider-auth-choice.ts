@@ -6,6 +6,7 @@ import {
   resolveAgentWorkspaceDir,
 } from "../agents/agent-scope.js";
 import { upsertAuthProfileWithLock } from "../agents/auth-profiles.js";
+import { normalizeRequestedProfileId } from "../agents/auth-profiles/profile-id.js";
 import { formatLiteralProviderPrefixedModelRef } from "../agents/model-ref-shared.js";
 import { resolveDefaultAgentWorkspaceDir } from "../agents/workspace.js";
 import { normalizeAgentModelRefForConfig } from "../config/model-input.js";
@@ -265,6 +266,7 @@ export async function runProviderPluginAuthMethod(params: {
   agentId?: string;
   workspaceDir?: string;
   emitNotes?: boolean;
+  requestedProfileId?: string;
   secretInputMode?: ProviderAuthOptionBag["secretInputMode"];
   allowSecretRefPrompt?: boolean;
   opts?: Partial<ProviderAuthOptionBag>;
@@ -281,6 +283,7 @@ export async function runProviderPluginAuthMethod(params: {
     env: params.env,
     agentDir,
     workspaceDir,
+    ...(params.requestedProfileId ? { profileId: params.requestedProfileId } : {}),
     prompter: params.prompter,
     runtime: params.runtime,
     opts: params.opts,
@@ -302,7 +305,21 @@ export async function runProviderPluginAuthMethod(params: {
     });
   }
 
-  for (const profile of result.profiles) {
+  const profiles = (() => {
+    const requestedProfileId = params.requestedProfileId?.trim();
+    if (!requestedProfileId) {
+      return result.profiles;
+    }
+    if (result.profiles.length !== 1) {
+      throw new Error(
+        "--profile-id requires exactly one returned auth profile from the selected auth method.",
+      );
+    }
+    const [profile] = result.profiles;
+    return [{ ...profile, profileId: requestedProfileId }];
+  })();
+
+  for (const profile of profiles) {
     await upsertAuthProfileWithLockOrThrow({
       profileId: profile.profileId,
       credential: profile.credential,
@@ -460,6 +477,7 @@ export async function applyAuthChoiceLoadedPluginProvider(
     agentDir: params.agentDir,
     agentId: params.agentId,
     workspaceDir,
+    requestedProfileId: normalizeRequestedProfileId(resolved.provider.id, params.opts?.profileId),
     secretInputMode: params.opts?.secretInputMode,
     allowSecretRefPrompt: false,
     opts: params.opts,
@@ -610,4 +628,3 @@ async function upsertAuthProfileWithLockOrThrow(params: UpsertAuthProfileParams)
     );
   }
 }
-export { testing as __testing };

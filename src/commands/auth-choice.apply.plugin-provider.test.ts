@@ -510,6 +510,59 @@ describe("applyAuthChoiceLoadedPluginProvider", () => {
     });
   });
 
+  it("forwards normalized requested profile ids to plugin auth methods", async () => {
+    const run = vi.fn(async ({ profileId }: { profileId?: string }) => ({
+      profiles: [
+        {
+          profileId: profileId ?? "ollama:default",
+          credential: {
+            type: "api_key" as const,
+            provider: "ollama",
+            key: "ollama-local",
+          },
+        },
+      ],
+    }));
+    const provider: ProviderPlugin = {
+      id: "ollama",
+      label: "Ollama",
+      auth: [
+        {
+          id: "local",
+          label: "Ollama",
+          kind: "custom",
+          run,
+        },
+      ],
+    };
+    resolvePluginProviders.mockReturnValue([provider]);
+    resolveProviderPluginChoice.mockReturnValue({
+      provider,
+      method: provider.auth?.[0],
+    });
+
+    await applyAuthChoiceLoadedPluginProvider(
+      buildParams({
+        opts: { profileId: "work" } as never,
+      }),
+    );
+
+    expect(run).toHaveBeenCalledWith(
+      expect.objectContaining({
+        profileId: "ollama:work",
+      }),
+    );
+    expect(upsertAuthProfile).toHaveBeenCalledWith({
+      profileId: "ollama:work",
+      credential: {
+        type: "api_key",
+        provider: "ollama",
+        key: "ollama-local",
+      },
+      agentDir: "/tmp/agent",
+    });
+  });
+
   it("merges provider config patches and emits provider notes", async () => {
     applyAuthProfileConfig.mockImplementation(((
       config: {

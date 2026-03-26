@@ -1610,6 +1610,42 @@ describe("applyAuthChoice", () => {
     });
   });
 
+  it("uses the requested profile id for litellm-api-key", async () => {
+    await setupTempState();
+
+    const text = vi.fn();
+    const confirm = vi.fn(async () => false);
+    const { prompter, runtime } = createApiKeyPromptHarness({ text, confirm });
+
+    const result = await applyAuthChoice({
+      authChoice: "litellm-api-key",
+      config: {},
+      prompter,
+      runtime,
+      setDefaultModel: true,
+      opts: {
+        tokenProvider: "litellm",
+        token: "sk-litellm-work",
+        profileId: "work",
+      },
+    });
+
+    expect(text).not.toHaveBeenCalled();
+    expect(confirm).not.toHaveBeenCalled();
+    expect(result.config.auth?.profiles?.["litellm:work"]).toMatchObject({
+      provider: "litellm",
+      mode: "api_key",
+    });
+    expect(result.config.auth?.profiles?.["litellm:default"]).toBeUndefined();
+    expect(resolveAgentModelPrimaryValue(result.config.agents?.defaults?.model)).toBe(
+      "litellm/default",
+    );
+    expect(await readAuthProfile("litellm:work")).toMatchObject({
+      type: "api_key",
+      key: "sk-litellm-work",
+    });
+  });
+
   it("configures cloudflare ai gateway via env key and explicit opts", async () => {
     const scenarios: Array<{
       envGatewayKey?: string;
