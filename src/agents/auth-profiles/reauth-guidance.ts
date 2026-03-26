@@ -1,4 +1,5 @@
 import { formatCliCommand } from "../../cli/command-format.js";
+import { supportsChatReauthProvider } from "./chat-reauth.js";
 
 export function formatAuthRecoveryHint(params: {
   provider?: string;
@@ -9,10 +10,8 @@ export function formatAuthRecoveryHint(params: {
   const provider = params.provider?.trim();
   const profileId = params.authProfileId?.trim();
   const loginProvider = provider === "openai-codex" ? "openai" : provider;
-  const supportsChatReauth =
-    params.allowChatReauth && (provider === "openai" || provider === "openai-codex");
 
-  if (supportsChatReauth) {
+  if (params.allowChatReauth && supportsChatReauthProvider(provider)) {
     if (profileId) {
       const chatHint = `Reply /reauth ${profileId} in this thread to refresh it here`;
       if (params.includeCliAlternative) {

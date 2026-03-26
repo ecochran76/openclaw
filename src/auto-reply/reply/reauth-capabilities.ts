@@ -1,4 +1,5 @@
 import type { OAuthCredentials } from "@earendil-works/pi-ai/oauth";
+import { getDefaultChatReauthProvider as getRegisteredDefaultChatReauthProvider } from "../../agents/auth-profiles/chat-reauth.js";
 import {
   normalizeRequestedProfileId,
   resolveAuthProfileProviderId,
@@ -9,8 +10,6 @@ import {
   createOpenAICodexManualAuthorization,
   looksLikeOpenAICodexCallbackInput,
 } from "../../plugins/provider-openai-chatgpt-oauth.js";
-
-const DEFAULT_CHAT_REAUTH_PROVIDER = "openai";
 
 export type ChatReauthCapability = {
   provider: string;
@@ -25,7 +24,7 @@ export type ChatReauthCapability = {
 };
 
 export function getDefaultChatReauthProvider(): string | undefined {
-  return DEFAULT_CHAT_REAUTH_PROVIDER;
+  return getRegisteredDefaultChatReauthProvider();
 }
 
 export function resolveRequestedChatReauthProfileId(params: {
