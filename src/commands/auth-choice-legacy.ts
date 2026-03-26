@@ -4,12 +4,14 @@ import {
   resolveManifestDeprecatedProviderAuthChoice,
   resolveManifestProviderAuthChoices,
 } from "../plugins/provider-auth-choices.js";
-import type { AuthChoice } from "./onboard-types.js";
 import {
   isDeprecatedOpenAICodexAuthChoice,
   normalizeOpenAICodexAuthChoice,
   OPENAI_CODEX_LEGACY_AUTH_CHOICE,
 } from "../plugins/provider-openai-codex-auth-choice.js";
+import type { AuthChoice } from "./onboard-types.js";
+
+export type DeprecatedAuthChoice = "claude-cli" | "codex-cli";
 
 const LEGACY_REPLACEMENT_AUTH_CHOICES = new Set(["claude-cli"]);
 
@@ -113,7 +115,7 @@ export function resolveDeprecatedAuthChoiceReplacement(
   if (normalizedOpenAICodex && normalizedOpenAICodex !== authChoice) {
     return {
       normalized: normalizedOpenAICodex as AuthChoice,
-      message: `Auth choice "${authChoice}" is deprecated; using OpenAI Codex setup instead.`,
+      message: `Auth choice "${authChoice}" is deprecated; using OpenAI Codex OAuth instead.`,
     };
   }
   const deprecatedChoice = resolveLegacyCliBackendChoice(authChoice, params);
@@ -125,6 +127,35 @@ export function resolveDeprecatedAuthChoiceReplacement(
     normalized: deprecatedChoice.choiceId as AuthChoice,
     message: `Auth choice "${authChoice}" is deprecated; using ${replacementLabel} setup instead.`,
   };
+}
+
+export function formatDeprecatedAuthChoiceMigrationLog(
+  authChoice: AuthChoice,
+  params?: {
+    config?: OpenClawConfig;
+    workspaceDir?: string;
+    env?: NodeJS.ProcessEnv;
+  },
+): string {
+  return (
+    resolveDeprecatedAuthChoiceReplacement(authChoice, params)?.message ??
+    `Auth choice "${authChoice}" is deprecated; use the current provider-specific setup instead.`
+  );
+}
+
+export function formatDeprecatedNonInteractiveAuthChoiceHint(
+  authChoice: AuthChoice,
+  params?: {
+    config?: OpenClawConfig;
+    workspaceDir?: string;
+    env?: NodeJS.ProcessEnv;
+  },
+): string {
+  const replacement = resolveDeprecatedAuthChoiceReplacement(authChoice, params);
+  if (!replacement) {
+    return "Use the replacement provider-specific auth choice instead.";
+  }
+  return `Use "--auth-choice ${replacement.normalized}".`;
 }
 
 /** Format the non-interactive error shown when a deprecated auth choice was supplied. */

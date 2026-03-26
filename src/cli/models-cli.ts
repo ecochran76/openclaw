@@ -466,7 +466,7 @@ export function registerModelsCli(program: Command) {
   auth
     .command("sync")
     .description("Sync an auth profile from one agent to others")
-    .requiredOption("--profile-id <id>", "Auth profile id to sync (e.g. openai-codex:work)")
+    .requiredOption("--profile-id <id>", "Auth profile id to sync (e.g. <provider>:work)")
     .option("--from-agent <id>", "Source agent id (default: main)")
     .option("--to-agents <ids>", "Comma-separated target agent ids or 'all' (default: all)")
     .option("--json", "Output JSON", false)
@@ -513,7 +513,7 @@ export function registerModelsCli(program: Command) {
     .description("Set per-agent auth order override (writes auth-state.json)")
     .requiredOption("--provider <name>", "Provider id (e.g. anthropic)")
     .option("--agent <id>", "Agent id (default: configured default agent)")
-    .argument("<profileIds...>", "Auth profile ids (e.g. anthropic:default)")
+    .argument("<profileIds...>", "Auth profile ids (e.g. <provider>:default)")
     .action(async (profileIds: string[], opts, command) => {
       await withModelsRuntime(async ({ defaultRuntime, resolveModelAgentOption }) => {
         const agent = resolveModelAgentOption(command, opts);

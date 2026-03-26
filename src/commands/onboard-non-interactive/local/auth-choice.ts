@@ -13,9 +13,9 @@ import { resolveManifestDeprecatedProviderAuthChoice } from "../../../plugins/pr
 import type { RuntimeEnv } from "../../../runtime.js";
 import { resolveDefaultSecretProviderAlias } from "../../../secrets/ref-contract.js";
 import {
+  formatDeprecatedNonInteractiveAuthChoiceHint,
   formatDeprecatedNonInteractiveAuthChoiceError,
   isDeprecatedAuthChoice,
-  resolveDeprecatedAuthChoiceReplacement,
 } from "../../auth-choice-legacy.js";
 import { normalizeSecretInputModeInput } from "../../auth-choice.apply-helpers.js";
 import { normalizeApiKeyTokenProviderAuthChoice } from "../../auth-choice.apply.api-providers.js";
@@ -134,27 +134,32 @@ export async function applyNonInteractiveAuthChoice(params: {
     };
   };
   if (isDeprecatedAuthChoice(authChoice, { config: nextConfig, env: process.env })) {
-    // Keep deprecated aliases out of the config by normalizing them before
-    // either plugin dispatch or built-in setup handling.
-    const replacement = resolveDeprecatedAuthChoiceReplacement(authChoice, {
-      config: nextConfig,
-      env: process.env,
-    });
-    if (replacement) {
-      runtime.log(replacement.message);
-      authChoice = replacement.normalized;
-    } else {
-      runtime.error(
-        formatDeprecatedNonInteractiveAuthChoiceError(authChoice, {
-          config: nextConfig,
-          env: process.env,
-        })!,
-      );
-      runtime.exit(1);
-      return null;
-    }
+    runtime.error(
+      formatDeprecatedNonInteractiveAuthChoiceError(authChoice, {
+        config: nextConfig,
+        env: process.env,
+      }) ??
+        [
+          `Auth choice "${authChoice}" is deprecated.`,
+          formatDeprecatedNonInteractiveAuthChoiceHint(authChoice, {
+            config: nextConfig,
+            env: process.env,
+          }),
+        ].join("\n"),
+    );
+    runtime.exit(1);
+    return null;
   }
-
+  if (authChoice === "setup-token") {
+    runtime.error(
+      [
+        'Auth choice "setup-token" requires interactive mode.',
+        'Use "--auth-choice token" with --token or choose a provider-specific non-interactive auth choice.',
+      ].join("\n"),
+    );
+    runtime.exit(1);
+    return null;
+  }
   const pluginProviderChoice = await applyNonInteractivePluginProviderChoice({
     nextConfig,
     authChoice,

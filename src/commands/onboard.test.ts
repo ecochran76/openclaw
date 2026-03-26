@@ -77,6 +77,55 @@ describe("setupWizardCommand", () => {
     expect(mocks.runNonInteractiveSetup).not.toHaveBeenCalled();
   });
 
+  it("logs provider-aware migration guidance for deprecated interactive auth choices", async () => {
+    const runtime = makeRuntime();
+
+    await setupWizardCommand(
+      {
+        authChoice: "claude-cli",
+      },
+      runtime,
+    );
+
+    expect(runtime.log).toHaveBeenCalledWith(
+      'Auth choice "claude-cli" is deprecated; using Anthropic Claude CLI setup instead.',
+    );
+
+    vi.clearAllMocks();
+
+    await setupWizardCommand(
+      {
+        authChoice: "codex-cli",
+      },
+      runtime,
+    );
+
+    expect(runtime.log).toHaveBeenCalledWith(
+      'Auth choice "codex-cli" is deprecated; using OpenAI Codex OAuth instead.',
+    );
+  });
+
+  it("fails fast with provider-aware non-interactive deprecated auth guidance", async () => {
+    const runtime = makeRuntime();
+
+    await setupWizardCommand(
+      {
+        nonInteractive: true,
+        authChoice: "claude-cli",
+      },
+      runtime,
+    );
+
+    expect(runtime.error).toHaveBeenCalledWith(
+      ['Auth choice "claude-cli" is deprecated.', 'Use "--auth-choice anthropic-cli".'].join(
+        "\n",
+      ),
+    );
+    expect(runtime.exit).toHaveBeenCalledWith(1);
+    expect(mocks.runInteractiveSetup).not.toHaveBeenCalled();
+    expect(mocks.runNonInteractiveSetup).not.toHaveBeenCalled();
+  });
+
   it("logs ASCII-safe Windows guidance before setup", async () => {
     const runtime = makeRuntime();
     const platformSpy = vi.spyOn(process, "platform", "get").mockReturnValue("win32");
