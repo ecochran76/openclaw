@@ -551,6 +551,7 @@ async function runProviderAuthMethod(params: {
     env: process.env,
     agentDir: params.agentDir,
     workspaceDir: params.workspaceDir,
+    profileId: params.requestedProfileId,
     prompter: params.prompter,
     runtime: params.runtime,
     allowSecretRefPrompt: false,

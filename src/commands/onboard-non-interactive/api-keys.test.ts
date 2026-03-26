@@ -2,7 +2,16 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { resolveNonInteractiveApiKey } from "./api-keys.js";
 
+const ensureAuthProfileStore = vi.hoisted(() => vi.fn());
+const resolveApiKeyForProfile = vi.hoisted(() => vi.fn());
+const resolveAuthProfileOrder = vi.hoisted(() => vi.fn());
 const resolveEnvApiKey = vi.hoisted(() => vi.fn());
+
+vi.mock("../../agents/auth-profiles.js", () => ({
+  ensureAuthProfileStore,
+  resolveApiKeyForProfile,
+  resolveAuthProfileOrder,
+}));
 vi.mock("../../agents/model-auth.js", () => ({
   resolveEnvApiKey,
 }));
@@ -14,25 +23,19 @@ const authStore = vi.hoisted(
       profiles: {} as Record<string, { type: "api_key"; provider: string; key: string }>,
     }) as const,
 );
-const resolveApiKeyForProfile = vi.hoisted(() =>
-  vi.fn(async (params: { profileId: string }) => {
-    const profile = authStore.profiles[params.profileId];
-    return profile?.type === "api_key" ? { apiKey: profile.key, source: "profile" } : null;
-  }),
-);
-vi.mock("../../agents/auth-profiles.js", () => ({
-  ensureAuthProfileStore: vi.fn(() => authStore),
-  resolveApiKeyForProfile,
-  resolveAuthProfileOrder: vi.fn(() => Object.keys(authStore.profiles)),
-}));
 
 beforeEach(() => {
   vi.clearAllMocks();
   for (const profileId of Object.keys(authStore.profiles)) {
     delete authStore.profiles[profileId];
   }
+  ensureAuthProfileStore.mockReturnValue(authStore);
+  resolveAuthProfileOrder.mockImplementation(() => Object.keys(authStore.profiles));
+  resolveApiKeyForProfile.mockImplementation(async (params: { profileId: string }) => {
+    const profile = authStore.profiles[params.profileId];
+    return profile?.type === "api_key" ? { apiKey: profile.key, source: "profile" } : null;
+  });
 });
-
 function createRuntime() {
   return {
     error: vi.fn(),
@@ -194,5 +197,52 @@ describe("resolveNonInteractiveApiKey", () => {
     expect(resolveApiKeyForProfile).toHaveBeenCalledOnce();
     const [profileParams] = resolveApiKeyForProfile.mock.calls[0] ?? [];
     expect(profileParams?.profileId).toBe("custom-models-custom-local:default");
+  });
+
+  it("prefers the requested existing profile before provider order fallback", async () => {
+    const runtime = createRuntime();
+    const previousOpenAIKey = process.env.OPENAI_API_KEY;
+    delete process.env.OPENAI_API_KEY;
+    authStore.profiles["openai:default"] = {
+      type: "api_key",
+      provider: "openai",
+      key: "sk-default",
+    };
+    authStore.profiles["openai:work"] = {
+      type: "api_key",
+      provider: "openai",
+      key: "sk-work",
+    };
+    resolveEnvApiKey.mockReturnValue(undefined);
+    resolveApiKeyForProfile.mockImplementation(async ({ profileId }: { profileId: string }) =>
+      profileId === "openai:work" ? { apiKey: "sk-work" } : { apiKey: "sk-default" },
+    );
+
+    try {
+      const resolved = await resolveNonInteractiveApiKey({
+        provider: "openai",
+        profileId: "openai:work",
+        cfg: {},
+        flagName: "--openai-api-key",
+        envVar: "OPENAI_API_KEY",
+        runtime: runtime as never,
+      });
+
+      expect(resolveApiKeyForProfile).toHaveBeenCalledWith(
+        expect.objectContaining({
+          profileId: "openai:work",
+        }),
+      );
+      expect(resolved).toEqual({
+        key: "sk-work",
+        source: "profile",
+      });
+    } finally {
+      if (previousOpenAIKey === undefined) {
+        delete process.env.OPENAI_API_KEY;
+      } else {
+        process.env.OPENAI_API_KEY = previousOpenAIKey;
+      }
+    }
   });
 });

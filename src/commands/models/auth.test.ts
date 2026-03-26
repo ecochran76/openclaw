@@ -824,6 +824,26 @@ describe("modelsAuthLoginCommand", () => {
     ).toBe("/tmp/openclaw/agents/coder");
   });
 
+  it("passes requested profile ids through to provider auth methods", async () => {
+    const runtime = createRuntime();
+
+    await modelsAuthLoginCommand(
+      { provider: "openai-codex", profileId: "openai-codex:work" },
+      runtime,
+    );
+
+    expect(runProviderAuth).toHaveBeenCalledWith(
+      expect.objectContaining({
+        profileId: "openai-codex:work",
+      }),
+    );
+    expect(mocks.upsertAuthProfile).toHaveBeenCalledWith(
+      expect.objectContaining({
+        profileId: "openai-codex:work",
+      }),
+    );
+  });
+
   it("loads the owning plugin for an explicit provider even in a clean config", async () => {
     const runtime = createRuntime();
     const runClaudeCliMigration = vi.fn().mockResolvedValue({

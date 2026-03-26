@@ -52,10 +52,17 @@ function resolveProfileIds(params: {
   providerId: string;
   profileId?: string;
   profileIds?: string[];
+  requestedProfileId?: string;
+  allowProfile?: boolean;
 }) {
   const explicit = normalizeUniqueStringEntries(params.profileIds ?? []);
   if (explicit.length > 0) {
     return explicit;
+  }
+  const requestedProfileId =
+    params.allowProfile === false ? undefined : params.requestedProfileId?.trim();
+  if (requestedProfileId) {
+    return [requestedProfileId];
   }
   return [resolveProfileId(params)];
 }
@@ -145,7 +152,10 @@ export function createProviderApiKeyAuthMethod(
         throw new Error(`Missing API key input for provider "${params.providerId}".`);
       }
       const credentialInput = capturedSecretInput ?? "";
-      const profileIds = resolveProfileIds(params);
+      const profileIds = resolveProfileIds({
+        ...params,
+        requestedProfileId: ctx.profileId,
+      });
 
       return {
         profiles: profileIds.map((profileId) => ({
@@ -170,6 +180,7 @@ export function createProviderApiKeyAuthMethod(
       const opts = ctx.opts as Record<string, unknown> | undefined;
       const resolved = await ctx.resolveApiKey({
         provider: params.providerId,
+        ...(params.allowProfile === false ? {} : ctx.profileId ? { profileId: ctx.profileId } : {}),
         flagValue: resolveStringOption(opts, params.optionKey),
         flagName: params.flagName,
         envVar: params.envVar,
@@ -179,7 +190,10 @@ export function createProviderApiKeyAuthMethod(
         return null;
       }
 
-      const profileIds = resolveProfileIds(params);
+      const profileIds = resolveProfileIds({
+        ...params,
+        requestedProfileId: ctx.profileId,
+      });
       if (resolved.source !== "profile") {
         for (const profileId of profileIds) {
           const credential = ctx.toApiKeyCredential({

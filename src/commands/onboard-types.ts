@@ -57,6 +57,8 @@ export type OnboardOptions = OnboardDynamicProviderOptions & {
   tokenProfileId?: string;
   /** Used when `authChoice=token` in non-interactive mode. */
   tokenExpiresIn?: string;
+  /** Used by provider/plugin non-interactive auth flows to override the auth profile id. */
+  profileId?: string;
   /** API key persistence mode for setup flows (default: plaintext). */
   secretInputMode?: SecretInputMode;
   arceeaiApiKey?: string;

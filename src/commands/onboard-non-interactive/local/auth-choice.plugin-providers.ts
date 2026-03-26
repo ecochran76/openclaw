@@ -9,6 +9,7 @@ import {
   resolveDefaultAgentId,
   resolveAgentWorkspaceDir,
 } from "../../../agents/agent-scope.js";
+import { normalizeRequestedProfileId } from "../../../agents/auth-profiles/profile-id.js";
 import type { ApiKeyCredential } from "../../../agents/auth-profiles/types.js";
 import { resolveDefaultAgentWorkspaceDir } from "../../../agents/workspace.js";
 import { resolveAgentModelPrimaryValue } from "../../../config/model-input.js";
@@ -235,6 +236,11 @@ export async function applyNonInteractivePluginProviderChoice(params: {
     return null;
   }
 
+  const requestedProfileId = normalizeRequestedProfileId(
+    providerChoice.provider.id,
+    params.opts.profileId,
+  );
+
   const result = await method.runNonInteractive({
     authChoice: params.authChoice,
     config: enableResult.config,
@@ -243,6 +249,7 @@ export async function applyNonInteractivePluginProviderChoice(params: {
     runtime: params.runtime,
     agentDir,
     workspaceDir,
+    ...(requestedProfileId ? { profileId: requestedProfileId } : {}),
     resolveApiKey: params.resolveApiKey,
     toApiKeyCredential: params.toApiKeyCredential,
   });

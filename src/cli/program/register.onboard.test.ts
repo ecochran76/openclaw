@@ -156,6 +156,17 @@ describe("registerOnboardCommand", () => {
     expect(options.importSecrets).toBe(true);
   });
 
+  it("forwards non-interactive provider --profile-id", async () => {
+    await runCli(["onboard", "--non-interactive", "--profile-id", "openai:work"]);
+    expect(setupWizardCommandMock).toHaveBeenCalledWith(
+      expect.objectContaining({
+        nonInteractive: true,
+        profileId: "openai:work",
+      }),
+      runtime,
+    );
+  });
+
   it("reports errors via runtime on setup wizard command failures", async () => {
     setupWizardCommandMock.mockRejectedValueOnce(new Error("setup failed"));
 

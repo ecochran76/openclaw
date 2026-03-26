@@ -336,6 +336,8 @@ export type ProviderAuthContext = {
   env?: NodeJS.ProcessEnv;
   agentDir?: string;
   workspaceDir?: string;
+  /** Optional requested auth profile id for interactive login flows. */
+  profileId?: string;
   prompter: WizardPrompter;
   runtime: RuntimeEnv;
   /**
@@ -379,6 +381,7 @@ export type ProviderNonInteractiveApiKeyResult = {
 
 export type ProviderResolveNonInteractiveApiKeyParams = {
   provider: string;
+  profileId?: string;
   flagValue?: string;
   flagName: `--${string}`;
   envVar: string;
@@ -402,6 +405,8 @@ export type ProviderAuthMethodNonInteractiveContext = {
   runtime: RuntimeEnv;
   agentDir?: string;
   workspaceDir?: string;
+  /** Optional requested auth profile id for non-interactive provider setup. */
+  profileId?: string;
   resolveApiKey: (
     params: ProviderResolveNonInteractiveApiKeyParams,
   ) => Promise<ProviderNonInteractiveApiKeyResult | null>;

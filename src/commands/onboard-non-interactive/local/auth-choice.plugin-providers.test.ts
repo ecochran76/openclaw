@@ -157,6 +157,7 @@ describe("applyNonInteractivePluginProviderChoice", () => {
     expect(providersInput.includeUntrustedWorkspacePlugins).toBe(false);
     expect(resolveProviderPluginChoice).toHaveBeenCalledOnce();
     expect(runNonInteractive).toHaveBeenCalledOnce();
+    expect(runNonInteractive.mock.calls[0]?.[0]?.profileId).toBeUndefined();
     expect(result).toEqual({ plugins: { allow: ["vllm"] } });
   });
 
@@ -501,5 +502,32 @@ describe("applyNonInteractivePluginProviderChoice", () => {
     });
 
     expect(offerPostInstallMigrations).not.toHaveBeenCalled();
+  });
+
+  it("normalizes and forwards requested profile ids to plugin provider auth", async () => {
+    const runtime = createRuntime();
+    const runNonInteractive = vi.fn(async () => ({ plugins: { allow: ["vllm"] } }));
+    resolveOwningPluginIdsForProvider.mockReturnValue(["vllm"] as never);
+    resolvePluginProviders.mockReturnValue([{ id: "vllm", pluginId: "vllm" }] as never);
+    resolveProviderPluginChoice.mockReturnValue({
+      provider: { id: "vllm", pluginId: "vllm", label: "vLLM" },
+      method: { runNonInteractive },
+    });
+
+    await applyNonInteractivePluginProviderChoice({
+      nextConfig: { agents: { defaults: {} } } as OpenClawConfig,
+      authChoice: "provider-plugin:vllm:custom",
+      opts: { profileId: "work" } as never,
+      runtime: runtime as never,
+      baseConfig: { agents: { defaults: {} } } as OpenClawConfig,
+      resolveApiKey: vi.fn(),
+      toApiKeyCredential: vi.fn(),
+    });
+
+    expect(runNonInteractive).toHaveBeenCalledWith(
+      expect.objectContaining({
+        profileId: "vllm:work",
+      }),
+    );
   });
 });
