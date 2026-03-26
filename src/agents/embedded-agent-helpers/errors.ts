@@ -5,7 +5,6 @@ import {
   normalizeLowercaseStringOrEmpty,
   normalizeOptionalLowercaseString,
 } from "@openclaw/normalization-core/string-coerce";
-import { formatCliCommand } from "../../cli/command-format.js";
 import type { OpenClawConfig } from "../../config/types.openclaw.js";
 import type { AssistantMessage } from "../../llm/types.js";
 import { createSubsystemLogger } from "../../logging/subsystem.js";
@@ -23,6 +22,7 @@ export {
   parseApiErrorInfo,
 } from "../../shared/assistant-error-format.js";
 import { classifyOAuthRefreshFailure } from "../auth-profiles/oauth-refresh-failure.js";
+import { formatAuthRecoveryHint } from "../auth-profiles/reauth-guidance.js";
 import { formatExecDeniedUserMessage } from "../exec-approval-result.js";
 import { isModelNotFoundErrorMessage } from "../live-model-errors.js";
 import { formatSandboxToolPolicyBlockedMessage } from "../sandbox/runtime-status.js";
@@ -96,34 +96,20 @@ function formatAuthFailureMessage(params: {
   const model = params.model?.trim();
   const profileId = params.authProfileId?.trim();
   const target = provider && model ? `${provider}/${model}` : provider || "the selected model";
-  const loginProvider = provider === "openai-codex" ? "openai" : provider;
-
-  if (provider === "openai" || provider === "openai-codex") {
-    if (profileId) {
-      return [
-        `🔐 Auth failed for ${profileId} on ${target}.`,
-        `Reply /reauth ${profileId} in this thread to refresh it here, or run ${formatCliCommand(`openclaw models auth login --provider openai --profile-id ${profileId}`)}.`,
-      ].join(" ");
-    }
-    return [
-      `🔐 Auth failed for ${target}.`,
-      "Reply /reauth <profile-id> in this thread to refresh an OpenAI ChatGPT/Codex profile here.",
-    ].join(" ");
-  }
+  const recoveryHint = formatAuthRecoveryHint({
+    provider,
+    authProfileId: profileId,
+    allowChatReauth: true,
+    includeCliAlternative: true,
+  });
 
   if (provider && profileId) {
-    return [
-      `🔐 Auth failed for ${profileId} on ${target}.`,
-      `Re-authenticate with ${formatCliCommand(`openclaw models auth login --provider ${loginProvider} --profile-id ${profileId}`)} and try again.`,
-    ].join(" ");
+    return [`🔐 Auth failed for ${profileId} on ${target}.`, recoveryHint].join(" ");
   }
   if (provider) {
-    return [
-      `🔐 Auth failed for ${target}.`,
-      `Re-authenticate with ${formatCliCommand(`openclaw models auth login --provider ${loginProvider}`)} and try again.`,
-    ].join(" ");
+    return [`🔐 Auth failed for ${target}.`, recoveryHint].join(" ");
   }
-  return "🔐 Authentication failed. Re-authenticate and try again.";
+  return `🔐 Authentication failed. ${recoveryHint}`;
 }
 /** Detect provider errors that require reasoning to stay enabled. */
 export function isReasoningConstraintErrorMessage(raw: string): boolean {

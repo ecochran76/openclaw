@@ -1,8 +1,8 @@
 /** Formats model-fallback notice state for UI/status messages and persisted transition tracking. */
 import { normalizeOptionalString } from "@openclaw/normalization-core/string-coerce";
+import { formatAuthRecoveryHint } from "../agents/auth-profiles/reauth-guidance.js";
 import { formatRawAssistantErrorForUi } from "../agents/embedded-agent-helpers.js";
 import { areRuntimeModelRefsEquivalent } from "../agents/model-runtime-aliases.js";
-import { formatCliCommand } from "../cli/command-format.js";
 import type { OpenClawConfig } from "../config/types.openclaw.js";
 import type { FallbackNoticeState } from "../status/fallback-notice-state.js";
 import { formatProviderModelRef } from "./model-runtime.js";
@@ -130,30 +130,21 @@ export function buildAuthFailureNotice(params: {
   const selected = formatProviderModelRef(params.selectedProvider, params.selectedModel);
   const active = formatProviderModelRef(params.activeProvider, params.activeModel);
   const profileId = params.authProfileId?.trim();
-  const loginProvider =
-    params.selectedProvider === "openai-codex" ? "openai" : params.selectedProvider;
-
-  if (params.selectedProvider === "openai" || params.selectedProvider === "openai-codex") {
-    const action = profileId
-      ? `Reply /reauth ${profileId} in this thread to refresh it here.`
-      : "Reply /reauth <profile-id> in this thread to refresh the affected profile here.";
-    if (selected === active) {
-      return `🔐 Auth failed for ${profileId ?? selected}. ${action}`;
-    }
-    return `🔐 Auth failed for ${profileId ?? selected}. Using ${active} for this turn. ${action}`;
+  const hasChatReauthProvider =
+    params.selectedProvider === "openai" || params.selectedProvider === "openai-codex";
+  if (!hasChatReauthProvider && !profileId) {
+    return null;
   }
+  const recoveryHint = formatAuthRecoveryHint({
+    provider: params.selectedProvider,
+    authProfileId: profileId,
+    allowChatReauth: true,
+  });
 
-  if (params.selectedProvider && profileId) {
-    const login = formatCliCommand(
-      `openclaw models auth login --provider ${loginProvider} --profile-id ${profileId}`,
-    );
-    if (selected === active) {
-      return `🔐 Auth failed for ${profileId}. Re-authenticate with ${login}.`;
-    }
-    return `🔐 Auth failed for ${profileId}. Using ${active} for this turn. Re-authenticate with ${login}.`;
+  if (selected === active) {
+    return `🔐 Auth failed for ${profileId ?? selected}. ${recoveryHint}`;
   }
-
-  return null;
+  return `🔐 Auth failed for ${profileId ?? selected}. Using ${active} for this turn. ${recoveryHint}`;
 }
 
 /** Builds the visible notice shown when runtime returns to the selected model. */
