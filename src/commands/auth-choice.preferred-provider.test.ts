@@ -91,6 +91,22 @@ describe("resolvePreferredProviderForAuthChoice", () => {
     expect(resolveManifestDeprecatedProviderAuthChoice).toHaveBeenCalledWith("claude-cli", { env });
   });
 
+  it("normalizes codex-cli through the provider-owned auth choice helper", async () => {
+    resolveProviderPluginChoice.mockReturnValue({
+      provider: { id: "openai", label: "OpenAI", auth: [] },
+      method: { id: "oauth", label: "ChatGPT OAuth", kind: "oauth" },
+    });
+
+    await expect(resolvePreferredProviderForAuthChoice({ choice: "codex-cli" })).resolves.toBe(
+      "openai",
+    );
+    expect(resolveProviderPluginChoice).toHaveBeenCalledWith(
+      expect.objectContaining({
+        choice: "openai",
+      }),
+    );
+  });
+
   it("uses manifest metadata for plugin-owned choices", async () => {
     resolveManifestProviderAuthChoice.mockReturnValue({
       pluginId: "chutes",

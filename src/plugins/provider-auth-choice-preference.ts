@@ -1,6 +1,9 @@
 /** Resolves preferred provider auth choices from config and plugin metadata. */
 import { normalizeLegacyOnboardAuthChoice } from "../commands/auth-choice-legacy.js";
 import type { OpenClawConfig } from "../config/types.openclaw.js";
+import {
+  resolveOpenAICodexPreferredProviderForAuthChoice,
+} from "./provider-openai-codex-auth-choice.js";
 import { resolveManifestProviderAuthChoice } from "./provider-auth-choices.js";
 
 function normalizeLegacyAuthChoice(choice: string, env?: NodeJS.ProcessEnv): string {
@@ -37,8 +40,8 @@ export async function resolvePreferredProviderForAuthChoice(params: {
     return pluginResolved.provider.id;
   }
 
-  if (choice === "custom-api-key") {
-    return "custom";
-  }
-  return undefined;
+  return (
+    resolveOpenAICodexPreferredProviderForAuthChoice(choice) ??
+    (choice === "custom-api-key" ? "custom" : undefined)
+  );
 }

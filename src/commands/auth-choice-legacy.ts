@@ -5,6 +5,11 @@ import {
   resolveManifestProviderAuthChoices,
 } from "../plugins/provider-auth-choices.js";
 import type { AuthChoice } from "./onboard-types.js";
+import {
+  isDeprecatedOpenAICodexAuthChoice,
+  normalizeOpenAICodexAuthChoice,
+  OPENAI_CODEX_LEGACY_AUTH_CHOICE,
+} from "../plugins/provider-openai-codex-auth-choice.js";
 
 const LEGACY_REPLACEMENT_AUTH_CHOICES = new Set(["claude-cli"]);
 
@@ -36,7 +41,11 @@ export function resolveLegacyAuthChoiceAliasesForCli(params?: {
     .flatMap((choice) => choice.deprecatedChoiceIds ?? [])
     .filter((choice): choice is AuthChoice => LEGACY_REPLACEMENT_AUTH_CHOICES.has(choice))
     .toSorted((left, right) => left.localeCompare(right));
-  return Array.from(new Set(manifestCliAliases));
+  const aliases: AuthChoice[] = ["setup-token", "oauth", ...manifestCliAliases];
+  if (!aliases.includes(OPENAI_CODEX_LEGACY_AUTH_CHOICE)) {
+    aliases.push(OPENAI_CODEX_LEGACY_AUTH_CHOICE);
+  }
+  return Array.from(new Set(aliases));
 }
 
 /** Map old onboard auth choices to their current provider-backed choices. */
@@ -52,6 +61,13 @@ export function normalizeLegacyOnboardAuthChoice(
     return "setup-token";
   }
   if (typeof authChoice === "string") {
+    if (authChoice === "claude-cli") {
+      return "anthropic-cli";
+    }
+    const normalizedOpenAICodex = normalizeOpenAICodexAuthChoice(authChoice);
+    if (normalizedOpenAICodex && normalizedOpenAICodex !== authChoice) {
+      return normalizedOpenAICodex as AuthChoice;
+    }
     const deprecatedChoice = resolveLegacyCliBackendChoice(authChoice, params);
     if (deprecatedChoice) {
       return deprecatedChoice.choiceId as AuthChoice;
@@ -70,7 +86,9 @@ export function isDeprecatedAuthChoice(
   },
 ): authChoice is AuthChoice {
   return (
-    typeof authChoice === "string" && Boolean(resolveLegacyCliBackendChoice(authChoice, params))
+    typeof authChoice === "string" &&
+    (isDeprecatedOpenAICodexAuthChoice(authChoice) ||
+      Boolean(resolveLegacyCliBackendChoice(authChoice, params)))
   );
 }
 
@@ -90,6 +108,13 @@ export function resolveDeprecatedAuthChoiceReplacement(
   | undefined {
   if (typeof authChoice !== "string") {
     return undefined;
+  }
+  const normalizedOpenAICodex = normalizeOpenAICodexAuthChoice(authChoice);
+  if (normalizedOpenAICodex && normalizedOpenAICodex !== authChoice) {
+    return {
+      normalized: normalizedOpenAICodex as AuthChoice,
+      message: `Auth choice "${authChoice}" is deprecated; using OpenAI Codex setup instead.`,
+    };
   }
   const deprecatedChoice = resolveLegacyCliBackendChoice(authChoice, params);
   if (!deprecatedChoice) {
