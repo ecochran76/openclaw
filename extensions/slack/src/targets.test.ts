@@ -51,6 +51,11 @@ describe("parseSlackTarget", () => {
       );
     }
   });
+
+  it("returns undefined for bare channel names", () => {
+    expect(parseSlackTarget("oc-gpod", { defaultKind: "channel" })).toBeUndefined();
+    expect(parseSlackTarget("general", { defaultKind: "channel" })).toBeUndefined();
+  });
 });
 
 describe("resolveSlackChannelId", () => {
@@ -67,6 +72,10 @@ describe("resolveSlackChannelId", () => {
 describe("normalizeSlackMessagingTarget", () => {
   it("defaults raw ids to channels", () => {
     expect(normalizeSlackMessagingTarget("C123")).toBe("channel:c123");
+  });
+
+  it("does not normalize bare channel names", () => {
+    expect(normalizeSlackMessagingTarget("oc-gpod")).toBeUndefined();
   });
 });
 

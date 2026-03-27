@@ -467,6 +467,12 @@ function resolveToken(params: {
 function parseRecipient(raw: string): SlackRecipient {
   const target = parseSlackTarget(raw);
   if (!target) {
+    const trimmed = raw.trim();
+    if (trimmed) {
+      throw new Error(
+        `Slack recipient must be a channel or user id. Bare channel names like "${trimmed}" are not supported; use channel:<id>, user:<id>, a raw Slack id, or <@id>.`,
+      );
+    }
     throw new Error("Recipient is required for Slack sends");
   }
   return { kind: target.kind, id: target.id };

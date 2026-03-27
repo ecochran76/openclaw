@@ -15,6 +15,8 @@ export type SlackTarget = MessagingTarget;
 
 export type SlackTargetParseOptions = MessagingTargetParseOptions;
 
+const SLACK_BARE_ID_PATTERN = /^[CUWGD][A-Z0-9]*\d[A-Z0-9]*$/i;
+
 export function parseSlackTarget(
   raw: string,
   options: SlackTargetParseOptions = {},
@@ -46,10 +48,12 @@ export function parseSlackTarget(
     });
     return buildMessagingTarget("channel", id, trimmed);
   }
-  if (options.defaultKind) {
-    return buildMessagingTarget(options.defaultKind, trimmed, trimmed);
+  // Bare Slack targets must already be native IDs. Friendly names should be
+  // resolved through directory lookup before they reach the explicit parser.
+  if (SLACK_BARE_ID_PATTERN.test(trimmed)) {
+    return buildMessagingTarget(options.defaultKind ?? "channel", trimmed, trimmed);
   }
-  return buildMessagingTarget("channel", trimmed, trimmed);
+  return undefined;
 }
 
 export function resolveSlackChannelId(raw: string): string {

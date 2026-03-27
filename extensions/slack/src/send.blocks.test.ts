@@ -236,6 +236,19 @@ describe("sendMessageSlack chunking", () => {
     expect(hasSlackThreadParticipation("default", "C123", "1781803536.235489")).toBe(true);
     expect(hasSlackThreadParticipation("default", "C123", "1781932168.648159")).toBe(false);
   });
+
+  it("rejects bare channel names before any Slack API call", async () => {
+    const client = createSlackSendTestClient();
+    await expect(
+      sendMessageSlack("oc-gpod", "hi", {
+        token: "xoxb-test",
+        client,
+      }),
+    ).rejects.toThrow(/bare channel names like "oc-gpod" are not supported/i);
+
+    expect(client.chat.postMessage).not.toHaveBeenCalled();
+    expect(client.conversations.open).not.toHaveBeenCalled();
+  });
 });
 
 describe("sendMessageSlack blocks", () => {
