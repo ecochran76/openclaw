@@ -754,7 +754,8 @@ export const testApi = {
 export { testApi as __test__ };
 
 function defaultRollingPathForToday(): string {
-  return rollingPathForDate(DEFAULT_LOG_DIR, new Date());
+  // Resolve lazily so circular imports cannot observe module-scoped constants before initialization.
+  return rollingPathForDate(resolveDefaultLogDir(), new Date());
 }
 
 function rollingPathForDate(dir: string, date: Date): string {

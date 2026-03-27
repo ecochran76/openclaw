@@ -6,7 +6,7 @@ import type { OpenClawConfig } from "../config/types.js";
 import { formatErrorMessage } from "../infra/errors.js";
 import { resolveAgentOutboundIdentity } from "../infra/outbound/identity.js";
 import { buildOutboundSessionContext } from "../infra/outbound/session-context.js";
-import { getChildLogger } from "../logging.js";
+import { getChildLogger } from "../logging/logger.js";
 import {
   resolveFailureDestination,
   type CronFailureDeliveryPlan,
@@ -30,7 +30,10 @@ export {
 };
 
 const FAILURE_NOTIFICATION_TIMEOUT_MS = 30_000;
-const cronDeliveryLogger = getChildLogger({ subsystem: "cron-delivery" });
+
+function getCronDeliveryLogger() {
+  return getChildLogger({ subsystem: "cron-delivery" });
+}
 
 /** Channel target metadata used for cron announcements and failure notifications. */
 export type CronAnnounceTarget = {
@@ -162,7 +165,7 @@ export async function sendFailureNotificationAnnounce(
 
   if (!delivery.ok) {
     // Failure alerts must not mask the original cron run failure.
-    cronDeliveryLogger.warn(
+    getCronDeliveryLogger().warn(
       { error: delivery.error.message },
       "cron: failed to resolve failure destination target",
     );
@@ -185,7 +188,7 @@ export async function sendFailureNotificationAnnounce(
       abortSignal: abortController.signal,
     });
   } catch (err) {
-    cronDeliveryLogger.warn(
+    getCronDeliveryLogger().warn(
       {
         err: formatErrorMessage(err),
         channel: delivery.resolvedTarget.channel,
