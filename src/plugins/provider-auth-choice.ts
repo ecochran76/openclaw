@@ -468,6 +468,8 @@ export async function applyAuthChoiceLoadedPluginProvider(
   }
 
   const configBeforeProviderAuth = nextConfig;
+  const requestedProfileIdInput =
+    typeof params.opts?.profileId === "string" ? params.opts.profileId : undefined;
   const applied = await runProviderPluginAuthMethod({
     config: nextConfig,
     env: params.env,
@@ -477,7 +479,10 @@ export async function applyAuthChoiceLoadedPluginProvider(
     agentDir: params.agentDir,
     agentId: params.agentId,
     workspaceDir,
-    requestedProfileId: normalizeRequestedProfileId(resolved.provider.id, params.opts?.profileId),
+    requestedProfileId:
+      typeof resolved.provider.id === "string"
+        ? normalizeRequestedProfileId(resolved.provider.id, requestedProfileIdInput)
+        : undefined,
     secretInputMode: params.opts?.secretInputMode,
     allowSecretRefPrompt: false,
     opts: params.opts,

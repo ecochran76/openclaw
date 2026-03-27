@@ -157,7 +157,9 @@ describe("applyNonInteractivePluginProviderChoice", () => {
     expect(providersInput.includeUntrustedWorkspacePlugins).toBe(false);
     expect(resolveProviderPluginChoice).toHaveBeenCalledOnce();
     expect(runNonInteractive).toHaveBeenCalledOnce();
-    expect(runNonInteractive.mock.calls[0]?.[0]?.profileId).toBeUndefined();
+    expect(runNonInteractive).not.toHaveBeenCalledWith(
+      expect.objectContaining({ profileId: expect.anything() }),
+    );
     expect(result).toEqual({ plugins: { allow: ["vllm"] } });
   });
 
