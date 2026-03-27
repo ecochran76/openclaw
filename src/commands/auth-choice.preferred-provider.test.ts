@@ -52,31 +52,28 @@ describe("resolvePreferredProviderForAuthChoice", () => {
   });
 
   it("normalizes legacy auth choices before plugin lookup", async () => {
-    resolveManifestDeprecatedProviderAuthChoice.mockReturnValue({
-      choiceId: "anthropic-cli",
-      choiceLabel: "Anthropic Claude CLI",
-    });
-    resolveManifestProviderAuthChoice.mockReturnValue({
-      pluginId: "anthropic",
-      providerId: "anthropic",
-      methodId: "cli",
-      choiceId: "anthropic-cli",
-      choiceLabel: "Anthropic Claude CLI",
+    resolveProviderPluginChoice.mockReturnValue({
+      provider: { id: "anthropic", label: "Anthropic", auth: [] },
+      method: { id: "anthropic-cli", label: "Anthropic CLI", kind: "oauth" },
     });
 
     await expect(resolvePreferredProviderForAuthChoice({ choice: "claude-cli" })).resolves.toBe(
       "anthropic",
     );
-    expect(resolveProviderPluginChoice).not.toHaveBeenCalled();
-    expect(resolvePluginProviders).not.toHaveBeenCalled();
+    expect(resolveProviderPluginChoice).toHaveBeenCalledWith(
+      expect.objectContaining({
+        choice: "anthropic-cli",
+      }),
+    );
+    expect(resolvePluginProviders).toHaveBeenCalledWith(
+      expect.objectContaining({
+        mode: "setup",
+      }),
+    );
   });
 
   it("passes explicit env through legacy auth normalization", async () => {
     const env = { OPENCLAW_AUTH_CHOICE_TEST: "1" } as NodeJS.ProcessEnv;
-    resolveManifestDeprecatedProviderAuthChoice.mockReturnValue({
-      choiceId: "anthropic-cli",
-      choiceLabel: "Anthropic Claude CLI",
-    });
     resolveManifestProviderAuthChoice.mockReturnValue({
       pluginId: "anthropic",
       providerId: "anthropic",
@@ -88,7 +85,11 @@ describe("resolvePreferredProviderForAuthChoice", () => {
     await expect(
       resolvePreferredProviderForAuthChoice({ choice: "claude-cli", env }),
     ).resolves.toBe("anthropic");
-    expect(resolveManifestDeprecatedProviderAuthChoice).toHaveBeenCalledWith("claude-cli", { env });
+    expect(resolveManifestProviderAuthChoice).toHaveBeenCalledWith(
+      "anthropic-cli",
+      expect.objectContaining({ choice: "claude-cli", env }),
+    );
+    expect(resolvePluginProviders).not.toHaveBeenCalled();
   });
 
   it("normalizes codex-cli through the provider-owned auth choice helper", async () => {
