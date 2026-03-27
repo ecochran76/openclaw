@@ -31,10 +31,13 @@ type ResolveAnnounceTargetDeps = {
   callGateway?: GatewayCaller;
 };
 
-export async function resolveAnnounceTarget(params: {
-  sessionKey: string;
-  displayKey: string;
-}, deps?: ResolveAnnounceTargetDeps): Promise<AnnounceTarget | null> {
+export async function resolveAnnounceTarget(
+  params: {
+    sessionKey: string;
+    displayKey: string;
+  },
+  deps?: ResolveAnnounceTargetDeps,
+): Promise<AnnounceTarget | null> {
   const gatewayCall = deps?.callGateway ?? sessionsAnnounceTargetDeps.callGateway;
   const parsed = resolveAnnounceTargetFromKey(params.sessionKey);
   const parsedDisplay = resolveAnnounceTargetFromKey(params.displayKey);
@@ -67,9 +70,16 @@ export async function resolveAnnounceTarget(params: {
       sessions.find((entry) => entry?.key === params.displayKey);
 
     const context = deliveryContextFromSession(match);
-    const threadId = normalizeOptionalStringifiedId(context?.threadId ?? fallbackThreadId);
-    if (context?.channel && context.to) {
-      return { channel: context.channel, to: context.to, accountId: context.accountId, threadId };
+    const origin =
+      match?.origin && typeof match.origin === "object"
+        ? (match.origin as Record<string, unknown>)
+        : undefined;
+    const threadId = normalizeOptionalStringifiedId(
+      context?.threadId ?? match?.lastThreadId ?? origin?.threadId ?? fallbackThreadId,
+    );
+    const to = context?.to ?? (typeof origin?.to === "string" ? origin.to : undefined);
+    if (context?.channel && to) {
+      return { channel: context.channel, to, accountId: context.accountId, threadId };
     }
   } catch {
     // ignore

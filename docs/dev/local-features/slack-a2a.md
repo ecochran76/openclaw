@@ -27,6 +27,10 @@ That makes this one of the highest-value local docs to maintain.
 - active local feature area
 - validated after the `v2026.3.13` repair rebase
 - especially sensitive to helper-vs-inline implementation drift
+- structured `permissionRequest` + pending approval records landed
+- Slack in-thread approve/deny buttons now handle config-fixable A2A permission misses
+- current approval flow patches config narrowly and tells the operator or agent to retry
+- later auto-resume work is still governed by [A2A Slack interactive approval plan](/dev/a2a-slack-interactive-approval-plan)
 
 ## Key components
 
@@ -81,11 +85,29 @@ Recommended focused checks:
 ```bash
 pnpm test -- src/agents/openclaw-tools.sessions.test.ts
 pnpm test -- src/gateway/server.sessions.gateway-server-sessions-a.test.ts
+pnpm test -- src/agents/a2a/permission-approval-action.test.ts
+pnpm test -- src/agents/pi-embedded-subscribe.handlers.tools.test.ts
+pnpm test -- src/auto-reply/reply/dispatch-stream-delivery.test.ts
+pnpm test -- extensions/slack/src/monitor/events/interactions.test.ts
 pnpm test -- src/commands/models/auth.test.ts
 pnpm test -- src/infra/provider-usage.auth.normalizes-keys.test.ts
 ```
 
 If ingress/relay changes touched docs or config schemas, inspect those diffs too.
+
+If you are touching the planned A2A permission-approval flow:
+
+- read [A2A Slack interactive approval plan](/dev/a2a-slack-interactive-approval-plan) first
+- keep Slack mirroring behavior unchanged unless the change is explicitly about mirrored formatting
+- validate denied A2A requests in Slack with both approve and deny outcomes before live patching
+
+Current operator path for live A2A permission misses:
+
+- confirm the approval prompt names the right requester, target, and missing gate
+- click `Approve` or `Deny` in the requester Slack thread
+- on approval, confirm the thread says which config path changed
+- retry the original `sessions_send` or related session tool call
+- if the thread reports the request is obsolete or expired, retry to mint a fresh approval instead of editing config blind
 
 ## User-visible failure symptoms
 

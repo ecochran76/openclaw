@@ -45,14 +45,23 @@ This file is the durable map for:
 ### 2. Slack / A2A
 
 - Doc: `docs/dev/local-features/slack-a2a.md`
+- Plan: `docs/dev/a2a-slack-interactive-approval-plan.md`
 - Scope:
   - `sessions_send` A2A behavior
   - ingress echo
   - nested relay guard
   - selector targeting / thread-aware targeting
   - relay delivery contract / dual-channel relay behavior
+  - Slack interactive approval flow for A2A permission misses
+- Current status:
+  - structured permission-request and pending-approval slices landed on `ec-main`
+  - Slack thread approve/deny flow now patches config narrowly and requires an explicit retry
 - Common validation:
   - `pnpm test -- src/agents/openclaw-tools.sessions.test.ts`
+  - `pnpm test -- src/agents/a2a/permission-approval-action.test.ts`
+  - `pnpm test -- src/agents/pi-embedded-subscribe.handlers.tools.test.ts`
+  - `pnpm test -- src/auto-reply/reply/dispatch-stream-delivery.test.ts`
+  - `pnpm test -- extensions/slack/src/monitor/events/interactions.test.ts`
   - `pnpm test -- src/gateway/server.sessions.gateway-server-sessions-a.test.ts`
 
 ### 3. Slack / agent responsiveness

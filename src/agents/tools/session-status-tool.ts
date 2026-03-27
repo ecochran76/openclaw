@@ -55,7 +55,7 @@ import {
   SESSION_STATUS_TOOL_DISPLAY_SUMMARY,
 } from "../tool-description-presets.js";
 import type { AnyAgentTool } from "./common.js";
-import { normalizeToolModelOverride, readStringParam } from "./common.js";
+import { jsonResult, normalizeToolModelOverride, readStringParam } from "./common.js";
 import {
   listImplicitDefaultDirectFallbackKeys,
   resolveImplicitCurrentSessionFallback,
@@ -63,15 +63,18 @@ import {
   resolveStoreScopedRequesterKey,
 } from "./session-status-session-resolve.js";
 import {
+  checkAgentToAgentAccess,
   createAgentToAgentPolicy,
   createSessionVisibilityGuard,
   resolveCurrentSessionClientAlias,
+  shouldResolveSessionIdInput,
+  type SessionAccessPermissionRequest,
   resolveEffectiveSessionToolsVisibility,
   resolveSandboxedSessionToolContext,
   resolveSessionReference,
   resolveVisibleSessionReference,
-  shouldResolveSessionIdInput,
 } from "./sessions-helpers.js";
+import { buildPendingSessionApprovalOutput } from "./sessions-pending-approvals.js";
 
 const SessionStatusToolSchema = Type.Object({
   sessionKey: Type.Optional(Type.String()),
@@ -492,35 +495,71 @@ export function createSessionStatusTool(opts?: {
         requestedKeyInput = requestedKeyRaw?.trim() ?? "";
       }
       const effectiveRequesterLookupKey = effectiveRequesterKey.trim();
-      let resolvedViaSessionId = false;
+      let resolvedTargetViaSessionId = false;
       let resolvedViaImplicitCurrentFallback = false;
       if (!requestedKeyInput) {
         throw new Error("sessionKey required");
       }
       requestedKeyRaw = requestedKeyInput;
-      const ensureAgentAccess = (targetAgentId: string) => {
-        if (targetAgentId === requesterAgentId) {
-          return;
+      const denyAccessResult = async (
+        access: {
+          status: "forbidden";
+          error: string;
+          permissionRequest?: SessionAccessPermissionRequest;
+        },
+        sessionKey?: string,
+      ) => {
+        const approvalOutput = await buildPendingSessionApprovalOutput({
+          permissionRequest: access.permissionRequest,
+          requesterSessionKey: opts?.agentSessionKey,
+          originalToolName: "session_status",
+          originalArgs: params,
+        });
+        return jsonResult({
+          status: access.status,
+          error: access.error,
+          sessionKey,
+          permissionRequest: access.permissionRequest,
+          ...approvalOutput,
+        });
+      };
+      const handleAccessDeny = async (
+        access: {
+          status: "forbidden";
+          error: string;
+          permissionRequest?: SessionAccessPermissionRequest;
+        },
+        sessionKey?: string,
+      ) => {
+        if (access.permissionRequest === undefined) {
+          throw new Error(access.error);
         }
-        // Gate cross-agent access behind tools.agentToAgent settings.
-        if (!a2aPolicy.enabled) {
-          throw new Error(
-            "Agent-to-agent status is disabled. Set tools.agentToAgent.enabled=true to allow cross-agent access.",
-          );
+        return await denyAccessResult(access, sessionKey);
+      };
+      const ensureAgentAccess = async (targetAgentId: string, sessionKey?: string) => {
+        const access = checkAgentToAgentAccess({
+          action: "status",
+          requesterAgentId,
+          targetAgentId,
+          a2aPolicy,
+        });
+        if (!access.allowed) {
+          return await denyAccessResult(access, sessionKey);
         }
-        if (!a2aPolicy.isAllowed(requesterAgentId, targetAgentId)) {
-          throw new Error("Agent-to-agent session status denied by tools.agentToAgent.allow.");
-        }
+        return undefined;
       };
 
       if (requestedKeyInput.startsWith("agent:") && !isSemanticCurrentRequest) {
         const requestedAgentId = resolveAgentIdFromSessionKey(requestedKeyInput);
-        ensureAgentAccess(requestedAgentId);
+        const denied = await ensureAgentAccess(requestedAgentId, requestedKeyRaw);
+        if (denied) {
+          return denied;
+        }
         const access = visibilityGuard.check(
           normalizeVisibilityTargetSessionKey(requestedKeyInput, requestedAgentId),
         );
         if (!access.allowed) {
-          throw new Error(access.error);
+          return await handleAccessDeny(access, requestedKeyRaw);
         }
       }
 
@@ -568,8 +607,14 @@ export function createSessionStatusTool(opts?: {
             throw new Error("Session status visibility is restricted to the current session tree.");
           }
           // If resolution points at another agent, enforce A2A policy before switching stores.
-          ensureAgentAccess(resolveAgentIdFromSessionKey(visibleSession.key));
-          resolvedViaSessionId = true;
+          const denied = await ensureAgentAccess(
+            resolveAgentIdFromSessionKey(visibleSession.key),
+            visibleSession.displayKey,
+          );
+          if (denied) {
+            return denied;
+          }
+          resolvedTargetViaSessionId = true;
           requestedKeyRaw = visibleSession.key;
           requestedKeyInput = requestedKeyRaw.trim();
           agentId = resolveAgentIdFromSessionKey(visibleSession.key);
@@ -661,18 +706,21 @@ export function createSessionStatusTool(opts?: {
         throw new Error(`Unknown ${kind}: ${requestedKeyInput}`);
       }
 
-      // Preserve caller-scoped raw-key/current lookups as "self" for visibility checks.
+      // Preserve caller-scoped raw-key/current lookups as "self" for visibility checks unless
+      // sandbox/session-id resolution requires checking the resolved target directly.
       const shouldTreatVisibilityTargetAsSelf =
         isSemanticCurrentRequest ||
-        resolvedViaImplicitCurrentFallback ||
-        (!resolvedViaSessionId &&
-          (requestedKeyInput === "current" || resolved.key === requestedKeyInput));
+        (!resolvedTargetViaSessionId &&
+          !(opts?.sandboxed === true && !isExplicitAgentKey) &&
+          (resolvedViaImplicitCurrentFallback ||
+            requestedKeyInput === "current" ||
+            resolved.key === requestedKeyInput));
       const visibilityTargetKey = shouldTreatVisibilityTargetAsSelf
         ? visibilityRequesterKey
         : normalizeVisibilityTargetSessionKey(resolved.key, agentId);
       const access = visibilityGuard.check(visibilityTargetKey);
       if (!access.allowed) {
-        throw new Error(access.error);
+        return await handleAccessDeny(access, resolved.key);
       }
 
       const configured = resolveDefaultModelForAgent({ cfg, agentId });

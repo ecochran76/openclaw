@@ -83,6 +83,41 @@ describe("createDispatchStreamDeliveryCoordinator", () => {
     expect(sendToolResult).toHaveBeenCalledWith(payload);
   });
 
+  it("preserves deterministic A2A approval tool payloads even when summaries are suppressed", async () => {
+    const observer = createObserver();
+    const sendToolResult = vi.fn(() => true);
+    const payload: ReplyPayload = {
+      text: "Permission required",
+      channelData: {
+        a2aApproval: {
+          approvalId: "approval-1",
+          requesterAgentId: "dev-agent",
+          targetAgentId: "gpod",
+          reason: "agent_to_agent_allow",
+          action: "send",
+        },
+      },
+    };
+    const coordinator = createDispatchStreamDeliveryCoordinator({
+      cfg: {} as never,
+      currentChannel: "slack",
+      accountId: "acc-1",
+      shouldSendToolSummaries: false,
+      observer,
+      applyTts: async (_kind, incoming) => incoming,
+      shouldRouteToOriginating: false,
+      sendPayloadAsync: async () => true,
+      dispatcher: {
+        sendToolResult,
+        sendBlockReply: vi.fn(() => true),
+      },
+    });
+
+    await coordinator.deliverToolResult(payload);
+
+    expect(sendToolResult).toHaveBeenCalledWith(payload);
+  });
+
   it("accumulates block text while ignoring reasoning and compaction notices", async () => {
     const observer = createObserver();
     const sendBlockReply = vi.fn(() => true);

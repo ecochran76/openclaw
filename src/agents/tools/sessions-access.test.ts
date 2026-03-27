@@ -277,8 +277,15 @@ describe("createSessionVisibilityGuard", () => {
     ).toEqual({
       allowed: false,
       status: "forbidden",
-      error:
-        "Session list visibility is restricted. Set tools.sessions.visibility=all and tools.agentToAgent.enabled=true to allow cross-agent access; use tools.agentToAgent.allow to restrict permitted agent pairs.",
+      error: expect.stringContaining(
+        "Session list visibility is restricted. Set tools.sessions.visibility=all",
+      ),
+      permissionRequest: expect.objectContaining({
+        action: "list",
+        reason: "session_visibility",
+        requesterAgentId: "main",
+        targetAgentId: "codex",
+      }),
     });
   });
 
@@ -339,8 +346,15 @@ describe("createSessionVisibilityGuard", () => {
     expect(guard.check("agent:codex:acp:child-1")).toEqual({
       allowed: false,
       status: "forbidden",
-      error:
-        "Session history visibility is restricted. Set tools.sessions.visibility=all and tools.agentToAgent.enabled=true to allow cross-agent access; use tools.agentToAgent.allow to restrict permitted agent pairs.",
+      error: expect.stringContaining(
+        "Session history visibility is restricted. Set tools.sessions.visibility=all",
+      ),
+      permissionRequest: expect.objectContaining({
+        action: "history",
+        reason: "session_visibility",
+        requesterAgentId: "main",
+        targetAgentId: "codex",
+      }),
     });
   });
 
@@ -438,7 +452,87 @@ describe("createSessionVisibilityGuard", () => {
       allowed: false,
       status: "forbidden",
       error:
-        "Agent-to-agent messaging is disabled. Set tools.agentToAgent.enabled=true to allow cross-agent sends.",
+        "Agent-to-agent messaging is disabled. Set tools.agentToAgent.enabled=true to allow cross-agent sends. Current pair: main -> ops. Ask the user whether to enable agent-to-agent access, then retry.",
+      permissionRequest: {
+        kind: "config_permission_request",
+        reason: "agent_to_agent_disabled",
+        action: "send",
+        requesterAgentId: "main",
+        targetAgentId: "ops",
+        retryable: true,
+        askUser:
+          "Allow agent-to-agent send for main -> ops? If yes, set tools.agentToAgent.enabled=true and retry.",
+        suggestedChanges: [{ path: "tools.agentToAgent.enabled", value: true }],
+      },
+    });
+  });
+
+  it("returns an allowlist permission request when cross-agent send misses allow entries", async () => {
+    const guard = await createSessionVisibilityGuard({
+      action: "send",
+      requesterSessionKey: "agent:main:main",
+      visibility: "all",
+      a2aPolicy: createAgentToAgentPolicy({
+        tools: {
+          agentToAgent: {
+            enabled: true,
+            allow: ["ops"],
+          },
+        },
+      } as unknown as OpenClawConfig),
+    });
+
+    expect(guard.check("agent:ops:main")).toEqual({
+      allowed: false,
+      status: "forbidden",
+      error:
+        "Agent-to-agent messaging denied by tools.agentToAgent.allow. Missing allow entries: main. Current pair: main -> ops. Ask the user whether to allow this agent pair, then retry.",
+      permissionRequest: {
+        kind: "config_permission_request",
+        reason: "agent_to_agent_allow",
+        action: "send",
+        requesterAgentId: "main",
+        targetAgentId: "ops",
+        retryable: true,
+        askUser:
+          "Allow agent-to-agent send for main -> ops? If yes, add main to tools.agentToAgent.allow and retry.",
+        suggestedChanges: [{ path: "tools.agentToAgent.allow", value: ["ops", "main"] }],
+        missingAllowAgents: ["main"],
+      },
+    });
+  });
+
+  it("returns a visibility permission request when cross-agent access is blocked by sessions visibility", async () => {
+    const guard = await createSessionVisibilityGuard({
+      action: "history",
+      requesterSessionKey: "agent:main:main",
+      visibility: "tree",
+      a2aPolicy: createAgentToAgentPolicy({
+        tools: {
+          agentToAgent: {
+            enabled: true,
+            allow: ["*"],
+          },
+        },
+      } as unknown as OpenClawConfig),
+    });
+
+    expect(guard.check("agent:ops:main")).toEqual({
+      allowed: false,
+      status: "forbidden",
+      error:
+        "Session history visibility is restricted. Set tools.sessions.visibility=all to allow cross-agent access. Current pair: main -> ops. Ask the user whether to allow cross-agent session access, then retry.",
+      permissionRequest: {
+        kind: "config_permission_request",
+        reason: "session_visibility",
+        action: "history",
+        requesterAgentId: "main",
+        targetAgentId: "ops",
+        retryable: true,
+        askUser:
+          "Allow cross-agent session history for main -> ops? If yes, set tools.sessions.visibility=all and retry.",
+        suggestedChanges: [{ path: "tools.sessions.visibility", value: "all" }],
+      },
     });
   });
 

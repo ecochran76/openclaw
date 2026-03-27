@@ -40,6 +40,7 @@ import {
   consumeStructuredReplaySafeToolCall,
 } from "./agent-tools.before-tool-call.state.js";
 import { REQUIRED_PARAM_GROUPS, type RequiredParamGroup } from "./agent-tools.params.js";
+import type { SessionAccessPermissionRequest } from "./tools/sessions-access.js";
 import type { ApplyPatchSummary } from "./apply-patch.js";
 import type { ExecToolDetails } from "./bash-tools.exec-types.js";
 import { sanitizeForConsole } from "./console-sanitize.js";
@@ -83,6 +84,7 @@ import { normalizeToolName } from "./tool-policy.js";
 import { readToolResultDetails } from "./tool-result-error.js";
 
 type ExecApprovalReplyModule = typeof import("../infra/exec-approval-reply.js");
+type A2APermissionApprovalReplyModule = typeof import("./a2a/permission-approval-reply.js");
 type HookRunnerGlobalModule = typeof import("../plugins/hook-runner-global.js");
 type ChannelToolProgress = {
   text: string;
@@ -91,6 +93,10 @@ type ChannelToolProgress = {
 const execApprovalReplyModuleLoader = createLazyImportLoader<ExecApprovalReplyModule>(
   () => import("../infra/exec-approval-reply.js"),
 );
+const a2aPermissionApprovalReplyModuleLoader =
+  createLazyImportLoader<A2APermissionApprovalReplyModule>(
+    () => import("./a2a/permission-approval-reply.js"),
+  );
 const hookRunnerGlobalModuleLoader = createLazyImportLoader<HookRunnerGlobalModule>(
   () => import("../plugins/hook-runner-global.js"),
 );
@@ -117,6 +123,10 @@ function isMiddlewareToolResultError(result: unknown): boolean {
 
 function loadExecApprovalReply(): Promise<ExecApprovalReplyModule> {
   return execApprovalReplyModuleLoader.load();
+}
+
+function loadA2APermissionApprovalReply(): Promise<A2APermissionApprovalReplyModule> {
+  return a2aPermissionApprovalReplyModuleLoader.load();
 }
 
 function loadHookRunnerGlobal(): Promise<HookRunnerGlobalModule> {
@@ -659,6 +669,62 @@ function readExecApprovalUnavailableDetails(result: unknown): {
   };
 }
 
+function isSessionAccessPermissionRequest(value: unknown): value is SessionAccessPermissionRequest {
+  if (!value || typeof value !== "object" || Array.isArray(value)) {
+    return false;
+  }
+  const record = value as Record<string, unknown>;
+  return (
+    record.kind === "config_permission_request" &&
+    (record.reason === "agent_to_agent_disabled" ||
+      record.reason === "agent_to_agent_allow" ||
+      record.reason === "session_visibility") &&
+    (record.action === "history" ||
+      record.action === "send" ||
+      record.action === "list" ||
+      record.action === "status") &&
+    typeof record.requesterAgentId === "string" &&
+    typeof record.targetAgentId === "string" &&
+    record.retryable === true &&
+    typeof record.askUser === "string" &&
+    Array.isArray(record.suggestedChanges)
+  );
+}
+
+function readA2APermissionApprovalPendingDetails(result: unknown): {
+  approvalId: string;
+  permissionRequest: SessionAccessPermissionRequest;
+  expiresAt?: number;
+} | null {
+  if (!result || typeof result !== "object") {
+    return null;
+  }
+  const outer = result as Record<string, unknown>;
+  const details =
+    outer.details && typeof outer.details === "object" && !Array.isArray(outer.details)
+      ? (outer.details as Record<string, unknown>)
+      : outer;
+  const permissionRequest = details.permissionRequest;
+  const pendingApproval = details.pendingApproval;
+  if (!isSessionAccessPermissionRequest(permissionRequest)) {
+    return null;
+  }
+  if (!pendingApproval || typeof pendingApproval !== "object" || Array.isArray(pendingApproval)) {
+    return null;
+  }
+  const approvalId = readStringValue((pendingApproval as Record<string, unknown>).approvalId);
+  if (!approvalId) {
+    return null;
+  }
+  const rawExpiresAt = (pendingApproval as Record<string, unknown>).expiresAt;
+  return {
+    approvalId,
+    permissionRequest,
+    expiresAt:
+      typeof rawExpiresAt === "number" && Number.isFinite(rawExpiresAt) ? rawExpiresAt : undefined,
+  };
+}
+
 async function emitToolResultOutput(params: {
   ctx: ToolHandlerContext;
   toolName: string;
@@ -725,6 +791,32 @@ async function emitToolResultOutput(params: {
           channelLabel: approvalUnavailable.channelLabel,
           accountId: approvalUnavailable.accountId,
           sentApproverDms: approvalUnavailable.sentApproverDms,
+        }),
+      );
+      ctx.state.deterministicApprovalPromptSent = true;
+    } catch {
+      ctx.state.deterministicApprovalPromptSent = false;
+    } finally {
+      ctx.state.deterministicApprovalPromptPending = false;
+    }
+    return;
+  }
+
+  const a2aApprovalPending = readA2APermissionApprovalPendingDetails(result);
+  if (!isToolError && a2aApprovalPending) {
+    if (!ctx.params.onToolResult) {
+      return;
+    }
+    ctx.state.deterministicApprovalPromptPending = true;
+    try {
+      const { buildA2APermissionApprovalPendingReplyPayload } =
+        await loadA2APermissionApprovalReply();
+      await ctx.params.onToolResult(
+        buildA2APermissionApprovalPendingReplyPayload({
+          approvalId: a2aApprovalPending.approvalId,
+          permissionRequest: a2aApprovalPending.permissionRequest,
+          expiresAt: a2aApprovalPending.expiresAt,
+          sessionKey: ctx.params.sessionKey,
         }),
       );
       ctx.state.deterministicApprovalPromptSent = true;

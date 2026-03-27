@@ -1,4 +1,5 @@
 import { describe, expect, it, vi } from "vitest";
+import type { CallGatewayOptions } from "../../gateway/call.js";
 import { runPingPongLoop } from "./ping-pong-loop.js";
 
 describe("ping-pong-loop", () => {
@@ -13,6 +14,7 @@ describe("ping-pong-loop", () => {
         targetChannel: "discord",
         targetSessionKey: "agent:target:main",
         displayKey: "agent:target:main",
+        announceTimeoutMs: 1_000,
         maxPingPongTurns: 0,
       },
       { runAgentStep, callGateway },
@@ -69,7 +71,11 @@ describe("ping-pong-loop", () => {
 
   it("mirrors reply turns when relay mirrorTurns is all", async () => {
     const runAgentStep = vi.fn().mockResolvedValueOnce("pong-1");
-    const callGateway = vi.fn(async () => ({ messageId: "m-1" }));
+    const callGatewayMock = vi.fn();
+    const callGateway = async <T = Record<string, unknown>>(request: CallGatewayOptions) => {
+      callGatewayMock(request);
+      return { messageId: "m-1" } as T;
+    };
 
     const result = await runPingPongLoop(
       {
@@ -108,7 +114,7 @@ describe("ping-pong-loop", () => {
         to: "group:target",
       }),
     ]);
-    expect(callGateway).toHaveBeenCalledWith(
+    expect(callGatewayMock).toHaveBeenCalledWith(
       expect.objectContaining({
         method: "send",
       }),

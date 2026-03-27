@@ -4,12 +4,14 @@
  * Keeps list/send/status tools aligned on rows, visibility context, and compact kind/channel labels.
  */
 export {
+  checkAgentToAgentAccess,
   createAgentToAgentPolicy,
   createSessionVisibilityGuard,
   createSessionVisibilityRowChecker,
   resolveEffectiveSessionToolsVisibility,
   resolveSandboxedSessionToolContext,
 } from "./sessions-access.js";
+export type { SessionAccessPermissionRequest } from "./sessions-access.js";
 import { resolveSandboxedSessionToolContext } from "./sessions-access.js";
 export {
   resolveCurrentSessionClientAlias,

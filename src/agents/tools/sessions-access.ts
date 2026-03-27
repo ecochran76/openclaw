@@ -10,10 +10,21 @@ import { isSubagentSessionKey } from "../../routing/session-key.js";
 import { resolveInternalSessionKey, resolveMainSessionAlias } from "./sessions-resolution.js";
 
 export {
+  checkAgentToAgentAccess,
   createAgentToAgentPolicy,
   createSessionVisibilityGuard,
   createSessionVisibilityRowChecker,
   resolveEffectiveSessionToolsVisibility,
+  resolveSandboxSessionToolsVisibility,
+  resolveSessionToolsVisibility,
+} from "../../plugin-sdk/session-visibility.js";
+
+export type {
+  AgentToAgentPolicy,
+  SessionAccessAction,
+  SessionAccessPermissionRequest,
+  SessionAccessResult,
+  SessionToolsVisibility,
 } from "../../plugin-sdk/session-visibility.js";
 
 /** Resolves the requester context used to filter sandboxed session-tool access. */

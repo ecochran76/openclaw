@@ -1,4 +1,5 @@
 import { describe, expect, it, vi } from "vitest";
+import type { CallGatewayOptions } from "../../gateway/call.js";
 import { deliverAnnounceStep } from "./announce-delivery.js";
 
 describe("announce-delivery", () => {
@@ -37,7 +38,11 @@ describe("announce-delivery", () => {
 
   it("sends the announce reply when a target exists", async () => {
     const runAgentStep = vi.fn(async () => "announce payload");
-    const callGateway = vi.fn(async () => ({ messageId: "m-1" }));
+    const callGatewayMock = vi.fn();
+    const callGateway = async <T = Record<string, unknown>>(request: CallGatewayOptions) => {
+      callGatewayMock(request);
+      return { messageId: "m-1" } as T;
+    };
 
     const result = await deliverAnnounceStep(
       {
@@ -73,7 +78,7 @@ describe("announce-delivery", () => {
       messageId: "m-1",
     });
     expect(runAgentStep).toHaveBeenCalledOnce();
-    expect(callGateway).toHaveBeenCalledWith({
+    expect(callGatewayMock).toHaveBeenCalledWith({
       method: "send",
       params: {
         to: "group:dev",

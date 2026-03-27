@@ -1,4 +1,5 @@
 import { resolveSendableOutboundReplyParts } from "openclaw/plugin-sdk/reply-payload";
+import { getA2APermissionApprovalReplyMetadata } from "../../agents/a2a/permission-approval-reply.js";
 import { shouldSuppressLocalExecApprovalPrompt } from "../../channels/plugins/exec-approval-local.js";
 import type { OpenClawConfig } from "../../config/config.js";
 import { normalizeMessageChannel } from "../../utils/message-channel.js";
@@ -53,6 +54,9 @@ export function createDispatchStreamDeliveryCoordinator(params: {
         ? payload.channelData.execApproval
         : undefined;
     if (execApproval && typeof execApproval === "object" && !Array.isArray(execApproval)) {
+      return payload;
+    }
+    if (getA2APermissionApprovalReplyMetadata(payload) !== null) {
       return payload;
     }
     const hasMedia = resolveSendableOutboundReplyParts(payload).hasMedia;

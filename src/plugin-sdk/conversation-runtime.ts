@@ -95,6 +95,12 @@ export { resolvePairingIdLabel } from "../pairing/pairing-labels.js";
 export * from "../pairing/pairing-messages.js";
 export * from "../pairing/pairing-store.js";
 export {
+  buildA2APermissionApprovalResolvedText,
+  resolvePendingA2APermissionApproval,
+  type ResolvePendingA2APermissionApprovalResult,
+} from "../agents/a2a/permission-approval-action.js";
+export { parseA2APermissionApprovalCustomId } from "../agents/a2a/permission-approval-reply.js";
+export {
   buildPluginBindingApprovalCustomId,
   buildPluginBindingDeclinedText,
   buildPluginBindingErrorText,
@@ -111,4 +117,8 @@ export {
   resolvePluginConversationBindingApproval,
   toPluginConversationBinding,
 } from "../plugins/conversation-binding.js";
+export type {
+  A2APermissionApprovalAction,
+  A2APermissionApprovalDecision,
+} from "../agents/a2a/permission-approval-reply.js";
 export { resolvePinnedMainDmOwnerFromAllowlist } from "./channel-access-compat.js";

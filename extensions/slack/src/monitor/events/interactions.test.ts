@@ -19,6 +19,10 @@ const dispatchPluginInteractiveHandlerMock = vi.hoisted(() =>
 );
 const resolvePluginConversationBindingApprovalMock = vi.hoisted(() => vi.fn());
 const buildPluginBindingResolvedTextMock = vi.hoisted(() => vi.fn(() => "Binding updated."));
+const resolvePendingA2APermissionApprovalMock = vi.hoisted(() => vi.fn());
+const buildA2APermissionApprovalResolvedTextMock = vi.hoisted(() =>
+  vi.fn(() => "A2A permission updated."),
+);
 const resolveApprovalOverGatewayMock = vi.hoisted(() =>
   vi.fn<(arg: unknown) => Promise<void>>(async () => undefined),
 );
@@ -113,11 +117,44 @@ vi.mock("../conversation.runtime.js", () => {
       decision,
     };
   };
+  const parseA2APermissionApprovalCustomId = (value: string) => {
+    const prefix = "a2aapproval:";
+    const trimmed = value.trim();
+    if (!trimmed.startsWith(prefix)) {
+      return null;
+    }
+    const body = trimmed.slice(prefix.length);
+    const separator = body.lastIndexOf(":");
+    if (separator <= 0 || separator === body.length - 1) {
+      return null;
+    }
+    const decisionCode = body.slice(separator + 1).trim();
+    const decision =
+      decisionCode === "a" ? "approve" : decisionCode === "d" ? "deny" : null;
+    if (!decision) {
+      return null;
+    }
+    return {
+      approvalId: decodeURIComponent(body.slice(0, separator).trim()),
+      decision,
+    };
+  };
 
   return {
+    buildA2APermissionApprovalResolvedText: (...args: unknown[]) =>
+      (buildA2APermissionApprovalResolvedTextMock as (...innerArgs: unknown[]) => string)(
+        ...args,
+      ),
     buildPluginBindingResolvedText: (...args: unknown[]) =>
       (buildPluginBindingResolvedTextMock as (...innerArgs: unknown[]) => string)(...args),
+    parseA2APermissionApprovalCustomId,
     parsePluginBindingApprovalCustomId,
+    resolvePendingA2APermissionApproval: (...args: unknown[]) =>
+      (
+        resolvePendingA2APermissionApprovalMock as (
+          ...innerArgs: unknown[]
+        ) => Promise<unknown>
+      )(...args),
     resolvePluginConversationBindingApproval: (...args: unknown[]) =>
       (
         resolvePluginConversationBindingApprovalMock as (
@@ -403,6 +440,10 @@ describe("registerSlackInteractionEvents", () => {
     resolvePluginConversationBindingApprovalMock.mockResolvedValue({ status: "expired" });
     buildPluginBindingResolvedTextMock.mockClear();
     buildPluginBindingResolvedTextMock.mockReturnValue("Binding updated.");
+    resolvePendingA2APermissionApprovalMock.mockClear();
+    resolvePendingA2APermissionApprovalMock.mockResolvedValue({ status: "not-found" });
+    buildA2APermissionApprovalResolvedTextMock.mockClear();
+    buildA2APermissionApprovalResolvedTextMock.mockReturnValue("A2A permission updated.");
     resolveApprovalOverGatewayMock.mockClear();
     resolveApprovalOverGatewayMock.mockResolvedValue(undefined);
     dispatchPluginInteractiveHandlerMock.mockResolvedValue({
@@ -1101,6 +1142,75 @@ describe("registerSlackInteractionEvents", () => {
     });
     expect(respond).toHaveBeenCalledWith({
       text: "Binding updated.",
+      response_type: "ephemeral",
+    });
+    expect(enqueueSystemEventMock).not.toHaveBeenCalled();
+  });
+
+  it("resolves A2A approvals from shared interactive Slack actions", async () => {
+    resolvePendingA2APermissionApprovalMock.mockResolvedValueOnce({
+      status: "approved",
+      record: {
+        requesterAgentId: "dev-agent",
+        targetAgentId: "gpod",
+      },
+      changedPaths: ["tools.agentToAgent.allow"],
+    });
+    buildA2APermissionApprovalResolvedTextMock.mockReturnValueOnce(
+      "Permission approved for `dev-agent -> gpod`.",
+    );
+    const { ctx, app, getHandler } = createContext();
+    registerSlackInteractionEvents({ ctx: ctx as never });
+
+    const handler = getHandler();
+    expect(handler).toBeTruthy();
+
+    const ack = vi.fn().mockResolvedValue(undefined);
+    const respond = vi.fn().mockResolvedValue(undefined);
+    await handler!({
+      ack,
+      respond,
+      body: {
+        user: { id: "U123" },
+        channel: { id: "C1" },
+        container: { channel_id: "C1", message_ts: "200.300", thread_ts: "200.100" },
+        message: {
+          ts: "200.300",
+          text: "Approve this A2A request?",
+          blocks: [
+            {
+              type: "actions",
+              block_id: "a2a_actions",
+              elements: [{ type: "button", action_id: "openclaw:reply_button" }],
+            },
+          ],
+        },
+      },
+      action: {
+        type: "button",
+        action_id: "openclaw:reply_button",
+        block_id: "a2a_actions",
+        value: "a2aapproval:approval-123:a",
+        text: { type: "plain_text", text: "Approve" },
+      },
+    });
+
+    expect(ack).toHaveBeenCalled();
+    expect(resolvePendingA2APermissionApprovalMock).toHaveBeenCalledWith({
+      approvalId: "approval-123",
+      decision: "approve",
+      actorId: "U123",
+    });
+    expect(dispatchPluginInteractiveHandlerMock).not.toHaveBeenCalled();
+    expect(app.client.chat.update).toHaveBeenCalledWith(
+      expect.objectContaining({
+        channel: "C1",
+        ts: "200.300",
+        text: "Permission approved for `dev-agent -> gpod`.",
+      }),
+    );
+    expect(respond).toHaveBeenCalledWith({
+      text: "Permission approved for `dev-agent -> gpod`.",
       response_type: "ephemeral",
     });
     expect(enqueueSystemEventMock).not.toHaveBeenCalled();

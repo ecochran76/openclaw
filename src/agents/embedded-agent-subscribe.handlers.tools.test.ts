@@ -55,6 +55,9 @@ function createTestContext(): {
       onAgentEvent,
       onExecutionPhase,
       onToolResult: undefined,
+      sessionKey: "agent:main:slack:channel:C1:thread:100.100",
+      sessionId: "session-test",
+      agentId: "main",
     },
     flushBlockReplyBuffer: vi.fn(),
     hookRunner: undefined,
@@ -2101,6 +2104,142 @@ describe("handleToolExecutionEnd derived tool events", () => {
       deleted: ["c.ts"],
       summary: "1 added, 1 modified, 1 deleted",
     });
+  });
+});
+
+describe("handleToolExecutionEnd A2A approval prompts", () => {
+  it("emits a deterministic Slack approval payload for config-fixable A2A denials", async () => {
+    const { ctx } = createTestContext();
+    const onToolResult = vi.fn();
+    ctx.params.onToolResult = onToolResult;
+
+    await handleToolExecutionEnd(
+      ctx as never,
+      {
+        type: "tool_execution_end",
+        toolName: "sessions_send",
+        toolCallId: "tool-a2a-approval",
+        isError: false,
+        result: {
+          details: {
+            status: "forbidden",
+            permissionRequest: {
+              kind: "config_permission_request",
+              reason: "agent_to_agent_allow",
+              action: "send",
+              requesterAgentId: "dev-agent",
+              targetAgentId: "gpod",
+              retryable: true,
+              askUser: "Allow agent-to-agent send for dev-agent -> gpod?",
+              missingAllowAgents: ["dev-agent"],
+              suggestedChanges: [
+                {
+                  path: "tools.agentToAgent.allow",
+                  value: ["gpod", "dev-agent"],
+                },
+              ],
+            },
+            pendingApproval: {
+              approvalId: "approval-123",
+              state: "pending",
+              expiresAt: 1_800_000_000_000,
+            },
+          },
+        },
+      } as never,
+    );
+
+    expect(onToolResult).toHaveBeenCalledWith(
+      expect.objectContaining({
+        text: expect.stringContaining(
+          "`dev-agent -> gpod` is blocked by `tools.agentToAgent.allow`",
+        ),
+        interactive: {
+          blocks: expect.arrayContaining([
+            expect.objectContaining({ type: "text" }),
+            expect.objectContaining({
+              type: "buttons",
+              buttons: expect.arrayContaining([
+                expect.objectContaining({
+                  label: "Approve",
+                  value: "a2aapproval:approval-123:a",
+                }),
+                expect.objectContaining({
+                  label: "Deny",
+                  value: "a2aapproval:approval-123:d",
+                }),
+              ]),
+            }),
+          ]),
+        },
+        channelData: {
+          a2aApproval: {
+            approvalId: "approval-123",
+            requesterAgentId: "dev-agent",
+            targetAgentId: "gpod",
+            reason: "agent_to_agent_allow",
+            action: "send",
+            expiresAt: 1_800_000_000_000,
+          },
+        },
+      }),
+    );
+    expect(ctx.state.deterministicApprovalPromptSent).toBe(true);
+  });
+
+  it("falls back to plain text when the session is not Slack-scoped", async () => {
+    const { ctx } = createTestContext();
+    ctx.params.sessionKey = "agent:main:telegram:chat:123";
+    const onToolResult = vi.fn();
+    ctx.params.onToolResult = onToolResult;
+
+    await handleToolExecutionEnd(
+      ctx as never,
+      {
+        type: "tool_execution_end",
+        toolName: "session_status",
+        toolCallId: "tool-a2a-approval-plain",
+        isError: false,
+        result: {
+          details: {
+            status: "forbidden",
+            permissionRequest: {
+              kind: "config_permission_request",
+              reason: "agent_to_agent_disabled",
+              action: "status",
+              requesterAgentId: "dev-agent",
+              targetAgentId: "gpod",
+              retryable: true,
+              askUser: "Allow agent-to-agent status for dev-agent -> gpod?",
+              suggestedChanges: [
+                {
+                  path: "tools.agentToAgent.enabled",
+                  value: true,
+                },
+              ],
+            },
+            pendingApproval: {
+              approvalId: "approval-456",
+              state: "pending",
+            },
+          },
+        },
+      } as never,
+    );
+
+    expect(onToolResult).toHaveBeenCalledWith(
+      expect.objectContaining({
+        text: expect.stringContaining("Approve the narrow config change, then retry the request."),
+        interactive: undefined,
+        channelData: {
+          a2aApproval: expect.objectContaining({
+            approvalId: "approval-456",
+            reason: "agent_to_agent_disabled",
+          }),
+        },
+      }),
+    );
+    expect(ctx.state.deterministicApprovalPromptSent).toBe(true);
   });
 });
 
