@@ -7,7 +7,7 @@ import { afterAll, beforeAll, beforeEach, describe, expect, it, vi } from "vites
 import type { MsgContext } from "../auto-reply/templating.js";
 import type { OpenClawConfig } from "../config/types.js";
 import { resolvePreferredOpenClawTmpDir } from "../infra/tmp-openclaw-dir.js";
-import { withEnvAsync } from "../test-utils/env.js";
+import { createPathResolutionEnv, withEnvAsync } from "../test-utils/env.js";
 import { CLI_OUTPUT_MAX_BUFFER } from "./defaults.constants.js";
 import { createSafeAudioFixtureBuffer } from "./runner.test-utils.js";
 import type { MediaUnderstandingProvider } from "./types.js";
@@ -917,6 +917,86 @@ describe("applyMediaUnderstanding", () => {
     expect(args.slice(5, 7)).toEqual(["-np", "-nt"]);
     expect(String(args[7]).endsWith("telegram-voice.wav")).toBe(true);
     expectCliRunOptions(options);
+  });
+
+  it("auto-detects faster-whisper from the managed skills directory", async () => {
+    const homeDir = await createTempMediaDir();
+    const skillScriptDir = path.join(homeDir, ".openclaw", "skills", "faster-whisper", "scripts");
+    await fs.mkdir(skillScriptDir, { recursive: true });
+    const transcribePath = await createMockExecutable(skillScriptDir, "transcribe");
+
+    const { ctx, cfg } = await setupAudioAutoDetectCase("faster whisper ok\n");
+    const resolvedEnv = createPathResolutionEnv(homeDir, {
+      PATH: "",
+      SHERPA_ONNX_MODEL_DIR: undefined,
+      WHISPER_CPP_MODEL: undefined,
+      OPENAI_API_KEY: undefined,
+      GROQ_API_KEY: undefined,
+      DEEPGRAM_API_KEY: undefined,
+      GEMINI_API_KEY: undefined,
+      GOOGLE_API_KEY: undefined,
+      MISTRAL_API_KEY: undefined,
+    });
+
+    await withEnvAsync(
+      {
+        HOME: resolvedEnv.HOME,
+        USERPROFILE: resolvedEnv.USERPROFILE,
+        HOMEDRIVE: resolvedEnv.HOMEDRIVE,
+        HOMEPATH: resolvedEnv.HOMEPATH,
+        OPENCLAW_HOME: resolvedEnv.OPENCLAW_HOME,
+        OPENCLAW_STATE_DIR: resolvedEnv.OPENCLAW_STATE_DIR,
+        OPENCLAW_BUNDLED_PLUGINS_DIR: resolvedEnv.OPENCLAW_BUNDLED_PLUGINS_DIR,
+        PATH: resolvedEnv.PATH,
+        SHERPA_ONNX_MODEL_DIR: resolvedEnv.SHERPA_ONNX_MODEL_DIR,
+        WHISPER_CPP_MODEL: resolvedEnv.WHISPER_CPP_MODEL,
+        OPENAI_API_KEY: resolvedEnv.OPENAI_API_KEY,
+        GROQ_API_KEY: resolvedEnv.GROQ_API_KEY,
+        DEEPGRAM_API_KEY: resolvedEnv.DEEPGRAM_API_KEY,
+        GEMINI_API_KEY: resolvedEnv.GEMINI_API_KEY,
+        GOOGLE_API_KEY: resolvedEnv.GOOGLE_API_KEY,
+        MISTRAL_API_KEY: resolvedEnv.MISTRAL_API_KEY,
+        OPENCLAW_AGENT_DIR: undefined,
+        PI_CODING_AGENT_DIR: undefined,
+        OPENCLAW_FASTER_WHISPER_COMMAND: undefined,
+      },
+      async () => {
+        const result = await applyMediaUnderstanding({ ctx, cfg });
+        expect(result.appliedAudio).toBe(true);
+      },
+    );
+
+    expect(ctx.Transcript).toBe("faster whisper ok");
+    expect(mockedRunExec).toHaveBeenCalledWith(
+      transcribePath,
+      ["--quiet", "--format", "text", expect.any(String)],
+      expect.any(Object),
+    );
+  });
+
+  it("honors OPENCLAW_FASTER_WHISPER_COMMAND for audio auto-detect", async () => {
+    const binDir = await createTempMediaDir();
+    const transcribePath = await createMockExecutable(binDir, "my-fw-wrapper");
+
+    const { ctx, cfg } = await setupAudioAutoDetectCase("faster whisper override\n");
+
+    await withMediaAutoDetectEnv(
+      {
+        PATH: "",
+        OPENCLAW_FASTER_WHISPER_COMMAND: transcribePath,
+      },
+      async () => {
+        const result = await applyMediaUnderstanding({ ctx, cfg });
+        expect(result.appliedAudio).toBe(true);
+      },
+    );
+
+    expect(ctx.Transcript).toBe("faster whisper override");
+    expect(mockedRunExec).toHaveBeenCalledWith(
+      transcribePath,
+      ["--quiet", "--format", "text", expect.any(String)],
+      expect.any(Object),
+    );
   });
 
   it("skips audio auto-detect when no supported binaries or provider keys are available", async () => {

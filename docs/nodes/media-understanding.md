@@ -204,6 +204,7 @@ If `tools.media.<capability>.enabled` is **not** set to `false` and you haven't 
     Local CLIs (if installed):
 
     - `sherpa-onnx-offline` (requires `SHERPA_ONNX_MODEL_DIR` with encoder/decoder/joiner/tokens)
+    - `faster-whisper` skill wrapper (`skills/faster-whisper/scripts/transcribe`, `~/.openclaw/skills/faster-whisper/scripts/transcribe`, or `~/.agents/skills/faster-whisper/scripts/transcribe`)
     - `whisper-cli` (`whisper-cpp`; uses `WHISPER_CPP_MODEL` or the bundled tiny model)
     - `whisper` (Python CLI; downloads models automatically)
 
@@ -240,7 +241,7 @@ To disable auto-detection, set:
 ```
 
 <Note>
-Binary detection is best-effort across macOS/Linux/Windows; ensure the CLI is on `PATH` (we expand `~`), or set an explicit CLI model with a full command path.
+Binary detection is best-effort across macOS/Linux/Windows; ensure the CLI is on `PATH` (we expand `~`), install the `faster-whisper` skill in a standard skill root, set `OPENCLAW_FASTER_WHISPER_COMMAND`, or set an explicit CLI model with a full command path.
 </Note>
 
 ### Proxy environment support (provider models)

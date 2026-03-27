@@ -24,6 +24,7 @@ OpenClaw auto-detects in this order and stops at the first working option:
 1. **Active reply model** when its provider supports audio understanding.
 2. **Local CLIs** (if installed)
    - `sherpa-onnx-offline` (requires `SHERPA_ONNX_MODEL_DIR` with encoder/decoder/joiner/tokens)
+   - `faster-whisper` skill wrapper (`skills/faster-whisper/scripts/transcribe`, `~/.openclaw/skills/faster-whisper/scripts/transcribe`, or `~/.agents/skills/faster-whisper/scripts/transcribe`)
    - `whisper-cli` (from `whisper-cpp`; uses `WHISPER_CPP_MODEL` or the bundled tiny model)
    - `whisper` (Python CLI; downloads models automatically)
 3. **Provider auth**
@@ -34,7 +35,7 @@ As of 2026-05-22, Gemini CLI auto-detect is no longer supported for media unders
 
 To disable auto-detection, set `tools.media.audio.enabled: false`.
 To customize, set `tools.media.audio.models`.
-Note: Binary detection is best-effort across macOS/Linux/Windows; ensure the CLI is on `PATH` (we expand `~`), or set an explicit CLI model with a full command path.
+Note: Binary detection is best-effort across macOS/Linux/Windows; ensure the CLI is on `PATH` (we expand `~`), install the `faster-whisper` skill in a standard skill root, or set `OPENCLAW_FASTER_WHISPER_COMMAND` to an explicit wrapper path.
 
 ## Config examples
 

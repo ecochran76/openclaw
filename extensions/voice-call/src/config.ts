@@ -79,6 +79,22 @@ const PlivoConfigSchema = z
   .strict();
 export type PlivoConfig = z.infer<typeof PlivoConfigSchema>;
 
+// -----------------------------------------------------------------------------
+// STT/TTS Configuration
+// -----------------------------------------------------------------------------
+
+export const SttConfigSchema = z
+  .object({
+    /** STT provider (currently only OpenAI supported) */
+    provider: z.literal("openai").default("openai"),
+    /** Whisper model to use */
+    model: z.string().min(1).default("whisper-1"),
+  })
+  .strict()
+  .default({ provider: "openai", model: "whisper-1" });
+export type SttConfig = z.infer<typeof SttConfigSchema>;
+
+export { TtsAutoSchema, TtsConfigSchema, TtsModeSchema, TtsProviderSchema };
 export type VoiceCallTtsConfig = z.infer<typeof TtsConfigSchema>;
 
 const VoiceCallNumberRouteConfigSchema = z
@@ -390,6 +406,7 @@ const VoiceCallStreamingConfigSchema = z
     maxPendingConnectionsPerIp: 4,
     maxConnections: 128,
   });
+export type VoiceCallStreamingConfig = z.infer<typeof VoiceCallStreamingConfigSchema>;
 
 // -----------------------------------------------------------------------------
 // Main Voice Call Configuration
@@ -481,6 +498,9 @@ export const VoiceCallConfigSchema = z
 
     /** Skip webhook signature verification (development only, NOT for production) */
     skipSignatureVerification: z.boolean().default(false),
+
+    /** STT configuration */
+    stt: SttConfigSchema,
 
     /** TTS override (deep-merges with core messages.tts) */
     tts: TtsConfigSchema,

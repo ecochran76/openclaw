@@ -103,7 +103,7 @@ const CLOSE_REASON_LOG_MAX_CHARS = 120;
 
 export function sanitizeLogText(value: string, maxChars: number): string {
   const sanitized = value
-    .replace(/\p{Cc}/gu, " ")
+    .replace(/[\u0000-\u001f\u007f]/g, " ")
     .replace(/\s+/g, " ")
     .trim();
   if (sanitized.length <= maxChars) {

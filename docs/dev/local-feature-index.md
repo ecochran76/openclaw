@@ -106,6 +106,24 @@ This file is the durable map for:
   - feature-branch sync must not block live deploys
   - cherry-pick deployable slices early; keep branches narrow
 
+### 6. Voice / telephony
+
+- Doc: `docs/dev/local-features/voice-telephony.md`
+- Design doc: `docs/dev/slack-huddle-telephony-plan.md`
+- Scope:
+  - `voice-call` streaming STT seams
+  - telephony TTS / media-stream integration
+  - shared `tools.media.audio` autodetect that voice-call inherits
+  - local GPU transcription readiness that affects telephony backend choice
+- Common validation:
+  - `pnpm test -- extensions/voice-call/src/media-stream.test.ts`
+  - `pnpm test -- extensions/voice-call/src/webhook.test.ts`
+  - `pnpm test -- extensions/voice-call/src/providers/stt-openai-realtime.test.ts`
+  - `pnpm test -- extensions/voice-call/src/providers/stt-buffered-media.test.ts`
+  - `pnpm test -- extensions/voice-call/src/providers/stt-factory.test.ts`
+  - `pnpm test -- src/media-understanding/apply.test.ts`
+  - `pnpm build`
+
 ## Current repair plan (2026-03-21)
 
 Active rebase completion order:

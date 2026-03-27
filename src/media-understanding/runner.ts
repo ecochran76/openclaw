@@ -341,7 +341,7 @@ function expandHomeDir(value: string): string {
   if (!value.startsWith("~")) {
     return value;
   }
-  const home = os.homedir();
+  const home = resolveProcessHomeDir();
   if (value === "~") {
     return home;
   }
@@ -349,6 +349,10 @@ function expandHomeDir(value: string): string {
     return path.join(home, value.slice(2));
   }
   return value;
+}
+
+function resolveProcessHomeDir(): string {
+  return process.env.HOME || process.env.USERPROFILE || os.homedir();
 }
 
 function hasPathSeparator(value: string): boolean {
@@ -514,6 +518,40 @@ async function resolveLocalWhisperEntry(): Promise<MediaUnderstandingModelConfig
   };
 }
 
+async function resolveLocalFasterWhisperEntry(): Promise<MediaUnderstandingModelConfig | null> {
+  const envCommand = process.env.OPENCLAW_FASTER_WHISPER_COMMAND?.trim();
+  if (envCommand) {
+    const commandPath = await findBinary(envCommand);
+    if (commandPath) {
+      return {
+        type: "cli",
+        command: commandPath,
+        args: ["--quiet", "--format", "text", "{{MediaPath}}"],
+      };
+    }
+  }
+
+  const envOpenClawHome = normalizeOptionalString(process.env.OPENCLAW_HOME);
+  const openclawHome = envOpenClawHome
+    ? path.resolve(envOpenClawHome)
+    : path.join(resolveProcessHomeDir(), ".openclaw");
+  const managedSkillCommand = path.join(
+    openclawHome,
+    "skills",
+    "faster-whisper",
+    "scripts",
+    "transcribe",
+  );
+  if (!(await isExecutable(managedSkillCommand))) {
+    return null;
+  }
+  return {
+    type: "cli",
+    command: managedSkillCommand,
+    args: ["--quiet", "--format", "text", "{{MediaPath}}"],
+  };
+}
+
 async function resolveSherpaOnnxEntry(): Promise<MediaUnderstandingModelConfig | null> {
   if (!(await hasBinary("sherpa-onnx-offline"))) {
     return null;
@@ -559,6 +597,10 @@ async function resolveLocalAudioEntry(): Promise<MediaUnderstandingModelConfig |
   const whisperCpp = await resolveLocalWhisperCppEntry();
   if (whisperCpp) {
     return whisperCpp;
+  }
+  const fasterWhisper = await resolveLocalFasterWhisperEntry();
+  if (fasterWhisper) {
+    return fasterWhisper;
   }
   return await resolveLocalWhisperEntry();
 }

@@ -23,6 +23,7 @@ import {
 } from "./src/config.js";
 import type { CoreConfig } from "./src/core-bridge.js";
 import { createVoiceCallContinueOperationStore } from "./src/gateway-continue-operation.js";
+import { buildBufferedMediaRealtimeTranscriptionProvider } from "./src/providers/stt-factory.js";
 
 const VOICE_CALL_WRITE_METHOD_SCOPE = { scope: "operator.write" as const };
 const VOICE_CALL_READ_METHOD_SCOPE = { scope: "operator.read" as const };
@@ -84,7 +85,10 @@ const voiceCallConfigSchema = {
       help: "Uses the first registered realtime transcription provider when unset.",
       advanced: true,
     },
-    "streaming.providers": { label: "Streaming Provider Config", advanced: true },
+    "streaming.providers": {
+      label: "Streaming Provider Config",
+      advanced: true,
+    },
     "streaming.streamPath": { label: "Media Stream Path", advanced: true },
     "realtime.enabled": { label: "Enable Realtime Voice", advanced: true },
     "realtime.provider": {
@@ -258,6 +262,12 @@ export default definePluginEntry({
   register(api: OpenClawPluginApi) {
     const config = resolveVoiceCallConfig(voiceCallConfigSchema.parse(api.pluginConfig));
     const validation = validateProviderConfig(config);
+    api.registerRealtimeTranscriptionProvider(
+      buildBufferedMediaRealtimeTranscriptionProvider({
+        coreConfig: api.config as CoreConfig,
+        agentRuntime: api.runtime.agent,
+      }),
+    );
 
     if (api.pluginConfig && typeof api.pluginConfig === "object") {
       for (const warning of formatVoiceCallLegacyConfigWarnings({
@@ -360,8 +370,8 @@ export default definePluginEntry({
     };
 
     const resolveCallMessageRequest = async (params: GatewayRequestHandlerOptions["params"]) => {
-      const callId = normalizeOptionalString(params?.callId) ?? "";
-      const message = normalizeOptionalString(params?.message) ?? "";
+      const callId = typeof params?.callId === "string" ? params.callId.trim() : "";
+      const message = typeof params?.message === "string" ? params.message.trim() : "";
       if (!callId || !message) {
         return { error: "callId and message required" } as const;
       }
@@ -435,13 +445,16 @@ export default definePluginEntry({
       "voicecall.initiate",
       async ({ params, respond }: GatewayRequestHandlerOptions) => {
         try {
-          const message = normalizeOptionalString(params?.message) ?? "";
+          const message = typeof params?.message === "string" ? params.message.trim() : "";
           if (!message) {
             respondError(respond, "message required", ErrorCodes.INVALID_REQUEST);
             return;
           }
           const rt = await ensureRuntime();
-          const to = normalizeOptionalString(params?.to) ?? rt.config.toNumber;
+          const to =
+            typeof params?.to === "string" && params.to.trim()
+              ? params.to.trim()
+              : rt.config.toNumber;
           if (!to) {
             respondError(respond, "to required", ErrorCodes.INVALID_REQUEST);
             return;
@@ -596,7 +609,7 @@ export default definePluginEntry({
       "voicecall.end",
       async ({ params, respond }: GatewayRequestHandlerOptions) => {
         try {
-          const callId = normalizeOptionalString(params?.callId) ?? "";
+          const callId = typeof params?.callId === "string" ? params.callId.trim() : "";
           if (!callId) {
             respondError(respond, "callId required", ErrorCodes.INVALID_REQUEST);
             return;
@@ -801,7 +814,7 @@ export default definePluginEntry({
           return json({ callId: result.callId, initiated: true });
         } catch (err) {
           return json({
-            error: formatErrorMessage(err),
+            error: err instanceof Error ? err.message : String(err),
           });
         }
       },
@@ -821,7 +834,7 @@ export default definePluginEntry({
 
     api.registerService({
       id: "voicecall",
-      start: () => {
+      start: async () => {
         if (isCliOnlyProcess()) {
           return;
         }
@@ -834,9 +847,11 @@ export default definePluginEntry({
           );
           return;
         }
-        void ensureRuntime().catch((err: unknown) => {
+        try {
+          await ensureRuntime();
+        } catch (err) {
           api.logger.error(`[voice-call] Failed to start runtime: ${formatErrorMessage(err)}`);
-        });
+        }
       },
       stop: async () => {
         if (runtimeState[VOICE_CALL_RUNTIME_STOP_PROMISE_KEY]) {
