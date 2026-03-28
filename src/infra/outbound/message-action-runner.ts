@@ -24,6 +24,7 @@ import type {
   ChannelMessageActionName,
   ChannelThreadingToolContext,
 } from "../../channels/plugins/types.public.js";
+import { loadSessionStore, resolveStorePath } from "../../config/sessions.js";
 import type { OpenClawConfig } from "../../config/types.openclaw.js";
 import {
   hasInteractiveReplyBlocks,
@@ -39,7 +40,9 @@ import { resolveAgentScopedOutboundMediaAccess } from "../../media/read-capabili
 import { extractToolPayload } from "../../plugin-sdk/tool-payload.js";
 import { hasPollCreationParams } from "../../poll-params.js";
 import { resolvePollMaxSelections } from "../../polls.js";
+import { buildChannelAccountBindings } from "../../routing/bindings.js";
 import { resolveFirstBoundAccountId } from "../../routing/bound-account-read.js";
+import { normalizeAgentId, resolveAgentIdFromSessionKey } from "../../routing/session-key.js";
 import { stripUnsupportedCitationControlMarkers } from "../../shared/text/citation-control-markers.js";
 import { stripFormattedReasoningMessage } from "../../shared/text/formatted-reasoning-message.js";
 import { parseInlineDirectives } from "../../utils/directive-tags.js";
@@ -617,6 +620,57 @@ function applyImplicitSourceReplySendPolicy(
   params.bestEffort = true;
 }
 
+function normalizeDeliveryCompareValue(value: unknown): string {
+  return normalizeOptionalString(value)?.toLowerCase() ?? "";
+}
+
+function findBoundAgentForOutboundTarget(params: {
+  cfg: OpenClawConfig;
+  channel: ChannelId;
+  to: string;
+  accountId?: string | null;
+  agentId?: string;
+}): string | undefined {
+  const requesterAgentId = normalizeOptionalString(params.agentId);
+  if (!requesterAgentId) {
+    return undefined;
+  }
+
+  const targetChannel = normalizeDeliveryCompareValue(params.channel);
+  const targetTo = normalizeDeliveryCompareValue(params.to);
+  const targetAccountId = normalizeDeliveryCompareValue(params.accountId);
+  if (!targetChannel || !targetTo) {
+    return undefined;
+  }
+
+  const storePath = resolveStorePath(params.cfg.session?.store, { agentId: requesterAgentId });
+  const store = loadSessionStore(storePath);
+  const normalizedRequesterAgentId = normalizeAgentId(requesterAgentId);
+
+  for (const [sessionKey, entry] of Object.entries(store)) {
+    const deliveryContext = entry.deliveryContext;
+    if (!deliveryContext) {
+      continue;
+    }
+    if (normalizeDeliveryCompareValue(deliveryContext.channel) !== targetChannel) {
+      continue;
+    }
+    if (normalizeDeliveryCompareValue(deliveryContext.to) !== targetTo) {
+      continue;
+    }
+    const boundAccountId = normalizeDeliveryCompareValue(deliveryContext.accountId);
+    if (targetAccountId && boundAccountId && targetAccountId !== boundAccountId) {
+      continue;
+    }
+    const boundAgentId = normalizeAgentId(resolveAgentIdFromSessionKey(sessionKey));
+    if (boundAgentId && boundAgentId !== normalizedRequesterAgentId) {
+      return boundAgentId;
+    }
+  }
+
+  return undefined;
+}
+
 async function runGatewayPluginMessageActionOrNull(params: {
   cfg: OpenClawConfig;
   params: Record<string, unknown>;
@@ -1040,6 +1094,18 @@ async function handleSendAction(ctx: ResolvedActionContext): Promise<MessageActi
   throwIfAborted(abortSignal);
   const action: ChannelMessageActionName = "send";
   const to = readStringParam(params, "to", { required: true });
+  const boundAgentId = findBoundAgentForOutboundTarget({
+    cfg,
+    channel,
+    to,
+    accountId,
+    agentId,
+  });
+  if (boundAgentId) {
+    throw new Error(
+      `Target ${channel}:${to} is bound to local agent "${boundAgentId}". Use sessions_send with agentId="${boundAgentId}" instead of a direct message action.`,
+    );
+  }
   let sendPayload = await buildSendPayloadParts({
     cfg,
     actionParams: params,

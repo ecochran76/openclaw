@@ -1,5 +1,8 @@
 // Covers message-action cross-context policy, markers, and presentation
 // decoration behavior.
+import fs from "node:fs";
+import os from "node:os";
+import path from "node:path";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import type { ChannelPlugin } from "../../channels/plugins/types.js";
 import type { OpenClawConfig } from "../../config/config.js";
@@ -8,6 +11,7 @@ import {
   createChannelTestPluginBase,
   createTestRegistry,
 } from "../../test-utils/channel-plugins.js";
+import { runMessageAction } from "./message-action-runner.js";
 import {
   directChatConfig,
   directChatTestPlugin,
@@ -80,7 +84,25 @@ const resolvedDmTestPlugin: ChannelPlugin = {
   },
 };
 
+const localChatConfig = {
+  channels: {
+    localchat: {
+      allowFrom: ["*"],
+    },
+  },
+} as OpenClawConfig;
+
 describe("runMessageAction context isolation", () => {
+  const tempRoots: string[] = [];
+
+  function createSessionStore(entries: Record<string, Record<string, unknown>>): string {
+    const dir = fs.mkdtempSync(path.join(os.tmpdir(), "openclaw-msg-action-store-"));
+    tempRoots.push(dir);
+    const storePath = path.join(dir, "sessions.json");
+    fs.writeFileSync(storePath, JSON.stringify(entries), "utf-8");
+    return storePath;
+  }
+
   beforeEach(() => {
     setActivePluginRegistry(
       createTestRegistry([
@@ -115,6 +137,9 @@ describe("runMessageAction context isolation", () => {
 
   afterEach(() => {
     setActivePluginRegistry(createTestRegistry([]));
+    for (const root of tempRoots.splice(0)) {
+      fs.rmSync(root, { recursive: true, force: true });
+    }
   });
 
   it.each([
@@ -498,6 +523,101 @@ describe("runMessageAction context isolation", () => {
         agentId,
       }),
     ).rejects.toThrow(message);
+  });
+
+  it("blocks agent-originated sends into another local agent's bound channel", async () => {
+    const storePath = createSessionStore({
+      "agent:gpod:localchat:channel:c99999999": {
+        sessionId: "sess-gpod",
+        updatedAt: 100,
+        deliveryContext: {
+          channel: "localchat",
+          to: "channel:C99999999",
+        },
+      },
+    });
+
+    await expect(
+      runMessageAction({
+        cfg: {
+          ...localChatConfig,
+          session: {
+            store: storePath,
+          },
+        } as OpenClawConfig,
+        action: "send",
+        params: {
+          channel: "localchat",
+          target: "channel:C99999999",
+          message: "hi",
+        },
+        dryRun: true,
+        agentId: "dev-agent",
+      }),
+    ).rejects.toThrow(/Use sessions_send with agentId="gpod"/i);
+  });
+
+  it("allows agent-originated sends into its own bound channel", async () => {
+    const storePath = createSessionStore({
+      "agent:gpod:localchat:channel:c99999999": {
+        sessionId: "sess-gpod",
+        updatedAt: 100,
+        deliveryContext: {
+          channel: "localchat",
+          to: "channel:C99999999",
+        },
+      },
+    });
+
+    const result = await runMessageAction({
+      cfg: {
+        ...localChatConfig,
+        session: {
+          store: storePath,
+        },
+      } as OpenClawConfig,
+      action: "send",
+      params: {
+        channel: "localchat",
+        target: "channel:C99999999",
+        message: "hi",
+      },
+      dryRun: true,
+      agentId: "gpod",
+    });
+
+    expect(result.kind).toBe("send");
+  });
+
+  it("does not block non-agent operator sends into a bound channel", async () => {
+    const storePath = createSessionStore({
+      "agent:gpod:localchat:channel:c99999999": {
+        sessionId: "sess-gpod",
+        updatedAt: 100,
+        deliveryContext: {
+          channel: "localchat",
+          to: "channel:C99999999",
+        },
+      },
+    });
+
+    const result = await runMessageAction({
+      cfg: {
+        ...localChatConfig,
+        session: {
+          store: storePath,
+        },
+      } as OpenClawConfig,
+      action: "send",
+      params: {
+        channel: "localchat",
+        target: "channel:C99999999",
+        message: "hi",
+      },
+      dryRun: true,
+    });
+
+    expect(result.kind).toBe("send");
   });
 
   it.each([
