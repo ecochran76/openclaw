@@ -1437,6 +1437,25 @@ describe("agentCliCommand", () => {
     });
   });
 
+  it("passes explicit sessionKey through to the gateway request", async () => {
+    await withTempStore(async () => {
+      mockGatewaySuccessReply();
+
+      await agentCliCommand(
+        {
+          message: "hi",
+          sessionKey: "agent:main:dashboard:spark-track",
+        },
+        runtime,
+      );
+
+      const request = vi.mocked(callGateway).mock.calls[0]?.[0] as {
+        params?: { sessionKey?: string };
+      };
+      expect(request.params?.sessionKey).toBe("agent:main:dashboard:spark-track");
+    });
+  });
+
   it("falls back to embedded agent when gateway fails", async () => {
     await withTempStore(async () => {
       callGateway.mockRejectedValue(createGatewayClosedError());

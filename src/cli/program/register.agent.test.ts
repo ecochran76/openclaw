@@ -107,6 +107,19 @@ describe("agent command registration", () => {
     expect(deps).toBeUndefined();
   });
 
+  it("forwards explicit session-key to the agent command", async () => {
+    await runCli(["agent", "--message", "hi", "--session-key", "agent:main:dashboard:probe"]);
+
+    expect(agentCliCommandMock).toHaveBeenCalledWith(
+      expect.objectContaining({
+        message: "hi",
+        sessionKey: "agent:main:dashboard:probe",
+      }),
+      runtime,
+      { deps: true },
+    );
+  });
+
   it("runs agent command with verbose disabled for --verbose off", async () => {
     await runCli(["agent", "--message", "hi", "--verbose", "off"]);
 
