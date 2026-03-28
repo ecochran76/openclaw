@@ -33,7 +33,7 @@ async function fetchProviderUsageSnapshotFallback(params: {
   };
 }
 
-type UsageSummaryOptions = {
+export type UsageSummaryOptions = {
   now?: number;
   timeoutMs?: number;
   providers?: UsageProviderId[];
