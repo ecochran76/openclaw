@@ -613,9 +613,9 @@ if [[ "$RESTART_NEEDED" == "1" ]]; then
   PHASE="RESTART"
   log "Scheduling gateway restart after success notification"
   if [[ "$DRY_RUN" == "1" ]]; then
-    log "[dry-run] nohup bash -lc 'sleep 2; openclaw gateway restart > /tmp/openclaw-auto-upgrade-restart.log 2>&1' &"
+    log "[dry-run] nohup bash -lc 'sleep 2; \"$REPO_DIR/scripts/restart-live-gateway.sh\" > /tmp/openclaw-auto-upgrade-restart.log 2>&1' &"
   else
-    nohup bash -lc 'sleep 2; openclaw gateway restart > /tmp/openclaw-auto-upgrade-restart.log 2>&1' >/dev/null 2>&1 &
+    nohup bash -lc "sleep 2; \"$REPO_DIR/scripts/restart-live-gateway.sh\" > /tmp/openclaw-auto-upgrade-restart.log 2>&1" >/dev/null 2>&1 &
   fi
 fi
 

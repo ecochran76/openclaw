@@ -14,6 +14,7 @@ set -euo pipefail
 #   OPENCLAW_PATCH_EXPECT_BRANCH=ec-main
 #   OPENCLAW_PATCH_REQUIRE_EXPECTED_BRANCH=1
 #   OPENCLAW_PATCH_SKIP_RESTART=1
+#   OPENCLAW_PATCH_ENV_DIR=$HOME/.openclaw
 #   OPENCLAW_PATCH_RESTART_FLAG_FILE=/tmp/openclaw-patch-restart-needed.flag
 
 DRY_RUN=0
@@ -309,7 +310,13 @@ if [[ "$GATEWAY_SERVICE_LOADED" == "1" ]] || has_systemd_gateway_service; then
     echo "info: restart skipped (--skip-restart / OPENCLAW_PATCH_SKIP_RESTART=1)"
   else
     send_patch_notification "$PATCH_RESTART_WARNING_TEXT"
-    run "openclaw gateway restart"
+    if [[ "$DRY_RUN" == "1" ]]; then
+      OPENCLAW_PATCH_ENV_DIR="${OPENCLAW_PATCH_ENV_DIR:-$HOME/.openclaw}" \
+        "$REPO_DIR/scripts/restart-live-gateway.sh" --dry-run
+    else
+      OPENCLAW_PATCH_ENV_DIR="${OPENCLAW_PATCH_ENV_DIR:-$HOME/.openclaw}" \
+        "$REPO_DIR/scripts/restart-live-gateway.sh"
+    fi
   fi
 fi
 
