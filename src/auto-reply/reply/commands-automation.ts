@@ -24,6 +24,63 @@ function buildUsageText(): string {
   ].join("\n");
 }
 
+function normalizeSuggestedGoal(raw: string): string {
+  return raw
+    .replace(/(?:^|[\s,;])(?:--turns?|max\s+\d+\s+turns?)\b[\s,;]*/gi, " ")
+    .replace(/(?:^|[\s,;])(?:--tokens?|max\s+\d+\s+tokens?)\b[\s,;]*/gi, " ")
+    .replace(/(?:^|[\s,;])(?:--duration\s+\S+|for\s+\d+\s*(?:s|m|h|d|w)\b)/gi, " ")
+    .replace(/^[\s,.:;-]+/, "")
+    .replace(/^(?:run\b\s*)/i, "")
+    .replace(/^(?:that\s+will|which\s+will|to|for)\s+/i, "")
+    .replace(/[.,;:\s]+$/g, "")
+    .replace(/\s+/g, " ")
+    .trim();
+}
+
+function buildSuggestedAutomationCommand(text: string): string | null {
+  const trimmed = text.trim();
+  if (!trimmed || trimmed.startsWith("/")) {
+    return null;
+  }
+  if (!/\/automation\b/i.test(trimmed)) {
+    return null;
+  }
+  if (!/\b(?:set\s*up|setup|start|launch|create|kick\s*off|begin)\b/i.test(trimmed)) {
+    return null;
+  }
+
+  const afterAutomation = trimmed.split(/\/automation\b/i)[1]?.trim() ?? "";
+  const maxTurnsMatch = afterAutomation.match(/(?:^|[\s,;])max\s+(\d+)\s+turns?\b/i);
+  const maxTokensMatch = afterAutomation.match(/(?:^|[\s,;])max\s+(\d+)\s+tokens?\b/i);
+  const durationMatch = afterAutomation.match(/(?:^|[\s,;])for\s+(\d+\s*(?:s|m|h|d|w))\b/i);
+  const goal = normalizeSuggestedGoal(afterAutomation);
+  if (!goal) {
+    return null;
+  }
+
+  const parts = [`/automation run ${goal}`];
+  if (maxTurnsMatch) {
+    parts.push(`--turns ${maxTurnsMatch[1]}`);
+  }
+  if (maxTokensMatch) {
+    parts.push(`--tokens ${maxTokensMatch[1]}`);
+  }
+  if (durationMatch) {
+    parts.push(`--duration ${durationMatch[1].replace(/\s+/g, "")}`);
+  }
+  return parts.join(" ");
+}
+
+function buildAutomationCommandSuggestionReply(command: string): string {
+  return [
+    "🤖 Automation",
+    "To use the built-in automation command, start the message with the command itself.",
+    "",
+    "Suggested command:",
+    `\`${command}\``,
+  ].join("\n");
+}
+
 function formatTokens(value: number): string {
   if (value >= 1_000_000) {
     return `${(value / 1_000_000).toFixed(value % 1_000_000 === 0 ? 0 : 1)}M`;
@@ -145,6 +202,10 @@ export const handleAutomationCommand: CommandHandler = async (params, allowTextC
 
   const rest = sliceCommandTail(params.command.commandBodyNormalized);
   if (rest === null) {
+    const suggestedCommand = buildSuggestedAutomationCommand(params.command.commandBodyNormalized);
+    if (suggestedCommand) {
+      return stopWithText(buildAutomationCommandSuggestionReply(suggestedCommand));
+    }
     return null;
   }
 

@@ -16,6 +16,13 @@ describe("automation tool", () => {
     resetAutomationToolStateForTests();
   });
 
+  it("describes itself as the tool for /automation-style bounded runs", () => {
+    const tool = createAutomationTool({ agentSessionKey: "agent:main:main" });
+
+    expect(tool.description).toContain("Use this for /automation-style requests");
+    expect(tool.description).toContain("Do not emulate /automation with sessions_spawn or ACP");
+  });
+
   it("starts a run and reports status/list output", async () => {
     const executeWorkerTurn = vi.fn().mockResolvedValue({
       outputText: "RESULT: completed\nDraft delivered.",

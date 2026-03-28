@@ -302,6 +302,15 @@ describe("sessions_spawn tool", () => {
     expect(tool.description).toContain("thread-bound");
   });
 
+  it("describes automation as a separate tool", () => {
+    const tool = createSessionsSpawnTool({
+      agentSessionKey: "agent:main:main",
+    });
+
+    expect(tool.description).toContain("Do not use this to emulate /automation");
+    expect(tool.description).toContain("use the automation tool for bounded background work");
+  });
+
   it("uses subagent runtime by default", async () => {
     const tool = createSessionsSpawnTool({
       agentSessionKey: "agent:main:main",

@@ -37,6 +37,30 @@ describe("/automation command", () => {
     expect(hoisted.executeMock).not.toHaveBeenCalled();
   });
 
+  it("suggests a concrete command for natural-language automation setup requests", async () => {
+    const params = buildCommandTestParams(
+      "Please set up an /automation run that will take you through the end of the plan, max 5 turns",
+      baseCfg,
+    );
+    const result = await handleCommands(params);
+
+    expect(result.shouldContinue).toBe(false);
+    expect(result.reply?.text).toContain("Suggested command:");
+    expect(result.reply?.text).toContain(
+      "/automation run take you through the end of the plan --turns 5",
+    );
+    expect(hoisted.executeMock).not.toHaveBeenCalled();
+  });
+
+  it("does not hijack plain discussion that mentions /automation", async () => {
+    const params = buildCommandTestParams("The /automation docs are a bit dense.", baseCfg);
+    const result = await handleCommands(params);
+
+    expect(result.shouldContinue).toBe(true);
+    expect(result.reply).toBeUndefined();
+    expect(hoisted.executeMock).not.toHaveBeenCalled();
+  });
+
   it("parses run flags and formats a start acknowledgement", async () => {
     hoisted.executeMock.mockResolvedValue({
       details: {
