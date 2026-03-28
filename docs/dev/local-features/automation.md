@@ -11,6 +11,7 @@ It exists as a maintained local layer because it changes both runtime tool behav
 - bounded automation tool execution
 - automation registry and runner behavior
 - automation stop conditions and status reporting
+- per-turn progress announcements for announced automation runs
 - automation defaults in config
 - auto-reply commands and help/status surfaces for automation
 
@@ -68,6 +69,7 @@ pnpm build
 
 - automation tool calls disappear or stop honoring bounds
 - automation status is missing or stale in chat surfaces
+- automation only reports at start/finish and stops emitting turn-by-turn progress
 - automation commands stop registering after a rebase
 - config defaults silently drift and automation behaves differently than expected
 

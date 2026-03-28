@@ -1,6 +1,6 @@
 import { buildAutomationStatusView } from "./registry.js";
 import { normalizeAutomationStopReason } from "./stop-conditions.js";
-import type { AutomationRunRecord, AutomationStatusView } from "./types.js";
+import type { AutomationRunRecord, AutomationStatusView, AutomationStopReason } from "./types.js";
 
 function formatDuration(seconds: number): string {
   const safe = Math.max(0, Math.round(seconds));
@@ -47,6 +47,13 @@ export function formatAutomationStopReason(reason?: string | null): string {
     default:
       return "running";
   }
+}
+
+function formatAutomationTurnOutcome(outcome?: AutomationStopReason | "progress" | null): string {
+  if (!outcome || outcome === "progress") {
+    return "progress";
+  }
+  return formatAutomationStopReason(outcome);
 }
 
 function resolveRunLabel(view: AutomationStatusView, index?: number): string {
@@ -139,6 +146,34 @@ export function buildAutomationFinalSummaryText(params: {
   if (view.finalSummaryText) {
     lines.push("Done:");
     lines.push(view.finalSummaryText);
+  }
+  lines.push(
+    `Usage: ${view.workerTurnsUsed} worker turns · ${formatTokens(view.totalTokensUsed)} tokens · ${formatDuration(view.elapsedSeconds)}`,
+  );
+  return lines.join("\n");
+}
+
+export function buildAutomationTurnUpdateText(params: {
+  run: AutomationRunRecord | AutomationStatusView;
+  now?: number;
+  index?: number;
+  outcome?: AutomationStopReason | "progress" | null;
+  resultText?: string;
+}): string {
+  const view =
+    "goal" in params.run
+      ? buildAutomationStatusView({ record: params.run, now: params.now })
+      : params.run;
+  const outputText = params.resultText?.trim() || view.lastProgressText || view.finalSummaryText;
+  const lines = [
+    "🤖 Automation turn",
+    `Run: ${resolveRunLabel(view, params.index)}`,
+    `Turn: ${view.workerTurnsUsed} / ${view.maxTurns}`,
+    `Result: ${formatAutomationTurnOutcome(params.outcome)}`,
+  ];
+  if (outputText) {
+    lines.push("Output:");
+    lines.push(outputText);
   }
   lines.push(
     `Usage: ${view.workerTurnsUsed} worker turns · ${formatTokens(view.totalTokensUsed)} tokens · ${formatDuration(view.elapsedSeconds)}`,

@@ -5,6 +5,7 @@ import {
   buildAutomationFinalSummaryText,
   buildAutomationListText,
   buildAutomationStatusText,
+  buildAutomationTurnUpdateText,
 } from "./status.js";
 import type { AutomationRunRecord } from "./types.js";
 
@@ -93,6 +94,24 @@ describe("automation status formatting", () => {
     expect(text).toContain("Done:");
     expect(text).toContain("- updated hero copy");
     expect(text).toContain("Usage: 4 worker turns · 31.2k tokens · 12m 8s");
+  });
+
+  it("formats per-turn update output", () => {
+    const text = buildAutomationTurnUpdateText({
+      run: baseRun,
+      now: 374_000,
+      index: 3,
+      outcome: "progress",
+      resultText: "- updated hero copy\n- tightened CTA spacing",
+    });
+
+    expect(text).toContain("🤖 Automation turn");
+    expect(text).toContain("Run: #3 (landing-page-polish)");
+    expect(text).toContain("Turn: 2 / 6");
+    expect(text).toContain("Result: progress");
+    expect(text).toContain("Output:");
+    expect(text).toContain("- updated hero copy");
+    expect(text).toContain("Usage: 2 worker turns · 18.4k tokens · 6m 14s");
   });
 
   it("formats a compact /status embedding line", () => {

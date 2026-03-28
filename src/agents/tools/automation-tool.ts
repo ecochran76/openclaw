@@ -13,6 +13,7 @@ import {
   requestAutomationRunStop,
   resetAutomationRunnerForTests,
   startAutomationRunInBackground,
+  type AutomationTurnUpdateDelivery,
   type AutomationWorkerTurnInput,
   type AutomationWorkerTurnResult,
 } from "../../automation/runner.js";
@@ -60,6 +61,7 @@ const AutomationToolSchema = Type.Object({
 export type AutomationToolDeps = {
   cliDeps?: CliDeps;
   executeWorkerTurn?: (input: AutomationWorkerTurnInput) => Promise<AutomationWorkerTurnResult>;
+  deliverTurnUpdate?: (params: { updateText: string; runId: string }) => Promise<void> | void;
   deliverFinalSummary?: (params: { summaryText: string; runId: string }) => Promise<void> | void;
 };
 
@@ -241,11 +243,11 @@ function createDefaultWorkerTurnExecutor(opts: AutomationToolOptions, cliDeps: C
   };
 }
 
-function createDefaultFinalSummaryDelivery(opts: AutomationToolOptions, cliDeps: CliDeps) {
+function createDefaultAnnounceDelivery(opts: AutomationToolOptions, cliDeps: CliDeps) {
   const cfg = resolveConfig(opts.config);
   const target = resolveAnnounceTarget(opts);
-  return async (params: { summaryText: string; runId: string }) => {
-    if (!target.channel || !target.to || !params.summaryText.trim()) {
+  return async (text: string) => {
+    if (!target.channel || !target.to || !text.trim()) {
       return;
     }
     await deliverOutboundPayloads({
@@ -254,7 +256,7 @@ function createDefaultFinalSummaryDelivery(opts: AutomationToolOptions, cliDeps:
       to: target.to,
       accountId: opts.agentAccountId,
       threadId: target.threadId,
-      payloads: [{ text: params.summaryText }],
+      payloads: [{ text }],
       deps: createOutboundSendDeps(cliDeps),
       bestEffort: true,
     });
@@ -269,8 +271,17 @@ export function createAutomationTool(
   const cliDeps = deps?.cliDeps ?? createDefaultDeps();
   const executeWorkerTurn =
     deps?.executeWorkerTurn ?? createDefaultWorkerTurnExecutor(opts ?? {}, cliDeps);
+  const announceDelivery = createDefaultAnnounceDelivery(opts ?? {}, cliDeps);
+  const deliverTurnUpdate =
+    deps?.deliverTurnUpdate ??
+    (async ({ updateText }: { updateText: string }) => {
+      await announceDelivery(updateText);
+    });
   const deliverFinalSummary =
-    deps?.deliverFinalSummary ?? createDefaultFinalSummaryDelivery(opts ?? {}, cliDeps);
+    deps?.deliverFinalSummary ??
+    (async ({ summaryText }: { summaryText: string }) => {
+      await announceDelivery(summaryText);
+    });
 
   return {
     label: "Automation",
@@ -335,6 +346,9 @@ export function createAutomationTool(
           config: cfg,
           deps: {
             runWorkerTurn: executeWorkerTurn,
+            deliverTurnUpdate: async ({ run, updateText }: AutomationTurnUpdateDelivery) => {
+              await deliverTurnUpdate({ updateText, runId: run.runId });
+            },
             deliverFinalSummary: async ({ summaryText, run }) => {
               await deliverFinalSummary({ summaryText, runId: run.runId });
             },

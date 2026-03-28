@@ -13,7 +13,8 @@ afterEach(() => {
 });
 
 describe("automation runner", () => {
-  it("completes a run in one worker turn and delivers a final summary", async () => {
+  it("completes a run in one worker turn and delivers a turn update plus final summary", async () => {
+    const deliverTurnUpdate = vi.fn();
     const deliverFinalSummary = vi.fn();
     const run = startAutomationRunInBackground({
       requesterSessionKey: "agent:main:main",
@@ -25,6 +26,7 @@ describe("automation runner", () => {
           outputText: "- updated hero copy\n- fixed CTA spacing",
           totalTokensUsedDelta: 1200,
         }),
+        deliverTurnUpdate,
         deliverFinalSummary,
       },
       runId: "auto_runner_1",
@@ -38,6 +40,13 @@ describe("automation runner", () => {
     expect(stopped.stopReason).toBe("completed");
     expect(stopped.workerTurnsUsed).toBe(1);
     expect(stopped.totalTokensUsed).toBe(1200);
+    expect(deliverTurnUpdate).toHaveBeenCalledOnce();
+    expect(deliverTurnUpdate).toHaveBeenCalledWith(
+      expect.objectContaining({
+        run: expect.objectContaining({ runId: "auto_runner_1", workerTurnsUsed: 1 }),
+        updateText: expect.stringContaining("🤖 Automation turn"),
+      }),
+    );
     expect(deliverFinalSummary).toHaveBeenCalledOnce();
   });
 
@@ -100,6 +109,7 @@ describe("automation runner", () => {
   });
 
   it("keeps going when a completed result explicitly says work remains", async () => {
+    const deliverTurnUpdate = vi.fn();
     const runWorkerTurn = vi
       .fn()
       .mockResolvedValueOnce({
@@ -125,7 +135,7 @@ describe("automation runner", () => {
       requesterSessionKey: "agent:main:main",
       childSessionKey: "agent:main:subagent:auto-5",
       spec: { goal: "Finish the task.", stop: { maxTurns: 3 } },
-      deps: { runWorkerTurn },
+      deps: { runWorkerTurn, deliverTurnUpdate },
       runId: "auto_runner_5",
       now: 1000,
     });
@@ -135,6 +145,12 @@ describe("automation runner", () => {
     expect(runWorkerTurn).toHaveBeenCalledTimes(2);
     expect(getAutomationRun(run.runId)?.workerTurnsUsed).toBe(2);
     expect(getAutomationRun(run.runId)?.stopReason).toBe("completed");
+    expect(deliverTurnUpdate).toHaveBeenNthCalledWith(
+      1,
+      expect.objectContaining({
+        updateText: expect.stringContaining("Result: progress"),
+      }),
+    );
   });
 
   it("honors a user stop request before starting the next worker turn", async () => {

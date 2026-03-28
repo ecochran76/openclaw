@@ -15,7 +15,7 @@ import {
   stopAutomationRun,
   updateAutomationRun,
 } from "./registry.js";
-import { buildAutomationFinalSummaryText } from "./status.js";
+import { buildAutomationFinalSummaryText, buildAutomationTurnUpdateText } from "./status.js";
 import {
   evaluateAutomationStopConditions,
   resolveAutomationBudgetRemaining,
@@ -59,8 +59,14 @@ export type AutomationFinalSummaryDelivery = {
   summaryText: string;
 };
 
+export type AutomationTurnUpdateDelivery = {
+  run: AutomationRunRecord;
+  updateText: string;
+};
+
 export type AutomationRunnerDeps = {
   runWorkerTurn: (input: AutomationWorkerTurnInput) => Promise<AutomationWorkerTurnResult>;
+  deliverTurnUpdate?: (params: AutomationTurnUpdateDelivery) => Promise<void> | void;
   deliverFinalSummary?: (params: AutomationFinalSummaryDelivery) => Promise<void> | void;
   schedule?: (task: () => void) => void;
   now?: () => number;
@@ -125,6 +131,19 @@ function resolveFinalSummaryCandidate(
     normalizeText(result?.progressText) ??
     normalizeText(record.finalSummaryText) ??
     normalizeText(record.lastProgressText)
+  );
+}
+
+function resolveTurnUpdateText(
+  record: AutomationRunRecord,
+  result?: AutomationWorkerTurnResult,
+): string | undefined {
+  return (
+    normalizeText(result?.outputText) ??
+    normalizeText(result?.progressText) ??
+    normalizeText(result?.finalSummaryText) ??
+    normalizeText(record.lastProgressText) ??
+    normalizeText(record.finalSummaryText)
   );
 }
 
@@ -320,10 +339,24 @@ async function runAutomationLoop(params: {
       approvalRequired: turnResult.approvalRequired,
       errored: turnResult.errored,
     });
-    if (
+    const selfReportedIncomplete =
       explicitStopReason === "completed" &&
-      looksSelfReportedIncomplete(resolveFinalSummaryCandidate(updated, turnResult))
-    ) {
+      looksSelfReportedIncomplete(resolveFinalSummaryCandidate(updated, turnResult));
+    const turnOutcome = selfReportedIncomplete ? "progress" : (explicitStopReason ?? "progress");
+    const turnUpdateText = resolveTurnUpdateText(updated, turnResult);
+    const active = activeExecutions.get(params.runId);
+    if (active?.deliveryMode === "announce" && params.deps.deliverTurnUpdate && turnUpdateText) {
+      await params.deps.deliverTurnUpdate({
+        run: updated,
+        updateText: buildAutomationTurnUpdateText({
+          run: updated,
+          outcome: turnOutcome,
+          resultText: turnUpdateText,
+        }),
+      });
+    }
+
+    if (selfReportedIncomplete) {
       // Keep going when the worker's own summary admits there is still in-scope work left.
     } else if (explicitStopReason) {
       await finalizeAutomationRun({

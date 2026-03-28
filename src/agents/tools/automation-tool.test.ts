@@ -49,10 +49,11 @@ describe("automation tool", () => {
       completed: true,
       totalTokensUsedDelta: 321,
     });
+    const deliverTurnUpdate = vi.fn().mockResolvedValue(undefined);
     const deliverFinalSummary = vi.fn().mockResolvedValue(undefined);
     const tool = createAutomationTool(
       { agentSessionKey: "agent:main:main" },
-      { executeWorkerTurn, deliverFinalSummary },
+      { executeWorkerTurn, deliverTurnUpdate, deliverFinalSummary },
     );
 
     const runResult = await tool.execute("call-run", {
@@ -81,6 +82,13 @@ describe("automation tool", () => {
     expect(getStringDetail(listDetails, "text")).toContain("Draft run");
 
     expect(executeWorkerTurn).toHaveBeenCalledTimes(1);
+    expect(deliverTurnUpdate).toHaveBeenCalledTimes(1);
+    expect(deliverTurnUpdate).toHaveBeenCalledWith(
+      expect.objectContaining({
+        runId,
+        updateText: expect.stringContaining("🤖 Automation turn"),
+      }),
+    );
     expect(deliverFinalSummary).toHaveBeenCalledTimes(1);
     expect(deliverFinalSummary).toHaveBeenCalledWith(
       expect.objectContaining({
