@@ -1,6 +1,10 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { waitForAutomationRunToSettle } from "../../automation/runner.js";
-import { createAutomationTool, resetAutomationToolStateForTests } from "./automation-tool.js";
+import {
+  createAutomationTool,
+  mapRunResultToWorkerTurnResult,
+  resetAutomationToolStateForTests,
+} from "./automation-tool.js";
 
 function getDetails(result: { details?: unknown }): Record<string, unknown> {
   return (result.details as Record<string, unknown> | undefined) ?? {};
@@ -21,6 +25,22 @@ describe("automation tool", () => {
 
     expect(tool.description).toContain("Use this for /automation-style requests");
     expect(tool.description).toContain("Do not emulate /automation with sessions_spawn or ACP");
+  });
+
+  it("trusts an explicit worker control line when the isolated run status is error", () => {
+    const mapped = mapRunResultToWorkerTurnResult({
+      status: "error",
+      error: "cron isolated run returned an error payload",
+      outputText: "RESULT: completed\nImplemented the planner slice.",
+      usage: { total_tokens: 75_700 },
+    } as never);
+
+    expect(mapped).toMatchObject({
+      completed: true,
+      finalSummaryText: "Implemented the planner slice.",
+      totalTokensUsedDelta: 75_700,
+    });
+    expect(mapped.errored).toBeUndefined();
   });
 
   it("starts a run and reports status/list output", async () => {

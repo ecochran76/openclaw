@@ -120,7 +120,7 @@ function parseWorkerControlResult(text?: string): {
   return { control, body: body || undefined };
 }
 
-function mapRunResultToWorkerTurnResult(
+export function mapRunResultToWorkerTurnResult(
   result: Awaited<ReturnType<typeof runCronIsolatedAgentTurn>>,
 ): AutomationWorkerTurnResult {
   const rawText = result.outputText?.trim() || result.summary?.trim() || undefined;
@@ -132,6 +132,29 @@ function mapRunResultToWorkerTurnResult(
   const totalTokensUsedDelta = totalTokensCandidate > 0 ? totalTokensCandidate : undefined;
 
   if (result.status === "error") {
+    // Isolated runs can surface recovered tool warnings as an overall "error"
+    // while still returning a structured worker result body. For automation,
+    // trust an explicit control line when the worker produced substantive text.
+    if (parsed.control && outputText) {
+      switch (parsed.control) {
+        case "progress":
+          return { outputText, progressText: outputText, totalTokensUsedDelta };
+        case "blocked":
+          return { outputText, totalTokensUsedDelta, blocked: true };
+        case "approval_required":
+          return { outputText, totalTokensUsedDelta, approvalRequired: true };
+        case "error":
+          return { outputText, totalTokensUsedDelta, errored: true };
+        case "completed":
+        default:
+          return {
+            outputText,
+            finalSummaryText: outputText,
+            totalTokensUsedDelta,
+            completed: true,
+          };
+      }
+    }
     return {
       outputText,
       totalTokensUsedDelta,
