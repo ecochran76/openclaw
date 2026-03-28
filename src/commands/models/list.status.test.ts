@@ -135,14 +135,32 @@ const mocks = vi.hoisted(() => {
     loadConfig: vi.fn().mockReturnValue({
       agents: {
         defaults: {
-          model: { primary: "anthropic/claude-opus-4-6", fallbacks: [] },
-          models: { "anthropic/claude-opus-4-6": { alias: "Opus" } },
+          model: { primary: "anthropic/claude-opus-4-5", fallbacks: [] },
+          models: { "anthropic/claude-opus-4-5": { alias: "Opus" } },
         },
       },
       models: { providers: {} },
       env: { shellEnv: { enabled: true } },
     }),
-    loadProviderUsageSummary: vi.fn().mockResolvedValue(undefined),
+    loadProviderUsageSummary: vi.fn().mockResolvedValue({
+      updatedAt: Date.now(),
+      providers: [],
+    }),
+    loadProviderUsageSummaryWithCache: vi.fn().mockResolvedValue({
+      updatedAt: Date.now(),
+      providers: [],
+    }),
+    isUsagePolicySurfaceEnabled: vi.fn().mockReturnValue(false),
+    readCachedUsagePolicyDecision: vi.fn().mockResolvedValue({
+      action: "allow",
+      reason: "unsupported",
+      scope: "none",
+      provider: "openai-codex",
+      profileId: "openai-codex:default",
+      selectionSource: "none",
+    }),
+    formatUsagePolicyDecisionDetail: vi.fn().mockReturnValue(null),
+    writeCachedProviderUsageSummary: vi.fn().mockResolvedValue(undefined),
     resolveRuntimeSyntheticAuthProviderRefs: vi.fn().mockReturnValue([]),
     resolveProviderSyntheticAuthWithPlugin: vi.fn().mockReturnValue(undefined),
   };
@@ -243,6 +261,11 @@ vi.mock("./load-config.js", () => ({
 vi.mock("../../infra/provider-usage.js", () => ({
   formatUsageWindowSummary: vi.fn().mockReturnValue("-"),
   loadProviderUsageSummary: mocks.loadProviderUsageSummary,
+  loadProviderUsageSummaryWithCache: mocks.loadProviderUsageSummaryWithCache,
+  isUsagePolicySurfaceEnabled: mocks.isUsagePolicySurfaceEnabled,
+  readCachedUsagePolicyDecision: mocks.readCachedUsagePolicyDecision,
+  formatUsagePolicyDecisionDetail: mocks.formatUsagePolicyDecisionDetail,
+  writeCachedProviderUsageSummary: mocks.writeCachedProviderUsageSummary,
   resolveUsageProviderId: vi.fn((providerId: string) => providerId),
 }));
 vi.mock("../../plugins/synthetic-auth.runtime.js", () => ({
@@ -387,7 +410,7 @@ describe("modelsStatusCommand auth overview", () => {
 
     expectResolveAgentDirCalledFor("main");
     expect(mocks.ensureAuthProfileStore).toHaveBeenCalled();
-    expect(payload.defaultModel).toBe("anthropic/claude-opus-4-6");
+    expect(payload.defaultModel).toBe("anthropic/claude-opus-4-5");
     expect(payload.configPath).toBe("/tmp/openclaw-dev/openclaw.json");
     expect(payload.auth.storePath).toBe("/tmp/openclaw-agent/auth-profiles.json");
     expect(payload.auth.shellEnvFallback.enabled).toBe(true);
@@ -460,6 +483,35 @@ describe("modelsStatusCommand auth overview", () => {
     expect(mocks.ensureAuthProfileStore).toHaveBeenCalledWith("/tmp/openclaw-legacy-agent");
     const payload = parseFirstJsonLog(localRuntime);
     expect(payload.agentDir).toBe("/tmp/openclaw-legacy-agent");
+  });
+
+  it("does not emit raw short api-key values in JSON labels", async () => {
+    const localRuntime = createRuntime();
+    const shortSecret = "abc123"; // pragma: allowlist secret
+    const originalProfiles = { ...mocks.store.profiles };
+    mocks.store.profiles = {
+      ...mocks.store.profiles,
+      "openai:default": {
+        type: "api_key",
+        provider: "openai",
+        key: shortSecret,
+      },
+    };
+
+    try {
+      await modelsStatusCommand({ json: true }, localRuntime as never);
+      const payload = JSON.parse(String((localRuntime.log as Mock).mock.calls[0]?.[0]));
+      const providers = payload.auth.providers as Array<{
+        provider: string;
+        profiles: { labels: string[] };
+      }>;
+      const openai = providers.find((p) => p.provider === "openai");
+      const labels = openai?.profiles.labels ?? [];
+      expect(labels.join(" ")).toContain("...");
+      expect(labels.join(" ")).not.toContain(shortSecret);
+    } finally {
+      mocks.store.profiles = originalProfiles;
+    }
   });
 
   it("uses agent overrides and reports sources", async () => {
@@ -2091,6 +2143,48 @@ describe("modelsStatusCommand auth overview", () => {
         });
       },
     );
+  });
+
+  it("shows cached usage-policy warnings per profile in text output", async () => {
+    const localRuntime = createRuntime();
+    mocks.isUsagePolicySurfaceEnabled.mockReturnValue(true);
+    mocks.readCachedUsagePolicyDecision.mockResolvedValue({
+      action: "warn",
+      reason: "threshold",
+      scope: "default",
+      provider: "openai-codex",
+      profileId: "openai-codex:default",
+      selectionSource: "none",
+      matched: {
+        kind: "warn",
+        window: "5h",
+        threshold: 20,
+        remainingPercent: 15,
+        usedPercent: 85,
+      },
+    });
+    mocks.formatUsagePolicyDecisionDetail.mockReturnValue(
+      "warning threshold matched (5h 15% left)",
+    );
+
+    try {
+      await modelsStatusCommand({ agent: "main" }, localRuntime as never);
+      const output = (localRuntime.log as Mock).mock.calls
+        .map((call: unknown[]) => String(call[0]))
+        .join("\n");
+      expect(output).toContain("usage policy: warning threshold matched (5h 15% left)");
+    } finally {
+      mocks.isUsagePolicySurfaceEnabled.mockReturnValue(false);
+      mocks.readCachedUsagePolicyDecision.mockResolvedValue({
+        action: "allow",
+        reason: "unsupported",
+        scope: "none",
+        provider: "openai-codex",
+        profileId: "openai-codex:default",
+        selectionSource: "none",
+      });
+      mocks.formatUsagePolicyDecisionDetail.mockReturnValue(null);
+    }
   });
 
   it("throws when agent id is unknown", async () => {

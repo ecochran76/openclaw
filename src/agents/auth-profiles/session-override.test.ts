@@ -4,14 +4,20 @@
  * updates without loading the real auth store implementation.
  */
 import fs from "node:fs/promises";
+import os from "node:os";
+import path from "node:path";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import type { SessionEntry } from "../../config/sessions/types.js";
 import type { OpenClawConfig } from "../../config/types.openclaw.js";
+import { withStateDirEnv } from "../../test-helpers/state-dir-env.js";
 import {
   type OpenClawTestState,
   withOpenClawTestState,
 } from "../../test-utils/openclaw-test-state.js";
-import { resolveSessionAuthProfileOverride } from "./session-override.js";
+import {
+  resolveSessionAuthProfileOverride,
+  resolveSessionAuthProfileSelection,
+} from "./session-override.js";
 import type { AuthProfileStore } from "./types.js";
 
 const authStoreMocks = vi.hoisted(() => {
@@ -124,6 +130,24 @@ async function withAuthState<T>(run: (state: OpenClawTestState) => Promise<T>): 
   );
 }
 
+async function withAuthStateDir<T>(run: (params: { stateDir: string }) => Promise<T>): Promise<T> {
+  const previousStateDir = process.env.OPENCLAW_STATE_DIR;
+  const tempRoot = await fs.mkdtemp(path.join(os.tmpdir(), "openclaw-auth-"));
+  const stateDir = path.join(tempRoot, "state");
+  process.env.OPENCLAW_STATE_DIR = stateDir;
+  try {
+    await fs.mkdir(stateDir, { recursive: true });
+    return await run({ stateDir });
+  } finally {
+    if (previousStateDir === undefined) {
+      delete process.env.OPENCLAW_STATE_DIR;
+    } else {
+      process.env.OPENCLAW_STATE_DIR = previousStateDir;
+    }
+    await fs.rm(tempRoot, { recursive: true, force: true });
+  }
+}
+
 function createAuthStore(): AuthProfileStore {
   return {
     version: 1,
@@ -149,6 +173,32 @@ function createAuthStoreWithProfiles(params: {
 
 const TEST_PRIMARY_PROFILE_ID = "openai:primary@example.test";
 const TEST_SECONDARY_PROFILE_ID = "openai:secondary@example.test";
+
+async function writeUsageCache(params: {
+  agentDir: string;
+  entries: Array<{
+    profileId: string;
+    provider: string;
+    usedPercent: number;
+  }>;
+}) {
+  const cachePath = path.join(params.agentDir, "provider-usage-cache.json");
+  const payload = {
+    version: 1,
+    profiles: Object.fromEntries(
+      params.entries.map((entry) => [
+        `${entry.provider}::${entry.profileId}`,
+        {
+          provider: entry.provider,
+          profileId: entry.profileId,
+          updatedAt: Date.now(),
+          windows: [{ label: "5h", usedPercent: entry.usedPercent }],
+        },
+      ]),
+    ),
+  };
+  await fs.writeFile(cachePath, JSON.stringify(payload), "utf-8");
+}
 
 describe("resolveSessionAuthProfileOverride", () => {
   afterEach(() => {
@@ -612,6 +662,382 @@ describe("resolveSessionAuthProfileOverride", () => {
       expect(resolved).toBe("openai-codex:dillan");
       expect(sessionEntry.authProfileOverride).toBe("openai-codex:dillan");
       expect(sessionEntry.authProfileOverrideSource).toBe("user");
+    });
+  });
+
+  it("blocks auto-selected profiles when cached usage matches a stop threshold", async () => {
+    await withStateDirEnv("openclaw-auth-", async ({ stateDir }) => {
+      const agentDir = path.join(stateDir, "agent");
+      await fs.mkdir(agentDir, { recursive: true });
+      const profileId = "openai-codex:default";
+      const provider = "openai-codex";
+      await fs.writeFile(
+        path.join(agentDir, "auth-profiles.json"),
+        JSON.stringify({
+          version: 1,
+          profiles: {
+            [profileId]: {
+              type: "oauth",
+              provider,
+              access: "access-default",
+              refresh: "refresh-default",
+              expires: Date.now() + 60_000,
+            },
+          },
+          order: {
+            [provider]: [profileId],
+          },
+        }),
+        "utf-8",
+      );
+      await writeUsageCache({
+        agentDir,
+        entries: [{ profileId, provider, usedPercent: 85 }],
+      });
+
+      const sessionEntry: SessionEntry = {
+        sessionId: "s1",
+        updatedAt: Date.now(),
+      };
+      const sessionStore = { "agent:main:slack:thread:1": sessionEntry };
+
+      const resolved = await resolveSessionAuthProfileSelection({
+        cfg: {
+          auth: {
+            usagePolicy: {
+              enabled: true,
+              defaults: {
+                stop: [{ window: "5h", remainingPercentLte: 20 }],
+              },
+            },
+          },
+        } as OpenClawConfig,
+        provider,
+        agentDir,
+        sessionEntry,
+        sessionStore,
+        sessionKey: "agent:main:slack:thread:1",
+        storePath: undefined,
+        isNewSession: false,
+      });
+
+      expect(resolved.profileId).toBe(profileId);
+      expect(resolved.blockedReason?.kind).toBe("usage_policy_stop");
+      expect(resolved.blockedReason?.message).toContain("stop threshold matched");
+    });
+  });
+
+  it("keeps default-scope stop rules from overriding a manual profile selection", async () => {
+    await withStateDirEnv("openclaw-auth-", async ({ stateDir }) => {
+      const agentDir = path.join(stateDir, "agent");
+      await fs.mkdir(agentDir, { recursive: true });
+      const profileId = "openai-codex:default";
+      const provider = "openai-codex";
+      await fs.writeFile(
+        path.join(agentDir, "auth-profiles.json"),
+        JSON.stringify({
+          version: 1,
+          profiles: {
+            [profileId]: {
+              type: "oauth",
+              provider,
+              access: "access-default",
+              refresh: "refresh-default",
+              expires: Date.now() + 60_000,
+            },
+          },
+          order: {
+            [provider]: [profileId],
+          },
+        }),
+        "utf-8",
+      );
+      await writeUsageCache({
+        agentDir,
+        entries: [{ profileId, provider, usedPercent: 85 }],
+      });
+
+      const sessionEntry: SessionEntry = {
+        sessionId: "s1",
+        updatedAt: Date.now(),
+        authProfileOverride: profileId,
+        authProfileOverrideSource: "user",
+      };
+      const sessionStore = { "agent:main:slack:thread:1": sessionEntry };
+
+      const resolved = await resolveSessionAuthProfileSelection({
+        cfg: {
+          auth: {
+            usagePolicy: {
+              enabled: true,
+              defaults: {
+                stop: [{ window: "5h", remainingPercentLte: 20 }],
+              },
+            },
+          },
+        } as OpenClawConfig,
+        provider,
+        agentDir,
+        sessionEntry,
+        sessionStore,
+        sessionKey: "agent:main:slack:thread:1",
+        storePath: undefined,
+        isNewSession: false,
+      });
+
+      expect(resolved.profileId).toBe(profileId);
+      expect(resolved.blockedReason).toBeUndefined();
+      expect(
+        await resolveSessionAuthProfileOverride({
+          cfg: {
+            auth: {
+              usagePolicy: {
+                enabled: true,
+                defaults: {
+                  stop: [{ window: "5h", remainingPercentLte: 20 }],
+                },
+              },
+            },
+          } as OpenClawConfig,
+          provider,
+          agentDir,
+          sessionEntry,
+          sessionStore,
+          sessionKey: "agent:main:slack:thread:1",
+          storePath: undefined,
+          isNewSession: false,
+        }),
+      ).toBe(profileId);
+    });
+  });
+
+  it("auto-switches to the next cached-healthy profile when a switch threshold matches", async () => {
+    await withStateDirEnv("openclaw-auth-", async ({ stateDir }) => {
+      const agentDir = path.join(stateDir, "agent");
+      await fs.mkdir(agentDir, { recursive: true });
+      const provider = "openai-codex";
+      const primaryProfileId = "openai-codex:default";
+      const backupProfileId = "openai-codex:backup";
+      await fs.writeFile(
+        path.join(agentDir, "auth-profiles.json"),
+        JSON.stringify({
+          version: 1,
+          profiles: {
+            [primaryProfileId]: {
+              type: "oauth",
+              provider,
+              access: "access-default",
+              refresh: "refresh-default",
+              expires: Date.now() + 60_000,
+            },
+            [backupProfileId]: {
+              type: "oauth",
+              provider,
+              access: "access-backup",
+              refresh: "refresh-backup",
+              expires: Date.now() + 60_000,
+            },
+          },
+          order: {
+            [provider]: [primaryProfileId, backupProfileId],
+          },
+        }),
+        "utf-8",
+      );
+      await writeUsageCache({
+        agentDir,
+        entries: [
+          { profileId: primaryProfileId, provider, usedPercent: 85 },
+          { profileId: backupProfileId, provider, usedPercent: 10 },
+        ],
+      });
+
+      const sessionEntry: SessionEntry = {
+        sessionId: "s1",
+        updatedAt: Date.now(),
+      };
+      const sessionStore = { "agent:main:slack:thread:1": sessionEntry };
+
+      const resolved = await resolveSessionAuthProfileSelection({
+        cfg: {
+          auth: {
+            usagePolicy: {
+              enabled: true,
+              defaults: {
+                switch: [{ window: "5h", remainingPercentLte: 20 }],
+              },
+            },
+          },
+        } as OpenClawConfig,
+        provider,
+        agentDir,
+        sessionEntry,
+        sessionStore,
+        sessionKey: "agent:main:slack:thread:1",
+        storePath: undefined,
+        isNewSession: false,
+      });
+
+      expect(resolved.profileId).toBe(backupProfileId);
+      expect(resolved.switchNotice?.message).toContain(
+        `from ${primaryProfileId} to ${backupProfileId}`,
+      );
+      expect(sessionEntry.authProfileOverride).toBe(backupProfileId);
+      expect(sessionEntry.authProfileOverrideSource).toBe("auto");
+    });
+  });
+
+  it("can stop when a switch threshold matches and no eligible target exists", async () => {
+    await withStateDirEnv("openclaw-auth-", async ({ stateDir }) => {
+      const agentDir = path.join(stateDir, "agent");
+      await fs.mkdir(agentDir, { recursive: true });
+      const provider = "openai-codex";
+      const primaryProfileId = "openai-codex:default";
+      const blockedProfileId = "openai-codex:blocked";
+      await fs.writeFile(
+        path.join(agentDir, "auth-profiles.json"),
+        JSON.stringify({
+          version: 1,
+          profiles: {
+            [primaryProfileId]: {
+              type: "oauth",
+              provider,
+              access: "access-default",
+              refresh: "refresh-default",
+              expires: Date.now() + 60_000,
+            },
+            [blockedProfileId]: {
+              type: "oauth",
+              provider,
+              access: "access-blocked",
+              refresh: "refresh-blocked",
+              expires: Date.now() + 60_000,
+            },
+          },
+          order: {
+            [provider]: [primaryProfileId, blockedProfileId],
+          },
+        }),
+        "utf-8",
+      );
+      await writeUsageCache({
+        agentDir,
+        entries: [
+          { profileId: primaryProfileId, provider, usedPercent: 85 },
+          { profileId: blockedProfileId, provider, usedPercent: 95 },
+        ],
+      });
+
+      const sessionEntry: SessionEntry = {
+        sessionId: "s1",
+        updatedAt: Date.now(),
+      };
+      const sessionStore = { "agent:main:slack:thread:1": sessionEntry };
+
+      const resolved = await resolveSessionAuthProfileSelection({
+        cfg: {
+          auth: {
+            usagePolicy: {
+              enabled: true,
+              defaults: {
+                switch: [{ window: "5h", remainingPercentLte: 20 }],
+                stop: [{ window: "5h", remainingPercentLte: 10 }],
+                onNoSwitchTarget: "stop",
+              },
+            },
+          },
+        } as OpenClawConfig,
+        provider,
+        agentDir,
+        sessionEntry,
+        sessionStore,
+        sessionKey: "agent:main:slack:thread:1",
+        storePath: undefined,
+        isNewSession: false,
+      });
+
+      expect(resolved.profileId).toBe(primaryProfileId);
+      expect(resolved.blockedReason?.kind).toBe("usage_policy_stop");
+      expect(resolved.blockedReason?.message).toContain("No eligible auth profile is available");
+    });
+  });
+
+  it("can warn when a switch threshold matches and no eligible target exists", async () => {
+    await withStateDirEnv("openclaw-auth-", async ({ stateDir }) => {
+      const agentDir = path.join(stateDir, "agent");
+      await fs.mkdir(agentDir, { recursive: true });
+      const provider = "openai-codex";
+      const primaryProfileId = "openai-codex:default";
+      const blockedProfileId = "openai-codex:blocked";
+      await fs.writeFile(
+        path.join(agentDir, "auth-profiles.json"),
+        JSON.stringify({
+          version: 1,
+          profiles: {
+            [primaryProfileId]: {
+              type: "oauth",
+              provider,
+              access: "access-default",
+              refresh: "refresh-default",
+              expires: Date.now() + 60_000,
+            },
+            [blockedProfileId]: {
+              type: "oauth",
+              provider,
+              access: "access-blocked",
+              refresh: "refresh-blocked",
+              expires: Date.now() + 60_000,
+            },
+          },
+          order: {
+            [provider]: [primaryProfileId, blockedProfileId],
+          },
+        }),
+        "utf-8",
+      );
+      await writeUsageCache({
+        agentDir,
+        entries: [
+          { profileId: primaryProfileId, provider, usedPercent: 85 },
+          { profileId: blockedProfileId, provider, usedPercent: 95 },
+        ],
+      });
+
+      const sessionEntry: SessionEntry = {
+        sessionId: "s1",
+        updatedAt: Date.now(),
+      };
+      const sessionStore = { "agent:main:slack:thread:1": sessionEntry };
+
+      const resolved = await resolveSessionAuthProfileSelection({
+        cfg: {
+          auth: {
+            usagePolicy: {
+              enabled: true,
+              defaults: {
+                switch: [{ window: "5h", remainingPercentLte: 20 }],
+                stop: [{ window: "5h", remainingPercentLte: 10 }],
+                onNoSwitchTarget: "warn",
+              },
+            },
+          },
+        } as OpenClawConfig,
+        provider,
+        agentDir,
+        sessionEntry,
+        sessionStore,
+        sessionKey: "agent:main:slack:thread:1",
+        storePath: undefined,
+        isNewSession: false,
+      });
+
+      expect(resolved.profileId).toBe(primaryProfileId);
+      expect(resolved.blockedReason).toBeUndefined();
+      expect(resolved.usagePolicyDecision?.action).toBe("warn");
+      expect(resolved.usagePolicyDecision?.noSwitchTarget).toBe(true);
+      expect(resolved.usagePolicyDecision?.message).toContain(
+        "No eligible auth profile is available for automatic switching.",
+      );
     });
   });
 });

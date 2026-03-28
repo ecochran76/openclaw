@@ -14,6 +14,7 @@ import {
   buildAuthHealthSummary,
   DEFAULT_OAUTH_WARN_MS,
   formatRemainingShort,
+  type AuthProfileHealth,
 } from "../../agents/auth-health.js";
 import { evaluateStoredCredentialEligibility } from "../../agents/auth-profiles/credential-state.js";
 import {
@@ -54,6 +55,18 @@ import {
   parseStrictFiniteNumber,
   parseStrictPositiveInteger,
 } from "../../infra/parse-finite-number.js";
+import {
+  formatUsagePolicyDecisionDetail,
+  formatUsageWindowSummary,
+  isUsagePolicySurfaceEnabled,
+  loadProviderUsageSummary,
+  loadProviderUsageSummaryWithCache,
+  readCachedUsagePolicyDecision,
+  resolveUsageProviderId,
+  type UsageProviderId,
+  type UsageSummary,
+  writeCachedProviderUsageSummary,
+} from "../../infra/provider-usage.js";
 import { getShellEnvAppliedKeys, shouldEnableShellEnvFallback } from "../../infra/shell-env.js";
 import {
   captureCurrentPluginMetadataSnapshotState,
@@ -81,7 +94,6 @@ import {
   resolveKnownAgentId,
 } from "./shared.js";
 
-type ProviderUsageRuntime = typeof import("../../infra/provider-usage.js");
 type ProgressRuntime = typeof import("../../cli/progress.js");
 
 function resolveEnvAgentDirOverride(env: NodeJS.ProcessEnv = process.env): string | undefined {
@@ -91,9 +103,6 @@ function resolveEnvAgentDirOverride(env: NodeJS.ProcessEnv = process.env): strin
 type TerminalTableRuntime = typeof import("../../../packages/terminal-core/src/table.js");
 type ListProbeRuntime = typeof import("./list.probe.js");
 
-const providerUsageRuntimeLoader = createLazyImportLoader<ProviderUsageRuntime>(
-  () => import("../../infra/provider-usage.js"),
-);
 const progressRuntimeLoader = createLazyImportLoader<ProgressRuntime>(
   () => import("../../cli/progress.js"),
 );
@@ -113,10 +122,6 @@ type StatusSyntheticAuth = {
   mode?: ProviderSyntheticAuthResult["mode"];
   expiresAt?: number;
 };
-
-function loadProviderUsageRuntime(): Promise<ProviderUsageRuntime> {
-  return providerUsageRuntimeLoader.load();
-}
 
 function loadProgressRuntime(): Promise<ProgressRuntime> {
   return progressRuntimeLoader.load();
@@ -240,6 +245,75 @@ function syntheticAuthCredential(
     refresh: "",
     expires: auth.expiresAt,
   };
+}
+
+/** Prints model default, auth, provider, and optional probe status. */
+async function refreshProfileUsageCacheForModelsStatus(params: {
+  agentDir: string;
+  oauthProfiles: AuthProfileHealth[];
+  timeoutMs: number;
+  usageSummary?: UsageSummary;
+}) {
+  const profilesByUsageProvider = new Map<UsageProviderId, AuthProfileHealth[]>();
+  for (const profile of params.oauthProfiles) {
+    const usageProvider = resolveUsageProviderId(profile.provider);
+    if (!usageProvider) {
+      continue;
+    }
+    const existing = profilesByUsageProvider.get(usageProvider);
+    if (existing) {
+      existing.push(profile);
+    } else {
+      profilesByUsageProvider.set(usageProvider, [profile]);
+    }
+  }
+
+  const providerSnapshots = new Map(
+    (params.usageSummary?.providers ?? []).map(
+      (snapshot) => [snapshot.provider, snapshot] as const,
+    ),
+  );
+  const refreshTasks: Array<Promise<void>> = [];
+
+  for (const [usageProvider, profiles] of profilesByUsageProvider) {
+    if (profiles.length === 1) {
+      const profile = profiles[0];
+      const providerSnapshot = providerSnapshots.get(usageProvider);
+      if (providerSnapshot) {
+        refreshTasks.push(
+          writeCachedProviderUsageSummary({
+            agentDir: params.agentDir,
+            profileId: profile.profileId,
+            summary: {
+              updatedAt: params.usageSummary?.updatedAt ?? Date.now(),
+              providers: [providerSnapshot],
+            },
+          }).catch(() => undefined),
+        );
+        continue;
+      }
+    }
+
+    for (const profile of profiles) {
+      refreshTasks.push(
+        loadProviderUsageSummaryWithCache({
+          providers: [usageProvider],
+          agentDir: params.agentDir,
+          profileId: profile.profileId,
+          cacheAgentDir: params.agentDir,
+          cacheProfileId: profile.profileId,
+          timeoutMs: params.timeoutMs,
+          fallbackToCache: false,
+        })
+          .then(() => undefined)
+          .catch(() => undefined),
+      );
+    }
+  }
+
+  if (refreshTasks.length > 0) {
+    await Promise.all(refreshTasks);
+  }
 }
 
 /** Prints model default, auth, provider, and optional probe status. */
@@ -1110,7 +1184,6 @@ export async function modelsStatusCommand(
         allowed.length ? allowed.join(", ") : "all",
       )}`,
     );
-
     runtime.log("");
     runtime.log(colorize(rich, theme.heading, "Auth overview"));
     runtime.log(
@@ -1236,8 +1309,6 @@ export async function modelsStatusCommand(
     if (oauthProfiles.length === 0) {
       runtime.log(colorize(rich, theme.muted, "- none"));
     } else {
-      const { formatUsageWindowSummary, loadProviderUsageSummary, resolveUsageProviderId } =
-        await loadProviderUsageRuntime();
       const usageByProvider = new Map<string, string>();
       const usageProviders = Array.from(
         new Set(
@@ -1248,6 +1319,7 @@ export async function modelsStatusCommand(
             .filter((provider): provider is NonNullable<typeof provider> => Boolean(provider)),
         ),
       );
+      let usageSummaryForCache: UsageSummary | undefined;
       if (usageProviders.length > 0) {
         try {
           const usageSummary = await loadProviderUsageSummary({
@@ -1255,6 +1327,7 @@ export async function modelsStatusCommand(
             agentDir,
             timeoutMs: 3500,
           });
+          usageSummaryForCache = usageSummary;
           for (const snapshot of usageSummary.providers) {
             const formatted = formatUsageWindowSummary(snapshot, {
               now: Date.now(),
@@ -1268,6 +1341,12 @@ export async function modelsStatusCommand(
         } catch {
           // ignore usage failures
         }
+        await refreshProfileUsageCacheForModelsStatus({
+          agentDir,
+          oauthProfiles,
+          timeoutMs: 3500,
+          usageSummary: usageSummaryForCache,
+        }).catch(() => undefined);
       }
 
       const formatStatus = (status: string) => {
@@ -1316,7 +1395,29 @@ export async function modelsStatusCommand(
               : profile.expiresAt
                 ? ` expires in ${formatRemainingShort(profile.remainingMs)}`
                 : " expires unknown";
-          runtime.log(`  - ${labelLocal} ${status}${expiry}`);
+          const usagePolicyDetail =
+            usageKey &&
+            isUsagePolicySurfaceEnabled({
+              config: cfg,
+              provider: usageKey,
+              profileId: profile.profileId,
+              surface: "status",
+            })
+              ? formatUsagePolicyDecisionDetail(
+                  await readCachedUsagePolicyDecision({
+                    config: cfg,
+                    agentDir,
+                    provider: usageKey,
+                    profileId: profile.profileId,
+                    selectionSource: "none",
+                    now: Date.now(),
+                  }),
+                )
+              : null;
+          const usagePolicySuffix = usagePolicyDetail
+            ? colorize(rich, theme.warn, ` · usage policy: ${usagePolicyDetail}`)
+            : "";
+          runtime.log(`  - ${labelLocal} ${status}${expiry}${usagePolicySuffix}`);
         }
       }
     }

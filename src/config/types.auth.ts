@@ -16,6 +16,57 @@ export type AuthProfileConfig = {
   displayName?: string;
 };
 
+export type UsageThresholdRule = {
+  /** Usage window label to match (for example "5h" or "1w"). */
+  window: string;
+  /** Trigger when remaining percentage is less than or equal to this value. */
+  remainingPercentLte: number;
+};
+
+export type UsagePolicySurfaceConfig = {
+  /** Show warning/decision details in `/status` style replies. Default: true. */
+  status?: boolean;
+  /** Show warning/decision details in `session_status`. Default: true. */
+  sessionStatus?: boolean;
+  /** Emit a preflight notice before a turn when a warn/switch decision applies. Default: false. */
+  preflightNotice?: boolean;
+};
+
+export type UsagePolicyRules = {
+  /** Warn when matching usage windows reach these remaining-percentage thresholds. */
+  warn?: UsageThresholdRule[];
+  /** Stop new turns when matching usage windows reach these remaining-percentage thresholds. */
+  stop?: UsageThresholdRule[];
+  /** Switch to another profile when matching usage windows reach these thresholds. */
+  switch?: UsageThresholdRule[];
+  /**
+   * Keep manual `/profile` selections sticky unless explicitly disabled.
+   * Default: true.
+   */
+  respectUserOverride?: boolean;
+  /** Behavior when a switch rule matches but no eligible target profile exists. Default: warn. */
+  onNoSwitchTarget?: "allow" | "warn" | "stop";
+  /** Per-surface visibility toggles for usage-policy notices. */
+  surfaces?: UsagePolicySurfaceConfig;
+};
+
+export type UsagePolicyConfig = {
+  /** Enable cached usage-policy evaluation for supported providers. Default: false. */
+  enabled?: boolean;
+  /** Minimum refresh cadence, in minutes, for async usage snapshot updates. Default: 15. */
+  refreshMinutes?: number;
+  /** Treat cached usage snapshots older than this as stale. Default: 20. */
+  staleAfterMinutes?: number;
+  /** Decision to apply when cached usage data is stale. Default: allow. */
+  staleBehavior?: "allow" | "warn" | "stop";
+  /** Global fallback rules when no provider-specific or profile-specific rules exist. */
+  defaults?: UsagePolicyRules;
+  /** Provider-specific usage-policy rules keyed by provider id. */
+  providers?: Record<string, UsagePolicyRules>;
+  /** Profile-specific usage-policy rules keyed by auth profile id. */
+  profiles?: Record<string, UsagePolicyRules>;
+};
+
 export type AuthConfig = {
   /** Named auth profiles keyed by profile id. */
   profiles?: Record<string, AuthProfileConfig>;
@@ -59,4 +110,5 @@ export type AuthConfig = {
      */
     rateLimitedProfileRotations?: number;
   };
+  usagePolicy?: UsagePolicyConfig;
 };

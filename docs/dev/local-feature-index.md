@@ -32,10 +32,14 @@ This file is the durable map for:
 ### 1. Profiles
 
 - Doc: `docs/dev/local-features/profiles.md`
+- Design docs:
+  - `docs/dev/codex-status-profile-quota-plan.md`
+  - `docs/dev/profile-usage-alerts-auto-switch-plan.md`
 - Scope:
   - auth profiles
   - profile-aware routing / selection
   - auth profile normalization and usage reporting
+  - profile-aware usage alerts / stop gates / auto-switch policy
   - profile-oriented UI and CLI behaviors
 - Common validation:
   - `pnpm test -- src/commands/models/auth.test.ts`

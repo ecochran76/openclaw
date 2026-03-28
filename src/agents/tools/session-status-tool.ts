@@ -23,6 +23,14 @@ import { triggerSessionPatchHook } from "../../gateway/session-patch-hooks.js";
 import { resolveSessionModelIdentityRef } from "../../gateway/session-utils.js";
 import { loadManifestMetadataSnapshot } from "../../plugins/manifest-contract-eligibility.js";
 import {
+  formatUsagePolicyDecisionLine,
+  formatUsageWindowSummary,
+  isUsagePolicySurfaceEnabled,
+  loadProviderUsageSummaryWithCache,
+  readCachedUsagePolicyDecision,
+  resolveUsageProviderId,
+} from "../../infra/provider-usage.js";
+import {
   buildAgentMainSessionKey,
   parseAgentSessionKey,
   resolveAgentIdFromSessionKey,
@@ -847,14 +855,18 @@ export function createSessionStatusTool(opts?: {
       const providerForCard = providerOverrideForCard ?? defaultProviderForCard;
       const usageProvider = resolveUsageProviderId(providerForCard);
       let usageLine: string | undefined;
+      const activeProfileId = resolved.entry.authProfileOverride?.trim() || undefined;
+      const activeProfileSelectionSource = resolved.entry.authProfileOverrideSource ?? "none";
       if (usageProvider) {
         try {
-          const sourceProfile = resolved.entry.authProfileOverride?.trim();
-          const usageSummary = await loadProviderUsageSummary({
+          const usageSummary = await loadProviderUsageSummaryWithCache({
             timeoutMs: 3500,
             providers: [usageProvider],
             agentDir,
-            profileId: sourceProfile,
+            profileId: activeProfileId,
+            cacheAgentDir: activeProfileId ? agentDir : undefined,
+            cacheProfileId: activeProfileId,
+            fallbackToCache: true,
           });
           const snapshot = usageSummary.providers.find((entry) => entry.provider === usageProvider);
           if (snapshot) {
@@ -864,18 +876,40 @@ export function createSessionStatusTool(opts?: {
               includeResets: true,
             });
             if (formatted && !formatted.startsWith("error:")) {
-              usageLine = sourceProfile
-                ? `📊 Usage (profile ${sourceProfile}): ${formatted}`
+              usageLine = activeProfileId
+                ? `📊 Usage (profile ${activeProfileId}): ${formatted}`
                 : `📊 Usage: ${formatted}`;
             }
-          } else if (sourceProfile) {
-            usageLine = `📊 Usage unavailable for active profile (${sourceProfile})`;
+          } else if (activeProfileId) {
+            usageLine = `📊 Usage unavailable for active profile (${activeProfileId})`;
           }
         } catch {
-          const sourceProfile = resolved.entry.authProfileOverride?.trim();
-          usageLine = sourceProfile
-            ? `📊 Usage unavailable for active profile (${sourceProfile})`
+          usageLine = activeProfileId
+            ? `📊 Usage unavailable for active profile (${activeProfileId})`
             : "📊 Usage unavailable for active profile";
+        }
+        if (
+          activeProfileId &&
+          isUsagePolicySurfaceEnabled({
+            config: cfg,
+            provider: usageProvider,
+            profileId: activeProfileId,
+            surface: "sessionStatus",
+          })
+        ) {
+          const usagePolicyLine = formatUsagePolicyDecisionLine(
+            await readCachedUsagePolicyDecision({
+              config: cfg,
+              agentDir,
+              provider: usageProvider,
+              profileId: activeProfileId,
+              selectionSource: activeProfileSelectionSource,
+              now: Date.now(),
+            }),
+          );
+          if (usagePolicyLine) {
+            usageLine = [usageLine, usagePolicyLine].filter(Boolean).join("\n");
+          }
         }
       }
 

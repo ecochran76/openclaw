@@ -25,6 +25,9 @@ That makes this a feature family worth tracking explicitly.
 - active local feature area
 - partially overlapping with upstream work
 - must be revalidated after rebase/upgrade work
+- current design docs:
+  - `docs/dev/codex-status-profile-quota-plan.md`
+  - `docs/dev/profile-usage-alerts-auto-switch-plan.md`
 
 ## Known implementation notes
 
@@ -39,6 +42,8 @@ Watch these areas during rebases:
 - `src/commands/models/*`
 - `src/cli/*models*`
 - provider auth normalization / usage code
+- `src/infra/provider-usage.*`
+- `src/agents/auth-profiles/*`
 - agents overview UI and tests
 
 ## Validation runbook
@@ -60,6 +65,8 @@ If UI/profile picker work changed too, also run targeted agents UI tests.
 - wrong auth profile selected or reported
 - explicit profile-id ignored
 - usage shown against the wrong profile
+- near-quota profile keeps getting selected even though another profile is available
+- auto-switch or stop policy fires on stale quota data
 - agents overview/profile controls missing or inconsistent
 
 ## Recovery notes
@@ -67,3 +74,4 @@ If UI/profile picker work changed too, also run targeted agents UI tests.
 - confirm the deployable profile slices are on `ec-main`, not only on a feature branch
 - compare local profile behavior against recent known-good `ec-main` commits before assuming upstream broke it
 - prefer cherry-picking deployable profile fixes onto `ec-main` early instead of letting them accumulate on a broad feature branch
+- keep quota-policy cache/state separate from cooldown logic; if these get mixed during a rebase, unwind that first

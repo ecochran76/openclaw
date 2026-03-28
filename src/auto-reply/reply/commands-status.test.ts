@@ -2,7 +2,6 @@
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
-import { withTempHome } from "openclaw/plugin-sdk/test-env";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { normalizeTestText } from "../../../test/helpers/normalize-text.js";
 import { saveAuthProfileStore } from "../../agents/auth-profiles/store.js";
@@ -22,6 +21,7 @@ import {
 } from "../../tasks/task-executor.js";
 import { resetTaskRegistryForTests } from "../../tasks/task-registry.js";
 import { withEnvAsync } from "../../test-utils/env.js";
+import { withTempHome } from "../../plugin-sdk/test-helpers/temp-home.js";
 import { buildStatusPluginsReply, buildStatusReply, buildStatusText } from "./commands-status.js";
 import {
   baseCommandTestConfig,
@@ -83,6 +83,19 @@ vi.mock("../../agents/harness/builtin-openclaw.js", () => ({
   }),
 }));
 
+vi.mock("../../agents/agent-scope.js", async (importOriginal) => {
+  const actual = await importOriginal<typeof import("../../agents/agent-scope.js")>();
+  return {
+    ...actual,
+    resolveDefaultAgentId: () => "main",
+    resolveAgentDir: () => "/tmp/openclaw-agent",
+    resolveSessionAgentId: ({ sessionKey }: { sessionKey: string }) => {
+      const match = sessionKey.match(/^agent:([^:]+):/);
+      return match?.[1] ?? "main";
+    },
+  };
+});
+
 const baseCfg = baseCommandTestConfig;
 const expectedCodexRuntimeUsageAuth = [
   {
@@ -114,7 +127,7 @@ async function buildStatusReplyForTest(params: { sessionKey?: string; verbose?: 
     sessionScope: commandParams.sessionScope,
     storePath: commandParams.storePath,
     provider: "anthropic",
-    model: "claude-opus-4-6",
+    model: "claude-opus-4-5",
     contextTokens: 0,
     resolvedThinkLevel: commandParams.resolvedThinkLevel,
     resolvedFastMode: false,
@@ -271,13 +284,12 @@ describe("buildStatusReply subagent summary", () => {
       ],
     });
     resetSubagentRegistryForTests();
-    resetTaskRegistryForTests({ persist: false });
-    configureInMemoryTaskRegistryStoreForTests();
+    resetTaskRegistryForTests();
   });
 
   afterEach(() => {
     resetSubagentRegistryForTests();
-    resetTaskRegistryForTests({ persist: false });
+    resetTaskRegistryForTests();
   });
 
   it("counts ended orchestrators with active descendants as active", async () => {

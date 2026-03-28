@@ -1,5 +1,7 @@
 # Codex profile-aware `/status` quota plan
 
+Note: this is the status-surface slice only. The broader warning/stop/auto-switch design now lives in `docs/dev/profile-usage-alerts-auto-switch-plan.md`.
+
 ## Problem
 
 `/status` currently shows provider quota/usage for `openai-codex`, but the snapshot is resolved by provider only and may come from the first profile in auth order. After `/profile openai-codex:<id>`, model auth changes, but the quota line can still reflect a different profile.

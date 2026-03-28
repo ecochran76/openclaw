@@ -1113,12 +1113,114 @@ export const FIELD_HELP: Record<string, string> = {
   "auth.cooldowns.authPermanentMaxMinutes":
     "Cap (minutes) for auth_permanent backoff (default: 60).",
   "auth.cooldowns.failureWindowHours": "Failure window (hours) for backoff counters (default: 24).",
-  "auth.cooldowns.overloadedProfileRotations":
-    "Maximum same-provider auth-profile rotations allowed for overloaded errors before switching to model fallback (default: 1).",
-  "auth.cooldowns.overloadedBackoffMs":
-    "Fixed delay in milliseconds before retrying an overloaded provider/profile rotation (default: 0).",
-  "auth.cooldowns.rateLimitedProfileRotations":
-    "Maximum same-provider auth-profile rotations allowed for rate-limit errors before switching to model fallback (default: 1).",
+  "auth.usagePolicy":
+    "Cached quota-policy rules for warning, stopping, or switching auth profiles before plan-usage windows are exhausted. Keep this additive and policy-driven; do not use it to replace cooldown handling.",
+  "auth.usagePolicy.enabled":
+    "Enables usage-policy evaluation for supported providers based on cached usage snapshots. Keep disabled until rules and refresh surfaces are configured.",
+  "auth.usagePolicy.refreshMinutes":
+    "Minimum refresh cadence in minutes for async usage-snapshot updates. Use modest intervals so status surfaces stay reasonably fresh without adding constant provider traffic.",
+  "auth.usagePolicy.staleAfterMinutes":
+    "Age threshold in minutes after which cached usage snapshots are treated as stale. Set this slightly above the refresh cadence to avoid false stale decisions.",
+  "auth.usagePolicy.staleBehavior":
+    'Decision to apply when cached usage data is stale: "allow", "warn", or "stop". Use "warn" or "stop" only when you prefer conservative behavior over continuity.',
+  "auth.usagePolicy.defaults":
+    "Global fallback usage-policy rules applied when no provider-specific or profile-specific rules match.",
+  "auth.usagePolicy.defaults.warn":
+    "Warning thresholds evaluated against normalized usage windows when no narrower scope overrides them.",
+  "auth.usagePolicy.defaults.stop":
+    "Stop thresholds evaluated against normalized usage windows when no narrower scope overrides them.",
+  "auth.usagePolicy.defaults.switch":
+    "Auto-switch thresholds evaluated against normalized usage windows when no narrower scope overrides them.",
+  "auth.usagePolicy.defaults.respectUserOverride":
+    "Keep manual `/profile` selections sticky unless a narrower policy explicitly opts out (default: true).",
+  "auth.usagePolicy.defaults.onNoSwitchTarget":
+    'Fallback action when a switch threshold matches but no eligible target profile exists: "allow", "warn", or "stop" (default: warn).',
+  "auth.usagePolicy.defaults.surfaces":
+    "Per-surface visibility toggles for usage-policy warnings and notices.",
+  "auth.usagePolicy.defaults.surfaces.status":
+    "Show usage-policy warnings on `/status` style replies when true (default: true).",
+  "auth.usagePolicy.defaults.surfaces.sessionStatus":
+    "Show usage-policy warnings on `session_status` replies when true (default: true).",
+  "auth.usagePolicy.defaults.surfaces.preflightNotice":
+    "Emit a preflight warning notice before a turn when warn or switch policy applies (default: false).",
+  "auth.usagePolicy.defaults.warn[].window":
+    'Normalized usage window label to match (for example "5h" or "1w").',
+  "auth.usagePolicy.defaults.warn[].remainingPercentLte":
+    "Trigger the warning when remaining percentage is less than or equal to this value.",
+  "auth.usagePolicy.defaults.stop[].window":
+    'Normalized usage window label to match (for example "5h" or "1w").',
+  "auth.usagePolicy.defaults.stop[].remainingPercentLte":
+    "Trigger the stop gate when remaining percentage is less than or equal to this value.",
+  "auth.usagePolicy.defaults.switch[].window":
+    'Normalized usage window label to match (for example "5h" or "1w").',
+  "auth.usagePolicy.defaults.switch[].remainingPercentLte":
+    "Trigger auto-switch consideration when remaining percentage is less than or equal to this value.",
+  "auth.usagePolicy.providers": "Provider-specific usage-policy overrides keyed by provider id.",
+  "auth.usagePolicy.providers.*":
+    "Usage-policy rules that apply to every profile for the matched provider unless a profile-specific rule overrides them.",
+  "auth.usagePolicy.providers.*.warn":
+    "Provider-scoped warning thresholds evaluated against normalized usage windows.",
+  "auth.usagePolicy.providers.*.stop":
+    "Provider-scoped stop thresholds evaluated against normalized usage windows.",
+  "auth.usagePolicy.providers.*.switch":
+    "Provider-scoped auto-switch thresholds evaluated against normalized usage windows.",
+  "auth.usagePolicy.providers.*.respectUserOverride":
+    "Provider-scoped control for whether manual `/profile` selections stay sticky (default: true).",
+  "auth.usagePolicy.providers.*.onNoSwitchTarget":
+    'Provider-scoped fallback action when no switch target is available: "allow", "warn", or "stop".',
+  "auth.usagePolicy.providers.*.surfaces":
+    "Provider-scoped per-surface visibility toggles for usage-policy notices.",
+  "auth.usagePolicy.providers.*.surfaces.status":
+    "Show provider-scoped usage-policy warnings on `/status` style replies when true.",
+  "auth.usagePolicy.providers.*.surfaces.sessionStatus":
+    "Show provider-scoped usage-policy warnings on `session_status` replies when true.",
+  "auth.usagePolicy.providers.*.surfaces.preflightNotice":
+    "Emit provider-scoped preflight warnings before a turn when true.",
+  "auth.usagePolicy.providers.*.warn[].window":
+    'Normalized usage window label to match (for example "5h" or "1w").',
+  "auth.usagePolicy.providers.*.warn[].remainingPercentLte":
+    "Trigger the provider-scoped warning when remaining percentage is less than or equal to this value.",
+  "auth.usagePolicy.providers.*.stop[].window":
+    'Normalized usage window label to match (for example "5h" or "1w").',
+  "auth.usagePolicy.providers.*.stop[].remainingPercentLte":
+    "Trigger the provider-scoped stop gate when remaining percentage is less than or equal to this value.",
+  "auth.usagePolicy.providers.*.switch[].window":
+    'Normalized usage window label to match (for example "5h" or "1w").',
+  "auth.usagePolicy.providers.*.switch[].remainingPercentLte":
+    "Trigger provider-scoped auto-switch consideration when remaining percentage is less than or equal to this value.",
+  "auth.usagePolicy.profiles": "Profile-specific usage-policy overrides keyed by auth profile id.",
+  "auth.usagePolicy.profiles.*":
+    "Usage-policy rules that apply only to the matched auth profile id.",
+  "auth.usagePolicy.profiles.*.warn":
+    "Profile-scoped warning thresholds evaluated against normalized usage windows.",
+  "auth.usagePolicy.profiles.*.stop":
+    "Profile-scoped stop thresholds evaluated against normalized usage windows.",
+  "auth.usagePolicy.profiles.*.switch":
+    "Profile-scoped auto-switch thresholds evaluated against normalized usage windows.",
+  "auth.usagePolicy.profiles.*.respectUserOverride":
+    "Profile-scoped control for whether manual `/profile` selections stay sticky (default: true).",
+  "auth.usagePolicy.profiles.*.onNoSwitchTarget":
+    'Profile-scoped fallback action when no switch target is available: "allow", "warn", or "stop".',
+  "auth.usagePolicy.profiles.*.surfaces":
+    "Profile-scoped per-surface visibility toggles for usage-policy notices.",
+  "auth.usagePolicy.profiles.*.surfaces.status":
+    "Show profile-scoped usage-policy warnings on `/status` style replies when true.",
+  "auth.usagePolicy.profiles.*.surfaces.sessionStatus":
+    "Show profile-scoped usage-policy warnings on `session_status` replies when true.",
+  "auth.usagePolicy.profiles.*.surfaces.preflightNotice":
+    "Emit profile-scoped preflight warnings before a turn when true.",
+  "auth.usagePolicy.profiles.*.warn[].window":
+    'Normalized usage window label to match (for example "5h" or "1w").',
+  "auth.usagePolicy.profiles.*.warn[].remainingPercentLte":
+    "Trigger the profile-scoped warning when remaining percentage is less than or equal to this value.",
+  "auth.usagePolicy.profiles.*.stop[].window":
+    'Normalized usage window label to match (for example "5h" or "1w").',
+  "auth.usagePolicy.profiles.*.stop[].remainingPercentLte":
+    "Trigger the profile-scoped stop gate when remaining percentage is less than or equal to this value.",
+  "auth.usagePolicy.profiles.*.switch[].window":
+    'Normalized usage window label to match (for example "5h" or "1w").',
+  "auth.usagePolicy.profiles.*.switch[].remainingPercentLte":
+    "Trigger profile-scoped auto-switch consideration when remaining percentage is less than or equal to this value.",
   "agents.defaults.workspace":
     "Default workspace path exposed to agent runtime tools for filesystem context and repo-aware behavior. Set this explicitly when running from wrappers so path resolution stays deterministic.",
   "agents.defaults.skipOptionalBootstrapFiles":

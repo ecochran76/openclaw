@@ -18,6 +18,7 @@ const resolveModelAsyncMock = vi.fn();
 const getApiKeyForModelMock = vi.fn();
 const requireApiKeyMock = vi.fn();
 const resolveSessionAuthProfileOverrideMock = vi.fn();
+const resolveSessionAuthProfileSelectionMock = vi.fn();
 const getActiveEmbeddedRunSnapshotMock = vi.fn();
 const resolveSessionAgentIdMock = vi.fn();
 const resolveSessionAgentIdsMock = vi.fn();
@@ -166,6 +167,8 @@ vi.mock("./embedded-agent-runner/stream-resolution.js", () => ({
 vi.mock("./auth-profiles/session-override.js", () => ({
   resolveSessionAuthProfileOverride: (...args: unknown[]) =>
     resolveSessionAuthProfileOverrideMock(...args),
+  resolveSessionAuthProfileSelection: (...args: unknown[]) =>
+    resolveSessionAuthProfileSelectionMock(...args),
 }));
 
 vi.mock("../logging/diagnostic.js", () => ({
@@ -450,6 +453,7 @@ describe("runBtwSideQuestion", () => {
     getApiKeyForModelMock.mockReset();
     requireApiKeyMock.mockReset();
     resolveSessionAuthProfileOverrideMock.mockReset();
+    resolveSessionAuthProfileSelectionMock.mockReset();
     getActiveEmbeddedRunSnapshotMock.mockReset();
     resolveSessionAgentIdMock.mockReset();
     resolveSessionAgentIdsMock.mockReset();
@@ -493,6 +497,10 @@ describe("runBtwSideQuestion", () => {
     getApiKeyForModelMock.mockResolvedValue({ apiKey: "secret", mode: "api-key", source: "test" });
     requireApiKeyMock.mockReturnValue("secret");
     resolveSessionAuthProfileOverrideMock.mockResolvedValue("profile-1");
+    resolveSessionAuthProfileSelectionMock.mockResolvedValue({
+      profileId: "profile-1",
+      source: "auto",
+    });
     getActiveEmbeddedRunSnapshotMock.mockReturnValue(undefined);
     resolveSessionAgentIdMock.mockReturnValue("main");
     resolveSessionAgentIdsMock.mockReturnValue({ defaultAgentId: "main", sessionAgentId: "main" });
