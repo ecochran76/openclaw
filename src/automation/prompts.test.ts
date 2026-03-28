@@ -19,6 +19,9 @@ describe("automation prompts", () => {
     expect(prompt).toContain(
       "If you need human approval for a consequential action, stop and say so.",
     );
+    expect(prompt).toContain(
+      "If there is still obvious in-scope work left for another turn, return RESULT: progress instead of RESULT: completed.",
+    );
   });
 
   it("continuation prompt includes remaining budgets and steering note", () => {
@@ -37,6 +40,12 @@ describe("automation prompts", () => {
     expect(prompt).toContain("Remaining budgets: turns=4, tokens=61580, duration=23m 46s");
     expect(prompt).toContain("Operator note: Keep the CTA copy conservative.");
     expect(prompt).toContain("stop because approval is needed");
+    expect(prompt).toContain(
+      "Use RESULT: completed only when the original goal is fully satisfied.",
+    );
+    expect(prompt).toContain(
+      "If you finished one slice but there is still obvious in-scope work left and budget remains, use RESULT: progress instead.",
+    );
   });
 
   it("interim-ack follow-up prompt is distinct and focused", () => {

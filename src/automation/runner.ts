@@ -99,6 +99,22 @@ function summarizeProgress(result: AutomationWorkerTurnResult): string | undefin
   return text.length <= 280 ? text : `${text.slice(0, 277)}...`;
 }
 
+function looksSelfReportedIncomplete(text?: string | null): boolean {
+  const normalized = normalizeText(text);
+  if (!normalized) {
+    return false;
+  }
+
+  return [
+    /not started in this pass/i,
+    /what remains\s*[:\n]/i,
+    /remaining work\s*[:\n]/i,
+    /still to do\s*[:\n]/i,
+    /next recommended implementation step/i,
+    /\bi left .+ as the next\b/i,
+  ].some((pattern) => pattern.test(normalized));
+}
+
 function resolveFinalSummaryCandidate(
   record: AutomationRunRecord,
   result?: AutomationWorkerTurnResult,
@@ -304,7 +320,12 @@ async function runAutomationLoop(params: {
       approvalRequired: turnResult.approvalRequired,
       errored: turnResult.errored,
     });
-    if (explicitStopReason) {
+    if (
+      explicitStopReason === "completed" &&
+      looksSelfReportedIncomplete(resolveFinalSummaryCandidate(updated, turnResult))
+    ) {
+      // Keep going when the worker's own summary admits there is still in-scope work left.
+    } else if (explicitStopReason) {
       await finalizeAutomationRun({
         runId: params.runId,
         reason: explicitStopReason,

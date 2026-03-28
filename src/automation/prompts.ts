@@ -28,6 +28,9 @@ export function buildAutomationClassificationGuidanceText(): string {
     "- stop with an explicit blocker,",
     "- stop because approval is needed, or",
     "- do exactly the next best step.",
+    "Use RESULT: completed only when the original goal is fully satisfied.",
+    "If you finished one slice but there is still obvious in-scope work left and budget remains, use RESULT: progress instead.",
+    "Do not return RESULT: completed just because you reached a coherent stopping point for this turn.",
   ].join("\n");
 }
 
@@ -46,6 +49,7 @@ export function buildAutomationInitialPrompt(params: {
     "- If you finish, return the final result clearly.",
     "- If you are blocked, say exactly what is blocking you.",
     "- If you need human approval for a consequential action, stop and say so.",
+    "- If there is still obvious in-scope work left for another turn, return RESULT: progress instead of RESULT: completed.",
   ];
   if (params.steeringNote?.trim()) {
     lines.push(`Operator note: ${params.steeringNote.trim()}`);

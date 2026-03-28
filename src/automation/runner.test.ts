@@ -99,6 +99,44 @@ describe("automation runner", () => {
     expect(getAutomationRun(run.runId)?.stopReason).toBe("completed");
   });
 
+  it("keeps going when a completed result explicitly says work remains", async () => {
+    const runWorkerTurn = vi
+      .fn()
+      .mockResolvedValueOnce({
+        completed: true,
+        outputText: [
+          "RESULT: completed",
+          "Implemented the doctor slice.",
+          "",
+          "Not started in this pass",
+          "- planner summary scaffolding",
+          "",
+          "I left that as the next recommended implementation step.",
+        ].join("\n"),
+        totalTokensUsedDelta: 800,
+      })
+      .mockResolvedValueOnce({
+        completed: true,
+        outputText: "RESULT: completed\nImplemented the remaining planner slice.",
+        totalTokensUsedDelta: 600,
+      });
+
+    const run = startAutomationRunInBackground({
+      requesterSessionKey: "agent:main:main",
+      childSessionKey: "agent:main:subagent:auto-5",
+      spec: { goal: "Finish the task.", stop: { maxTurns: 3 } },
+      deps: { runWorkerTurn },
+      runId: "auto_runner_5",
+      now: 1000,
+    });
+
+    await waitForAutomationRunToSettle(run.runId);
+
+    expect(runWorkerTurn).toHaveBeenCalledTimes(2);
+    expect(getAutomationRun(run.runId)?.workerTurnsUsed).toBe(2);
+    expect(getAutomationRun(run.runId)?.stopReason).toBe("completed");
+  });
+
   it("honors a user stop request before starting the next worker turn", async () => {
     let stopIssued = false;
     const run = startAutomationRunInBackground({
