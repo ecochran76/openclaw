@@ -43,7 +43,9 @@ export function resolveLegacyAuthChoiceAliasesForCli(params?: {
     .flatMap((choice) => choice.deprecatedChoiceIds ?? [])
     .filter((choice): choice is AuthChoice => LEGACY_REPLACEMENT_AUTH_CHOICES.has(choice))
     .toSorted((left, right) => left.localeCompare(right));
-  const aliases: AuthChoice[] = ["setup-token", "oauth", ...manifestCliAliases];
+  const aliases = Array.from(
+    new Set<AuthChoice>(["setup-token", "oauth", "claude-cli", ...manifestCliAliases]),
+  );
   if (!aliases.includes(OPENAI_CODEX_LEGACY_AUTH_CHOICE)) {
     aliases.push(OPENAI_CODEX_LEGACY_AUTH_CHOICE);
   }
@@ -89,7 +91,8 @@ export function isDeprecatedAuthChoice(
 ): authChoice is AuthChoice {
   return (
     typeof authChoice === "string" &&
-    (isDeprecatedOpenAICodexAuthChoice(authChoice) ||
+    (authChoice === "claude-cli" ||
+      isDeprecatedOpenAICodexAuthChoice(authChoice) ||
       Boolean(resolveLegacyCliBackendChoice(authChoice, params)))
   );
 }
@@ -110,6 +113,12 @@ export function resolveDeprecatedAuthChoiceReplacement(
   | undefined {
   if (typeof authChoice !== "string") {
     return undefined;
+  }
+  if (authChoice === "claude-cli") {
+    return {
+      normalized: "anthropic-cli",
+      message: 'Auth choice "claude-cli" is deprecated; using Anthropic Claude CLI setup instead.',
+    };
   }
   const normalizedOpenAICodex = normalizeOpenAICodexAuthChoice(authChoice);
   if (normalizedOpenAICodex && normalizedOpenAICodex !== authChoice) {

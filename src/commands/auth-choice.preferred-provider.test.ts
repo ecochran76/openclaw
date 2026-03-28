@@ -85,10 +85,10 @@ describe("resolvePreferredProviderForAuthChoice", () => {
     await expect(
       resolvePreferredProviderForAuthChoice({ choice: "claude-cli", env }),
     ).resolves.toBe("anthropic");
-    expect(resolveManifestProviderAuthChoice).toHaveBeenCalledWith(
-      "anthropic-cli",
-      expect.objectContaining({ choice: "claude-cli", env }),
-    );
+    expect(resolveManifestProviderAuthChoice).toHaveBeenCalledWith("anthropic-cli", {
+      choice: "claude-cli",
+      env,
+    });
     expect(resolvePluginProviders).not.toHaveBeenCalled();
   });
 
