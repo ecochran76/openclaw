@@ -853,6 +853,9 @@ export function createSessionStatusTool(opts?: {
           : resolved.entry;
       const providerOverrideForCard = statusSessionEntry.providerOverride?.trim();
       const providerForCard = providerOverrideForCard ?? defaultProviderForCard;
+      const primaryModelLabel = providerForCard
+        ? `${providerForCard}/${defaultModelForCard}`
+        : defaultModelForCard;
       const usageProvider = resolveUsageProviderId(providerForCard);
       let usageLine: string | undefined;
       const activeProfileId = resolved.entry.authProfileOverride?.trim() || undefined;

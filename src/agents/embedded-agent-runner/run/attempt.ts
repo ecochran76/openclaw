@@ -2854,7 +2854,7 @@ export async function runEmbeddedAttempt(
         resolvedApiKey: params.resolvedApiKey,
       });
       activeSession.agent.streamFn = resolveEmbeddedAgentStreamFn({
-        currentStreamFn: defaultSessionStreamFn,
+        currentStreamFn: authAwareStreamFn,
         providerStreamFn,
         sessionId: params.sessionId,
         promptCacheKey: params.promptCacheKey,

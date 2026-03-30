@@ -244,6 +244,7 @@ export function renderAgents(props: AgentsProps) {
                       onConfigSave: props.onConfigSave,
                       onModelChange: props.onModelChange,
                       onModelFallbacksChange: props.onModelFallbacksChange,
+                      onPrimaryProfileChange: props.onPrimaryProfileChange,
                       onSelectPanel: props.onSelectPanel,
                     }),
                   )
@@ -344,7 +345,8 @@ export function renderAgents(props: AgentsProps) {
                     onSelectPanel: props.onSelectPanel,
                   })
                 : nothing}
-            `}      </section>
+            `}
+      </section>
     </div>
   `;
 }

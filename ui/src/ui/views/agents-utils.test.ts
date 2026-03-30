@@ -3,6 +3,8 @@ import { describe, expect, it } from "vitest";
 import {
   agentLogoUrl,
   assistantAvatarFallbackUrl,
+  buildAuthOrderWithPrimary,
+  buildAuthProfileOptions,
   buildAgentContext,
   resolveConfiguredCronModelSuggestions,
   resolveAgentAvatarUrl,

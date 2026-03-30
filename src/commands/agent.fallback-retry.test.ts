@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { resolveFallbackRetryPrompt } from "./agent.js";
+import { resolveFallbackRetryPrompt } from "../agents/command/attempt-execution.helpers.js";
 
 describe("resolveFallbackRetryPrompt", () => {
   it("keeps original body on first attempt", () => {
@@ -16,8 +16,7 @@ describe("resolveFallbackRetryPrompt", () => {
       resolveFallbackRetryPrompt({
         body: "Reply with EXACTLY: RECEIVED handoff-123",
         isFallbackRetry: true,
-        provenanceKind: "inter_session",
-        sourceTool: "sessions_send",
+        sessionHasHistory: false,
       }),
     ).toBe("Reply with EXACTLY: RECEIVED handoff-123");
   });
@@ -27,7 +26,8 @@ describe("resolveFallbackRetryPrompt", () => {
       resolveFallbackRetryPrompt({
         body: "hello",
         isFallbackRetry: true,
+        sessionHasHistory: true,
       }),
-    ).toBe("Continue where you left off. The previous model attempt failed or timed out.");
+    ).toBe("[Retry after the previous model attempt failed or timed out]\n\nhello");
   });
 });

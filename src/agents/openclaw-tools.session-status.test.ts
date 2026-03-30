@@ -37,6 +37,35 @@ const emptyPluginMetadataSnapshot = vi.hoisted(() => ({
   plugins: [],
 }));
 const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/;
+const resolveUsageProviderIdMock = vi.hoisted(() =>
+  vi.fn<(...args: unknown[]) => string | undefined>(() => undefined),
+);
+const loadProviderUsageSummaryWithCacheMock = vi.hoisted(() =>
+  vi.fn<
+    (
+      ...args: unknown[]
+    ) => Promise<{ updatedAt: number; providers: Array<Record<string, unknown>> }>
+  >(async () => ({
+    updatedAt: Date.now(),
+    providers: [],
+  })),
+);
+const isUsagePolicySurfaceEnabledMock = vi.hoisted(() =>
+  vi.fn<(...args: unknown[]) => boolean>(() => false),
+);
+const readCachedUsagePolicyDecisionMock = vi.hoisted(() =>
+  vi.fn<(...args: unknown[]) => Promise<Record<string, unknown>>>(async () => ({
+    action: "allow",
+    reason: "unsupported",
+    scope: "none",
+    provider: "openai-codex",
+    profileId: "openai-codex:default",
+    selectionSource: "none",
+  })),
+);
+const formatUsagePolicyDecisionLineMock = vi.hoisted(() =>
+  vi.fn<(...args: unknown[]) => string | null>(() => null),
+);
 
 const createMockConfig = () => ({
   session: { mainKey: "main", scope: "per-sender" },
@@ -1924,9 +1953,20 @@ describe("session_status tool", () => {
 
     const tool = getSessionStatusTool("agent:main:main");
 
-    await expect(tool.execute("call5", { sessionKey: "agent:other:main" })).rejects.toThrow(
-      "Agent-to-agent status is disabled",
-    );
+    const result = await tool.execute("call5", { sessionKey: "agent:other:main" });
+    expect(result.details).toMatchObject({
+      status: "forbidden",
+      error: expect.stringContaining("Agent-to-agent status is disabled"),
+      permissionRequest: {
+        action: "status",
+        reason: "agent_to_agent_disabled",
+        requesterAgentId: "main",
+        targetAgentId: "other",
+      },
+      pendingApproval: {
+        state: "pending",
+      },
+    });
   });
 
   it("blocks unsandboxed same-agent session_status outside self visibility", async () => {

@@ -3480,6 +3480,23 @@ export function renderApp(state: AppViewState) {
                   }
                   updateConfigFormValue(state, basePathResult, { primary, fallbacks: normalized });
                 },
+                onPrimaryProfileChange: (provider, profileId) => {
+                  const normalizedProvider = provider.trim();
+                  if (!normalizedProvider || !configValue) {
+                    return;
+                  }
+                  const authOrderPath = ["auth", "order", normalizedProvider];
+                  if (!profileId) {
+                    removeConfigFormValue(state, authOrderPath);
+                    return;
+                  }
+                  const nextOrder = buildAuthOrderWithPrimary({
+                    configForm: getCurrentConfigValue(),
+                    provider: normalizedProvider,
+                    primaryProfileId: profileId,
+                  });
+                  updateConfigFormValue(state, authOrderPath, nextOrder);
+                },
                 onSetDefault: (agentId) => {
                   stageDefaultAgentConfigEntry(state, agentId);
                 },
