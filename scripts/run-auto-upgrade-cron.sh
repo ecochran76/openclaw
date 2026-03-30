@@ -1,12 +1,15 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-# Cron entrypoint for unattended release-tag auto-upgrades.
+# Cron entrypoint for unattended integration-branch auto-upgrades.
 # - Script sends its own Slack notifications (warning, success, failure)
 # - This wrapper stays silent for cron delivery plumbing
 # - Unattended release upgrades target the deployable integration branch only.
 #   Persistent feature branches are intentionally excluded by default so stale
 #   rebases cannot block live upgrade/install of ec-main.
+# - Because ec-main is maintained by rebasing onto origin/main, the unattended
+#   cron path should default to upstream main, not the latest release tag,
+#   unless an explicit target env was already provided by the operator.
 
 REPO_DIR="${OPENCLAW_AUTO_REPO_DIR:-/home/ecochran76/workspace.local/openclaw.git}"
 CHANNEL="${OPENCLAW_AUTO_NOTIFY_CHANNEL:-slack}"
@@ -35,6 +38,10 @@ if [[ "$NO_FEATURE_SYNC" != "1" ]]; then
       FEATURE_ARGS+=(--feature-branch "$feature_branch")
     fi
   done
+fi
+
+if [[ -z "${OPENCLAW_AUTO_TARGET_KIND:-}" && -z "${OPENCLAW_AUTO_TARGET_REF:-}" ]]; then
+  EXTRA_ARGS+=(--latest-main)
 fi
 
 "$REPO_DIR/scripts/auto-upgrade-on-release-tag.sh" \

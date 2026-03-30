@@ -34,6 +34,7 @@ Both failures were process/documentation failures as much as code failures.
 
 - default to `--no-feature-sync`
 - keep the cron path focused on deployable `ec-main`
+- for the scheduled cron wrapper, default to `--latest-main` unless an explicit target ref/tag is set
 - treat feature-branch maintenance as explicit/manual work
 
 ### For rebases
