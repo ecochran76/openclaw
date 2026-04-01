@@ -1,9 +1,9 @@
 import { describe, expect, it } from "vitest";
-import { resolveCronAuthProfileSelectionResult } from "./auth-profile-selection.js";
+import { resolveSessionAuthProfileRunDecision } from "../../agents/auth-profiles/session-override.js";
 
-describe("resolveCronAuthProfileSelectionResult", () => {
+describe("resolveSessionAuthProfileRunDecision", () => {
   it("returns a blocked cron result for usage-policy stop decisions", () => {
-    const result = resolveCronAuthProfileSelectionResult({
+    const result = resolveSessionAuthProfileRunDecision({
       profileId: "openai-codex:default",
       source: "auto",
       blockedReason: {
@@ -30,15 +30,18 @@ describe("resolveCronAuthProfileSelectionResult", () => {
 
     expect(result).toEqual({
       blocked: true,
+      profileId: "openai-codex:default",
+      source: "auto",
       error:
         "⚠️ Turn blocked by usage policy for openai-codex:default: stop threshold matched (5h 15% left). Use /profile to switch or adjust auth.usagePolicy.",
-      logMessage:
+      notice:
         "⚠️ Turn blocked by usage policy for openai-codex:default: stop threshold matched (5h 15% left). Use /profile to switch or adjust auth.usagePolicy.",
+      usagePolicyDecision: undefined,
     });
   });
 
   it("returns the switched profile id and warning message for usage-policy auto-switches", () => {
-    const result = resolveCronAuthProfileSelectionResult({
+    const result = resolveSessionAuthProfileRunDecision({
       profileId: "openai-codex:backup",
       source: "auto",
       switchNotice: {
@@ -74,10 +77,18 @@ describe("resolveCronAuthProfileSelectionResult", () => {
 
     expect(result).toEqual({
       blocked: false,
-      authProfileId: "openai-codex:backup",
-      authProfileIdSource: "auto",
-      logMessage:
+      profileId: "openai-codex:backup",
+      source: "auto",
+      notice:
         "ℹ️ Usage policy switched auth profile from openai-codex:default to openai-codex:backup (switch threshold matched (5h 15% left)).",
+      usagePolicyDecision: {
+        action: "allow",
+        reason: "threshold",
+        scope: "default",
+        provider: "openai-codex",
+        profileId: "openai-codex:backup",
+        selectionSource: "auto",
+      },
     });
   });
 });

@@ -34,6 +34,8 @@ That makes this a feature family worth tracking explicitly.
 - explicit `openai-codex` profile ids/labels needed normalization support
 - profile behaviors have both CLI and runtime surfaces
 - dashboard/agents UI has had profile-related drift during feature-branch work
+- session auth/usage presentation should be layered through shared helpers rather than rebuilt inside individual tool handlers
+- runner-facing auth-profile shaping should go through shared adapters in `src/agents/auth-profiles/session-override.ts` instead of per-caller translation helpers
 
 ## Conflict hotspots
 
@@ -44,6 +46,7 @@ Watch these areas during rebases:
 - provider auth normalization / usage code
 - `src/infra/provider-usage.*`
 - `src/agents/auth-profiles/*`
+- `src/agents/session-status-card.ts`
 - agents overview UI and tests
 
 ## Validation runbook

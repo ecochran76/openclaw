@@ -169,6 +169,29 @@ vi.mock("./auth-profiles/session-override.js", () => ({
     resolveSessionAuthProfileOverrideMock(...args),
   resolveSessionAuthProfileSelection: (...args: unknown[]) =>
     resolveSessionAuthProfileSelectionMock(...args),
+  resolveSessionAuthProfileRunDecision: (selection: {
+    profileId?: string;
+    source?: "auto" | "user";
+    blockedReason?: { message: string };
+    switchNotice?: { message: string };
+    usagePolicyDecision?: unknown;
+  }) =>
+    selection.blockedReason
+      ? {
+          blocked: true,
+          profileId: selection.profileId,
+          source: selection.source,
+          error: selection.blockedReason.message,
+          notice: selection.blockedReason.message,
+          usagePolicyDecision: selection.usagePolicyDecision,
+        }
+      : {
+          blocked: false,
+          profileId: selection.profileId,
+          source: selection.source,
+          notice: selection.switchNotice?.message,
+          usagePolicyDecision: selection.usagePolicyDecision,
+        },
 }));
 
 vi.mock("../logging/diagnostic.js", () => ({

@@ -15,6 +15,7 @@ import {
   withOpenClawTestState,
 } from "../../test-utils/openclaw-test-state.js";
 import {
+  resolveSessionAuthProfileRunDecision,
   resolveSessionAuthProfileOverride,
   resolveSessionAuthProfileSelection,
 } from "./session-override.js";
@@ -204,6 +205,34 @@ describe("resolveSessionAuthProfileOverride", () => {
   afterEach(() => {
     authStoreMocks.reset();
     vi.clearAllMocks();
+  });
+
+  it("maps blocked selections into a shared runner-facing decision", () => {
+    const result = resolveSessionAuthProfileRunDecision({
+      profileId: "openai-codex:default",
+      source: "auto",
+      blockedReason: {
+        kind: "usage_policy_stop",
+        message: "blocked by usage policy",
+        decision: {
+          action: "stop",
+          reason: "threshold",
+          scope: "default",
+          provider: "openai-codex",
+          profileId: "openai-codex:default",
+          selectionSource: "auto",
+        },
+      },
+    });
+
+    expect(result).toEqual({
+      blocked: true,
+      profileId: "openai-codex:default",
+      source: "auto",
+      error: "blocked by usage policy",
+      notice: "blocked by usage policy",
+      usagePolicyDecision: undefined,
+    });
   });
 
   it("returns early when no auth sources exist", async () => {

@@ -83,11 +83,54 @@ export type ResolvedSessionAuthProfileSelection = {
   blockedReason?: {
     kind: "usage_policy_stop";
     message: string;
+    decision?: UsagePolicyDecision;
   };
   switchNotice?: {
     message: string;
+    fromProfileId?: string;
+    toProfileId?: string;
+    decision?: UsagePolicyDecision;
   };
 };
+
+export type SessionAuthProfileRunDecision =
+  | {
+      blocked: true;
+      profileId?: string;
+      source?: "auto" | "user";
+      error: string;
+      notice: string;
+      usagePolicyDecision?: undefined;
+    }
+  | {
+      blocked: false;
+      profileId?: string;
+      source?: "auto" | "user";
+      notice?: string;
+      usagePolicyDecision?: UsagePolicyDecision;
+    };
+
+export function resolveSessionAuthProfileRunDecision(
+  selection: ResolvedSessionAuthProfileSelection,
+): SessionAuthProfileRunDecision {
+  if (selection.blockedReason) {
+    return {
+      blocked: true,
+      profileId: selection.profileId,
+      source: selection.source,
+      error: selection.blockedReason.message,
+      notice: selection.blockedReason.message,
+      usagePolicyDecision: undefined,
+    };
+  }
+  return {
+    blocked: false,
+    profileId: selection.profileId,
+    source: selection.source,
+    notice: selection.switchNotice?.message,
+    usagePolicyDecision: selection.usagePolicyDecision,
+  };
+}
 
 function resolveSelectionSource(sessionEntry?: SessionEntry): "auto" | "user" | undefined {
   if (sessionEntry?.authProfileOverrideSource === "user") {

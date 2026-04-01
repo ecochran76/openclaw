@@ -1,7 +1,7 @@
 // Auth profile propagation tests cover isolated agent auth profile forwarding.
 import { describe, expect, it } from "vitest";
 import type { AuthProfileFailurePolicy } from "../agents/embedded-agent-runner/run/auth-profile-failure-policy.types.js";
-import { resolveCronAuthProfileSelectionResult } from "./isolated-agent/auth-profile-selection.js";
+import { resolveSessionAuthProfileRunDecision } from "../agents/auth-profiles/session-override.js";
 import {
   makeIsolatedAgentJobFixture,
   makeIsolatedAgentParamsFixture,
@@ -95,7 +95,7 @@ describe("runCronIsolatedAgentTurn auth profile propagation (#20624, #90991)", (
   });
 
   it("preserves the selected auth profile id and source for the embedded run", () => {
-    const result = resolveCronAuthProfileSelectionResult({
+    const result = resolveSessionAuthProfileRunDecision({
       profileId: "openrouter:default",
       source: "auto",
       usagePolicyDecision: {
@@ -110,9 +110,17 @@ describe("runCronIsolatedAgentTurn auth profile propagation (#20624, #90991)", (
 
     expect(result).toEqual({
       blocked: false,
-      authProfileId: "openrouter:default",
-      authProfileIdSource: "auto",
-      logMessage: undefined,
+      profileId: "openrouter:default",
+      source: "auto",
+      notice: undefined,
+      usagePolicyDecision: {
+        action: "allow",
+        reason: "threshold",
+        scope: "none",
+        provider: "openrouter",
+        profileId: "openrouter:default",
+        selectionSource: "auto",
+      },
     });
   });
 });
