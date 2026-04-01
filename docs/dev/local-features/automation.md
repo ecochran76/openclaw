@@ -23,6 +23,7 @@ That means rebases tend to conflict in two ways:
 
 - the automation runtime itself collides with upstream tool/runtime evolution
 - the automation chat surface collides with newer command-loader and status/help refactors
+- command parsing and user-facing automation text should live in shared auto-reply helpers, not in the tool/runtime layer
 
 ## Current status
 
@@ -37,6 +38,7 @@ Watch these areas during upgrades:
 - `src/agents/tools/automation-tool.ts`
 - `src/automation/*`
 - `src/auto-reply/reply/commands-automation.ts`
+- `src/auto-reply/reply/commands-automation-shared.ts`
 - `src/auto-reply/reply/commands-automation-status.test.ts`
 - `src/auto-reply/reply/commands-handlers.runtime.ts`
 - `src/auto-reply/commands-registry.data.ts`
