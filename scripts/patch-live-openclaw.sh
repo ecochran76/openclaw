@@ -66,6 +66,7 @@ PATCH_NOTIFY_TARGET="${OPENCLAW_PATCH_NOTIFY_TARGET:-}"
 PATCH_NOTIFY_REPLY_TO="${OPENCLAW_PATCH_NOTIFY_REPLY_TO:-}"
 PATCH_NOTIFY_ACCOUNT="${OPENCLAW_PATCH_NOTIFY_ACCOUNT:-}"
 PATCH_RESTART_WARNING_TEXT="${OPENCLAW_PATCH_RESTART_WARNING_TEXT:-}"
+OPENCLAW_ENV_DIR="${OPENCLAW_PATCH_ENV_DIR:-$HOME/.openclaw}"
 
 run() {
   if [[ "$DRY_RUN" == "1" ]]; then
@@ -125,7 +126,7 @@ send_patch_notification() {
     return 0
   fi
 
-  local cmd=(openclaw message send --channel "$PATCH_NOTIFY_CHANNEL" --target "$PATCH_NOTIFY_TARGET" --message "$text")
+  local cmd=(message send --channel "$PATCH_NOTIFY_CHANNEL" --target "$PATCH_NOTIFY_TARGET" --message "$text")
   if [[ -n "$PATCH_NOTIFY_REPLY_TO" ]]; then
     cmd+=(--reply-to "$PATCH_NOTIFY_REPLY_TO")
   fi
@@ -133,9 +134,40 @@ send_patch_notification() {
     cmd+=(--account "$PATCH_NOTIFY_ACCOUNT")
   fi
 
-  if ! "${cmd[@]}" >/dev/null 2>&1; then
+  if ! openclaw_cli "${cmd[@]}" >/dev/null 2>&1; then
     echo "warning: failed to send patch notification"
   fi
+}
+
+use_direnv_openclaw() {
+  command -v direnv >/dev/null 2>&1 &&
+    [[ -d "$OPENCLAW_ENV_DIR" ]] &&
+    [[ -f "$OPENCLAW_ENV_DIR/.envrc" ]]
+}
+
+openclaw_cli() {
+  if use_direnv_openclaw; then
+    DIRENV_LOG_FORMAT= direnv exec "$OPENCLAW_ENV_DIR" openclaw "$@"
+    return
+  fi
+  openclaw "$@"
+}
+
+run_openclaw_cli() {
+  local cmd_display
+  if [[ "$DRY_RUN" == "1" ]]; then
+    if use_direnv_openclaw; then
+      printf '[dry-run] env DIRENV_LOG_FORMAT= direnv exec %q openclaw' "$OPENCLAW_ENV_DIR"
+    else
+      printf '[dry-run] openclaw'
+    fi
+    for cmd_display in "$@"; do
+      printf ' %q' "$cmd_display"
+    done
+    printf '\n'
+    return 0
+  fi
+  openclaw_cli "$@"
 }
 
 resolve_npm_bin() {
@@ -288,19 +320,19 @@ if ! tar -tf "$PKG_TGZ" | awk '$0=="package/dist/control-ui/index.html"{found=1}
 fi
 
 run "'$NPM_BIN' i -g '$PKG_TGZ'"
-run "openclaw --version"
+run_openclaw_cli --version
 
-GATEWAY_STATUS_JSON="$(openclaw gateway status --json 2>/dev/null || true)"
+GATEWAY_STATUS_JSON="$(openclaw_cli gateway status --json 2>/dev/null || true)"
 GATEWAY_SERVICE_LOADED="$(printf '%s' "$GATEWAY_STATUS_JSON" | parse_gateway_service_loaded)"
 if [[ "$GATEWAY_SERVICE_LOADED" == "1" ]] || has_systemd_gateway_service; then
   echo "info: gateway service is loaded; refreshing service command path"
-  run "openclaw gateway install --force"
+  run_openclaw_cli gateway install --force
   # `gateway install --force` resolves the runtime from the current shell and can
   # rewrite a previously repaired systemd unit back to an nvm/fnm/volta Node path.
   # Run doctor repair immediately after install so supported system Node 22+
   # remains preferred when available.
   echo "info: repairing gateway service config to keep stable runtime defaults"
-  run "openclaw doctor --repair --non-interactive --yes"
+  run_openclaw_cli doctor --repair --non-interactive --yes
 
   if [[ -n "$PATCH_RESTART_FLAG_FILE" ]]; then
     printf '1\n' > "$PATCH_RESTART_FLAG_FILE"
@@ -311,10 +343,10 @@ if [[ "$GATEWAY_SERVICE_LOADED" == "1" ]] || has_systemd_gateway_service; then
   else
     send_patch_notification "$PATCH_RESTART_WARNING_TEXT"
     if [[ "$DRY_RUN" == "1" ]]; then
-      OPENCLAW_PATCH_ENV_DIR="${OPENCLAW_PATCH_ENV_DIR:-$HOME/.openclaw}" \
+      OPENCLAW_PATCH_ENV_DIR="$OPENCLAW_ENV_DIR" \
         "$REPO_DIR/scripts/restart-live-gateway.sh" --dry-run
     else
-      OPENCLAW_PATCH_ENV_DIR="${OPENCLAW_PATCH_ENV_DIR:-$HOME/.openclaw}" \
+      OPENCLAW_PATCH_ENV_DIR="$OPENCLAW_ENV_DIR" \
         "$REPO_DIR/scripts/restart-live-gateway.sh"
     fi
   fi

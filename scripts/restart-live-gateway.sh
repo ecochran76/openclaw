@@ -9,6 +9,8 @@ set -euo pipefail
 DRY_RUN=0
 SKIP_PROBE=0
 OPENCLAW_ENV_DIR="${OPENCLAW_PATCH_ENV_DIR:-$HOME/.openclaw}"
+RESTART_PROBE_TIMEOUT_SEC="${OPENCLAW_RESTART_PROBE_TIMEOUT_SEC:-60}"
+RESTART_PROBE_INTERVAL_SEC="${OPENCLAW_RESTART_PROBE_INTERVAL_SEC:-2}"
 
 while [[ $# -gt 0 ]]; do
   case "$1" in
@@ -28,6 +30,11 @@ Options:
   --dry-run     Print actions without making changes
   --skip-probe  Restart only; skip post-restart RPC probe
   -h, --help    Show help
+
+Env:
+  OPENCLAW_PATCH_ENV_DIR            direnv-enabled env root (default: ~/.openclaw)
+  OPENCLAW_RESTART_PROBE_TIMEOUT_SEC  bounded probe timeout in seconds (default: 60)
+  OPENCLAW_RESTART_PROBE_INTERVAL_SEC retry interval in seconds (default: 2)
 EOF
       exit 0
       ;;
@@ -85,6 +92,27 @@ run_openclaw_cli() {
     return 0
   fi
   openclaw_cli "$@"
+}
+
+probe_gateway_rpc_until_ready() {
+  local deadline now attempt=1
+  deadline=$(( $(date +%s) + RESTART_PROBE_TIMEOUT_SEC ))
+
+  while true; do
+    if openclaw_cli gateway status --deep --require-rpc; then
+      return 0
+    fi
+
+    now=$(date +%s)
+    if (( now >= deadline )); then
+      echo "error: gateway RPC probe did not recover within ${RESTART_PROBE_TIMEOUT_SEC}s" >&2
+      return 1
+    fi
+
+    echo "warning: gateway RPC probe not ready yet; retrying in ${RESTART_PROBE_INTERVAL_SEC}s (attempt ${attempt})" >&2
+    sleep "$RESTART_PROBE_INTERVAL_SEC"
+    attempt=$((attempt + 1))
+  done
 }
 
 parse_gateway_status_summary() {
@@ -157,4 +185,14 @@ if [[ "$SKIP_PROBE" == "1" ]]; then
 fi
 
 echo "info: verifying gateway RPC after restart"
-run_openclaw_cli gateway status --deep --require-rpc
+if [[ "$DRY_RUN" == "1" ]]; then
+  printf '[dry-run] '
+  if use_direnv_openclaw; then
+    print_quoted_command env DIRENV_LOG_FORMAT= direnv exec "$OPENCLAW_ENV_DIR" openclaw gateway status --deep --require-rpc
+  else
+    print_quoted_command openclaw gateway status --deep --require-rpc
+  fi
+  exit 0
+fi
+
+probe_gateway_rpc_until_ready
