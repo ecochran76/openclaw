@@ -196,7 +196,6 @@ function buildAutomationWorkerJob(input: AutomationWorkerTurnInput): CronJob {
       message: buildWorkerControlPrompt(input.prompt),
       model: input.model,
       thinking: input.thinking,
-      deliver: false,
       timeoutSeconds: 0,
     },
     delivery: { mode: "none" },

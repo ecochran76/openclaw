@@ -21,7 +21,6 @@ import {
 import type { OpenClawConfig } from "../../config/types.openclaw.js";
 import { triggerSessionPatchHook } from "../../gateway/session-patch-hooks.js";
 import { resolveSessionModelIdentityRef } from "../../gateway/session-utils.js";
-import { loadManifestMetadataSnapshot } from "../../plugins/manifest-contract-eligibility.js";
 import {
   formatUsagePolicyDecisionLine,
   formatUsageWindowSummary,
@@ -30,6 +29,7 @@ import {
   readCachedUsagePolicyDecision,
   resolveUsageProviderId,
 } from "../../infra/provider-usage.js";
+import { loadManifestMetadataSnapshot } from "../../plugins/manifest-contract-eligibility.js";
 import {
   buildAgentMainSessionKey,
   parseAgentSessionKey,
@@ -49,6 +49,8 @@ import {
   isDeliverableMessageChannel,
   normalizeMessageChannel,
 } from "../../utils/message-channel.js";
+import { resolveAgentDir } from "../agent-scope.js";
+import { resolveModelAuthLabel } from "../model-auth-label.js";
 import { loadModelCatalog } from "../model-catalog.js";
 import {
   buildModelAliasIndex,
@@ -714,11 +716,19 @@ export function createSessionStatusTool(opts?: {
         throw new Error(`Unknown ${kind}: ${requestedKeyInput}`);
       }
 
+      const needsVisibilityCheckForImplicitTarget =
+        !isExplicitAgentKey &&
+        (requestedKeyInput === "main" ||
+          (requestedKeyInput !== "current" &&
+            shouldResolveSessionIdInput(requestedKeyInput) &&
+            resolved.key !== requestedKeyInput));
+
       // Preserve caller-scoped raw-key/current lookups as "self" for visibility checks unless
-      // sandbox/session-id resolution requires checking the resolved target directly.
+      // sandbox/session-id/implicit-target resolution requires checking the resolved target directly.
       const shouldTreatVisibilityTargetAsSelf =
         isSemanticCurrentRequest ||
         (!resolvedTargetViaSessionId &&
+          !needsVisibilityCheckForImplicitTarget &&
           !(opts?.sandboxed === true && !isExplicitAgentKey) &&
           (resolvedViaImplicitCurrentFallback ||
             requestedKeyInput === "current" ||
@@ -732,6 +742,7 @@ export function createSessionStatusTool(opts?: {
       }
 
       const configured = resolveDefaultModelForAgent({ cfg, agentId });
+      const agentDir = resolveAgentDir(cfg, agentId);
       const modelRaw = readStringParam(params, "model");
       let changedModel = false;
       if (typeof modelRaw === "string") {
@@ -880,16 +891,16 @@ export function createSessionStatusTool(opts?: {
             });
             if (formatted && !formatted.startsWith("error:")) {
               usageLine = activeProfileId
-                ? `📊 Usage (profile ${activeProfileId}): ${formatted}`
-                : `📊 Usage: ${formatted}`;
+                ? `Usage (profile ${activeProfileId}): ${formatted}`
+                : `Usage: ${formatted}`;
             }
           } else if (activeProfileId) {
-            usageLine = `📊 Usage unavailable for active profile (${activeProfileId})`;
+            usageLine = `Usage unavailable for active profile (${activeProfileId})`;
           }
         } catch {
           usageLine = activeProfileId
-            ? `📊 Usage unavailable for active profile (${activeProfileId})`
-            : "📊 Usage unavailable for active profile";
+            ? `Usage unavailable for active profile (${activeProfileId})`
+            : "Usage unavailable for active profile";
         }
         if (
           activeProfileId &&
@@ -915,7 +926,13 @@ export function createSessionStatusTool(opts?: {
           }
         }
       }
-
+      const modelAuthLabel =
+        resolveModelAuthLabel({
+          provider: providerForCard,
+          cfg,
+          sessionEntry: statusSessionEntry,
+          agentDir,
+        }) ?? undefined;
       const isGroup =
         statusSessionEntry.chatType === "group" ||
         statusSessionEntry.chatType === "channel" ||
@@ -958,11 +975,17 @@ export function createSessionStatusTool(opts?: {
         taskLineOverride: taskLine,
         skipDefaultTaskLookup: true,
         primaryModelLabelOverride: primaryModelLabel,
+        modelAuthOverride: modelAuthLabel,
+        activeModelAuthOverride: modelAuthLabel,
         ...(providerForCard ? {} : { modelAuthOverride: undefined }),
         includeTranscriptUsage: true,
       });
       const fullStatusText =
         taskLine && !statusText.includes(taskLine) ? `${statusText}\n${taskLine}` : statusText;
+      const statusWithUsageText =
+        usageLine && !fullStatusText.includes(usageLine)
+          ? `${fullStatusText}\n${usageLine}`
+          : fullStatusText;
       const resultOverrideProvider = statusSessionEntry.providerOverride?.trim();
       const resultOverrideModel = statusSessionEntry.modelOverride?.trim();
       const liveSessionKeySet = new Set(
@@ -982,10 +1005,10 @@ export function createSessionStatusTool(opts?: {
       });
       const routeContextText = formatSessionStatusRouteContext(routeDetails);
       const visibleStatusText = routeContextText
-        ? `${fullStatusText}
+        ? `${statusWithUsageText}
 
 ${routeContextText}`
-        : fullStatusText;
+        : statusWithUsageText;
       const modelOverrideForResult =
         modelRaw === undefined
           ? undefined

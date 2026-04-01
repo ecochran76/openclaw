@@ -259,7 +259,9 @@ function createModelCatalogModuleMock() {
 
 function createAuthProfilesModuleMock() {
   return {
+    externalCliDiscoveryForProviderAuth: () => undefined,
     ensureAuthProfileStore: () => ({ profiles: {} }),
+    loadAuthProfileStoreWithoutExternalProfiles: () => ({ profiles: {} }),
     resolveAuthProfileDisplayLabel: () => undefined,
     resolveAuthProfileOrder: () => [],
   };
