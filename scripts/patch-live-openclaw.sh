@@ -16,12 +16,16 @@ set -euo pipefail
 #   OPENCLAW_PATCH_SKIP_RESTART=1
 #   OPENCLAW_PATCH_ENV_DIR=$HOME/.openclaw
 #   OPENCLAW_PATCH_RESTART_FLAG_FILE=/tmp/openclaw-patch-restart-needed.flag
+#   OPENCLAW_PATCH_CLI_TIMEOUT_SEC=180
+#   OPENCLAW_PATCH_RESTART_TIMEOUT_SEC=180
 
 DRY_RUN=0
 PATCH_EXPECT_BRANCH="${OPENCLAW_PATCH_EXPECT_BRANCH:-}"
 PATCH_REQUIRE_EXPECTED_BRANCH="${OPENCLAW_PATCH_REQUIRE_EXPECTED_BRANCH:-0}"
 PATCH_SKIP_RESTART="${OPENCLAW_PATCH_SKIP_RESTART:-0}"
 PATCH_RESTART_FLAG_FILE="${OPENCLAW_PATCH_RESTART_FLAG_FILE:-}"
+PATCH_CLI_TIMEOUT_SEC="${OPENCLAW_PATCH_CLI_TIMEOUT_SEC:-180}"
+PATCH_RESTART_TIMEOUT_SEC="${OPENCLAW_PATCH_RESTART_TIMEOUT_SEC:-180}"
 
 while [[ $# -gt 0 ]]; do
   case "$1" in
@@ -67,6 +71,15 @@ PATCH_NOTIFY_REPLY_TO="${OPENCLAW_PATCH_NOTIFY_REPLY_TO:-}"
 PATCH_NOTIFY_ACCOUNT="${OPENCLAW_PATCH_NOTIFY_ACCOUNT:-}"
 PATCH_RESTART_WARNING_TEXT="${OPENCLAW_PATCH_RESTART_WARNING_TEXT:-}"
 OPENCLAW_ENV_DIR="${OPENCLAW_PATCH_ENV_DIR:-$HOME/.openclaw}"
+
+# Keep package-manager output deterministic in unattended runs. npm otherwise
+# emits TTY spinner/progress behavior that can leave the wrapper looking hung.
+export NPM_CONFIG_PROGRESS="${NPM_CONFIG_PROGRESS:-false}"
+export npm_config_progress="${npm_config_progress:-false}"
+export NPM_CONFIG_FUND="${NPM_CONFIG_FUND:-false}"
+export npm_config_fund="${npm_config_fund:-false}"
+export NPM_CONFIG_AUDIT="${NPM_CONFIG_AUDIT:-false}"
+export npm_config_audit="${npm_config_audit:-false}"
 
 run() {
   if [[ "$DRY_RUN" == "1" ]]; then
@@ -168,6 +181,57 @@ run_openclaw_cli() {
     return 0
   fi
   openclaw_cli "$@"
+}
+
+print_quoted_command() {
+  local first=1
+  for arg in "$@"; do
+    if [[ "$first" == "1" ]]; then
+      printf '%q' "$arg"
+      first=0
+    else
+      printf ' %q' "$arg"
+    fi
+  done
+  printf '\n'
+}
+
+run_bounded_cmd() {
+  local timeout_sec="$1"
+  shift
+
+  if [[ "$DRY_RUN" == "1" ]]; then
+    printf '[dry-run timeout=%ss] ' "$timeout_sec"
+    print_quoted_command "$@"
+    return 0
+  fi
+
+  if command -v timeout >/dev/null 2>&1; then
+    if timeout --foreground "${timeout_sec}s" "$@"; then
+      return 0
+    fi
+    local status=$?
+    if [[ "$status" == "124" ]]; then
+      echo "error: command timed out after ${timeout_sec}s" >&2
+    fi
+    return "$status"
+  fi
+
+  "$@"
+}
+
+run_openclaw_cli_bounded() {
+  local timeout_sec="$1"
+  shift
+  run_bounded_cmd "$timeout_sec" env OPENCLAW_ENV_DIR="$OPENCLAW_ENV_DIR" bash -lc '
+set -euo pipefail
+if command -v direnv >/dev/null 2>&1 &&
+  [[ -d "$OPENCLAW_ENV_DIR" ]] &&
+  [[ -f "$OPENCLAW_ENV_DIR/.envrc" ]]; then
+  exec env DIRENV_LOG_FORMAT= direnv exec "$OPENCLAW_ENV_DIR" openclaw "$@"
+fi
+exec openclaw "$@"
+' bash "$@"
 }
 
 resolve_npm_bin() {
@@ -320,19 +384,19 @@ if ! tar -tf "$PKG_TGZ" | awk '$0=="package/dist/control-ui/index.html"{found=1}
 fi
 
 run "'$NPM_BIN' i -g '$PKG_TGZ'"
-run_openclaw_cli --version
+run_openclaw_cli_bounded "$PATCH_CLI_TIMEOUT_SEC" --version
 
 GATEWAY_STATUS_JSON="$(openclaw_cli gateway status --json 2>/dev/null || true)"
 GATEWAY_SERVICE_LOADED="$(printf '%s' "$GATEWAY_STATUS_JSON" | parse_gateway_service_loaded)"
 if [[ "$GATEWAY_SERVICE_LOADED" == "1" ]] || has_systemd_gateway_service; then
   echo "info: gateway service is loaded; refreshing service command path"
-  run_openclaw_cli gateway install --force
+  run_openclaw_cli_bounded "$PATCH_CLI_TIMEOUT_SEC" gateway install --force
   # `gateway install --force` resolves the runtime from the current shell and can
   # rewrite a previously repaired systemd unit back to an nvm/fnm/volta Node path.
   # Run doctor repair immediately after install so supported system Node 22+
   # remains preferred when available.
   echo "info: repairing gateway service config to keep stable runtime defaults"
-  run_openclaw_cli doctor --repair --non-interactive --yes
+  run_openclaw_cli_bounded "$PATCH_CLI_TIMEOUT_SEC" doctor --repair --non-interactive --yes
 
   if [[ -n "$PATCH_RESTART_FLAG_FILE" ]]; then
     printf '1\n' > "$PATCH_RESTART_FLAG_FILE"
@@ -344,10 +408,10 @@ if [[ "$GATEWAY_SERVICE_LOADED" == "1" ]] || has_systemd_gateway_service; then
     send_patch_notification "$PATCH_RESTART_WARNING_TEXT"
     if [[ "$DRY_RUN" == "1" ]]; then
       OPENCLAW_PATCH_ENV_DIR="$OPENCLAW_ENV_DIR" \
-        "$REPO_DIR/scripts/restart-live-gateway.sh" --dry-run
+        run_bounded_cmd "$PATCH_RESTART_TIMEOUT_SEC" "$REPO_DIR/scripts/restart-live-gateway.sh" --dry-run
     else
       OPENCLAW_PATCH_ENV_DIR="$OPENCLAW_ENV_DIR" \
-        "$REPO_DIR/scripts/restart-live-gateway.sh"
+        run_bounded_cmd "$PATCH_RESTART_TIMEOUT_SEC" "$REPO_DIR/scripts/restart-live-gateway.sh"
     fi
   fi
 fi
