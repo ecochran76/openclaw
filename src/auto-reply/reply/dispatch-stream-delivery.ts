@@ -3,7 +3,7 @@ import { getA2APermissionApprovalReplyMetadata } from "../../agents/a2a/permissi
 import { shouldSuppressLocalExecApprovalPrompt } from "../../channels/plugins/exec-approval-local.js";
 import type { OpenClawConfig } from "../../config/config.js";
 import { normalizeMessageChannel } from "../../utils/message-channel.js";
-import type { BlockReplyContext, ReplyPayload } from "../types.js";
+import { getReplyPayloadMetadata, type BlockReplyContext, type ReplyPayload } from "../types.js";
 import type { DeliveryObserver } from "./delivery-observer.js";
 import { deliverObservedPayload } from "./observed-reply-delivery.js";
 import type { ReplyDispatcher } from "./reply-dispatcher.js";
@@ -22,6 +22,7 @@ export function createDispatchStreamDeliveryCoordinator(params: {
   shouldSendToolSummaries: boolean;
   observer: DeliveryObserver;
   applyTts: (kind: "tool" | "block", payload: ReplyPayload) => Promise<ReplyPayload>;
+  onBlockReplyQueued?: (payload: ReplyPayload, context?: BlockReplyContext) => Promise<void> | void;
   shouldRouteToOriginating: boolean;
   sendPayloadAsync: (
     payload: ReplyPayload,
@@ -108,6 +109,15 @@ export function createDispatchStreamDeliveryCoordinator(params: {
       return;
     }
     observeBlockReply(payload);
+    const payloadMetadata = getReplyPayloadMetadata(payload);
+    const queuedContext =
+      payloadMetadata?.assistantMessageIndex !== undefined
+        ? {
+            ...context,
+            assistantMessageIndex: payloadMetadata.assistantMessageIndex,
+          }
+        : context;
+    await params.onBlockReplyQueued?.(payload, queuedContext);
     const ttsPayload = await params.applyTts("block", payload);
     await deliverObservedPayload({
       payload: ttsPayload,

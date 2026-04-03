@@ -323,10 +323,10 @@ async function finalizeAcpTurnOutput(params: {
     }
   }
 
-  // Some ACP parent surfaces only expose terminal replies, so block routing alone is not enough
-  // to prove the final result was visible to the user.
+  // Some ACP parent surfaces only expose terminal replies, so streamed block
+  // delivery alone is not enough to prove the final result was visible to the
+  // user.
   const shouldDeliverTextFallback =
-    params.shouldRouteToOriginating &&
     ttsMode !== "all" &&
     accumulatedVisibleBlockText.trim().length > 0 &&
     !finalMediaDelivered &&
