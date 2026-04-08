@@ -24,6 +24,7 @@ That means rebases tend to conflict in two ways:
 - the automation runtime itself collides with upstream tool/runtime evolution
 - the automation chat surface collides with newer command-loader and status/help refactors
 - command parsing and user-facing automation text should live in shared auto-reply helpers, not in the tool/runtime layer
+- preservation/rebase strategy is tracked in `docs/dev/upstream-compat-feature-preservation-plan.md`
 
 ## Current status
 

@@ -7,6 +7,7 @@ Read this before doing branch surgery, release integration, or automation change
 Related compatibility plan:
 
 - `docs/dev/upstream-compat-refactor-plan.md`
+- `docs/dev/upstream-compat-feature-preservation-plan.md`
 
 ## Why this exists
 

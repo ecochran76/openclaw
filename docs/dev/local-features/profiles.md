@@ -36,6 +36,7 @@ That makes this a feature family worth tracking explicitly.
 - dashboard/agents UI has had profile-related drift during feature-branch work
 - session auth/usage presentation should be layered through shared helpers rather than rebuilt inside individual tool handlers
 - runner-facing auth-profile shaping should go through shared adapters in `src/agents/auth-profiles/session-override.ts` instead of per-caller translation helpers
+- preservation/rebase strategy is tracked in `docs/dev/upstream-compat-feature-preservation-plan.md`
 
 ## Conflict hotspots
 

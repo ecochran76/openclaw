@@ -31,6 +31,7 @@ That makes this one of the highest-value local docs to maintain.
 - Slack in-thread approve/deny buttons now handle config-fixable A2A permission misses
 - current approval flow patches config narrowly and tells the operator or agent to retry
 - later auto-resume work is still governed by [A2A Slack interactive approval plan](/dev/a2a-slack-interactive-approval-plan)
+- preservation/rebase strategy is tracked in `docs/dev/upstream-compat-feature-preservation-plan.md`
 
 ## Key components
 

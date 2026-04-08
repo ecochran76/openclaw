@@ -38,6 +38,10 @@ import {
 } from "./agent-turn-attachments.js";
 import { resolveFirstContextText } from "./context-text.js";
 import {
+  hasBoundConversationForSession,
+  shouldAttemptDirectAcpDispatch,
+} from "./dispatch-acp-compatibility.js";
+import {
   createAcpDispatchDeliveryCoordinator,
   type AcpDispatchDeliveryCoordinator,
 } from "./dispatch-acp-delivery.js";
@@ -121,60 +125,6 @@ function resolveAcpTurnText(params: {
     ].join(" "),
   );
   return params.promptText ? `${guidance}\n\n${params.promptText}` : guidance;
-}
-
-function isRestrictiveRuntimeToolsAllow(toolsAllow: string[] | undefined): boolean {
-  if (toolsAllow === undefined) {
-    return false;
-  }
-  return !toolsAllow.some((entry) => normalizeLowercaseStringOrEmpty(entry) === "*");
-}
-
-async function hasBoundConversationForSession(params: {
-  cfg: OpenClawConfig;
-  sessionKey: string;
-  channelRaw: string | undefined;
-  accountIdRaw: string | undefined;
-}): Promise<boolean> {
-  const channel = normalizeOptionalLowercaseString(params.channelRaw) ?? "";
-  if (!channel) {
-    return false;
-  }
-  const accountId = normalizeOptionalLowercaseString(params.accountIdRaw) ?? "";
-  const channels = params.cfg.channels as Record<string, { defaultAccount?: unknown } | undefined>;
-  const configuredDefaultAccountId = channels?.[channel]?.defaultAccount;
-  const normalizedAccountId =
-    accountId || normalizeOptionalLowercaseString(configuredDefaultAccountId) || "default";
-  const { getSessionBindingService } = await loadDispatchAcpManagerRuntime();
-  const bindingService = getSessionBindingService();
-  const bindings = bindingService.listBySession(params.sessionKey);
-  return bindings.some((binding) => {
-    const bindingChannel = normalizeOptionalLowercaseString(binding.conversation.channel) ?? "";
-    const bindingAccountId = normalizeOptionalLowercaseString(binding.conversation.accountId) ?? "";
-    const conversationId = normalizeOptionalString(binding.conversation.conversationId) ?? "";
-    return (
-      bindingChannel === channel &&
-      (bindingAccountId || "default") === normalizedAccountId &&
-      conversationId.length > 0
-    );
-  });
-}
-
-async function shouldAttemptDirectAcpDispatch(params: {
-  cfg: OpenClawConfig;
-  sessionKey: string;
-  channelRaw: string | undefined;
-  accountIdRaw: string | undefined;
-}): Promise<boolean> {
-  const { readAcpSessionEntry } = await loadDispatchAcpSessionRuntime();
-  const entry = readAcpSessionEntry({
-    cfg: params.cfg,
-    sessionKey: params.sessionKey,
-  }) as { acp?: Record<string, unknown> } | null;
-  if (entry?.acp) {
-    return true;
-  }
-  return await hasBoundConversationForSession(params);
 }
 
 export type AcpDispatchAttemptResult = {
