@@ -280,6 +280,31 @@ export const TOOL_DISPLAY_CONFIG: ToolDisplayConfig = {
       title: "Update Goal",
       detailKeys: ["status"],
     },
+    automation: {
+      emoji: "🤖",
+      title: "Automation",
+      actions: {
+        run: {
+          label: "run",
+          detailKeys: ["goal", "turns", "maxTurns", "tokens", "maxTokens", "durationMs"],
+        },
+        list: {
+          label: "list",
+        },
+        status: {
+          label: "status",
+          detailKeys: ["runId", "selector"],
+        },
+        steer: {
+          label: "steer",
+          detailKeys: ["runId", "selector", "message"],
+        },
+        stop: {
+          label: "stop",
+          detailKeys: ["runId", "selector"],
+        },
+      },
+    },
     update_plan: {
       emoji: "🗺️",
       title: "Update Plan",

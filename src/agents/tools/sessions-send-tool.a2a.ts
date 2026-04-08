@@ -7,7 +7,6 @@ import crypto from "node:crypto";
 import type { CallGatewayOptions } from "../../gateway/call.js";
 import { formatErrorMessage } from "../../infra/errors.js";
 import { createSubsystemLogger } from "../../logging/subsystem.js";
-import { resolveAgentIdFromSessionKey } from "../../routing/session-key.js";
 import type { GatewayMessageChannel } from "../../utils/message-channel.js";
 import { buildRelaySummary, relayTurn } from "../a2a/relay-delivery.js";
 import type { RelayResult, RelayTargetResult } from "../a2a/types.js";
@@ -80,84 +79,6 @@ async function deliverAnnounceReply(params: {
       error: formatErrorMessage(err),
     });
   }
-}
-
-type SessionsSendA2AFlowParams = Parameters<typeof runSessionsSendA2AFlow>[0];
-
-export async function prepareSessionsSendA2AFlow(
-  params: {
-    targetSessionKey: string;
-    displayKey: string;
-    message: string;
-    announceTimeoutMs: number;
-    maxPingPongTurns: number;
-    timeoutSeconds: number;
-    relayPolicy: RelayPolicy;
-    requesterSessionKey?: string;
-    requesterChannel?: GatewayMessageChannel;
-  },
-  deps?: Partial<{
-    callGateway: GatewayCaller;
-    resolveAnnounceTarget: AnnounceTargetResolver;
-  }>,
-): Promise<{
-  flowParams: SessionsSendA2AFlowParams;
-  defaultRelay: RelayResult;
-}> {
-  const gatewayCall = deps?.callGateway ?? sessionsSendA2ADeps.callGateway;
-  const announceTargetResolver =
-    deps?.resolveAnnounceTarget ?? sessionsSendA2ADeps.resolveAnnounceTarget;
-  const requesterAgentId = params.requesterSessionKey
-    ? (resolveAgentIdFromSessionKey(params.requesterSessionKey) ?? "requester")
-    : "requester";
-  const targetAgentId = resolveAgentIdFromSessionKey(params.targetSessionKey) ?? "target";
-  const sourceRelayTarget =
-    params.requesterSessionKey && params.requesterSessionKey !== params.targetSessionKey
-      ? await announceTargetResolver(
-          {
-            sessionKey: params.requesterSessionKey,
-            displayKey: params.requesterSessionKey,
-          },
-          {
-            callGateway: gatewayCall,
-          },
-        )
-      : null;
-  const targetRelayTarget = await announceTargetResolver(
-    {
-      sessionKey: params.targetSessionKey,
-      displayKey: params.displayKey,
-    },
-    {
-      callGateway: gatewayCall,
-    },
-  );
-  return {
-    flowParams: {
-      targetSessionKey: params.targetSessionKey,
-      displayKey: params.displayKey,
-      message: params.message,
-      announceTimeoutMs: params.announceTimeoutMs,
-      maxPingPongTurns: params.maxPingPongTurns,
-      requesterSessionKey: params.requesterSessionKey,
-      requesterChannel: params.requesterChannel,
-      relayPolicy: params.relayPolicy,
-      sourceRelayTarget,
-      targetRelayTarget,
-      requesterAgentId,
-      targetAgentId,
-    },
-    defaultRelay: {
-      status: params.relayPolicy.enabled
-        ? params.timeoutSeconds === 0
-          ? "pending"
-          : "not_applicable"
-        : "disabled",
-      mode: params.relayPolicy.mode,
-      mirrorTurns: params.relayPolicy.mirrorTurns,
-      targets: [],
-    },
-  };
 }
 
 export async function runSessionsSendA2AFlow(params: {

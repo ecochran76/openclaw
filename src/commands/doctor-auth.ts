@@ -176,11 +176,18 @@ export async function maybeRemoveDeprecatedCliAuthProfiles(
   if (pruned.changed) {
     await updateAuthProfileStoreWithLock({
       updater: (mutableStore) => {
+        let changed = false;
         for (const profileId of deprecated) {
-          delete mutableStore.profiles[profileId];
-          delete mutableStore.usageStats?.[profileId];
+          if (profileId in mutableStore.profiles) {
+            delete mutableStore.profiles[profileId];
+            changed = true;
+          }
+          if (mutableStore.usageStats?.[profileId] !== undefined) {
+            delete mutableStore.usageStats[profileId];
+            changed = true;
+          }
         }
-        return true;
+        return changed;
       },
     });
   }

@@ -1,9 +1,11 @@
 // Media Core module implements inbound path policy behavior.
 import path from "node:path";
+import type { OpenClawConfig } from "../config/config.js";
 
 const WILDCARD_SEGMENT = "*";
 const WINDOWS_DRIVE_ABS_RE = /^[A-Za-z]:\//;
 const WINDOWS_DRIVE_ROOT_RE = /^[A-Za-z]:$/;
+export const DEFAULT_IMESSAGE_ATTACHMENT_ROOTS = ["/Users/*/Library/Messages/Attachments"] as const;
 
 function normalizePosixAbsolutePath(value: string): string | undefined {
   const trimmed = value.trim();
@@ -117,4 +119,62 @@ export function isInboundPathAllowed(params: {
     return false;
   }
   return effectiveRoots.some((rootPattern) => matchesRootPattern({ candidatePath, rootPattern }));
+}
+
+function resolveIMessageChannelAccountConfig(params: {
+  cfg: OpenClawConfig;
+  accountId?: string | null;
+}): Record<string, unknown> | undefined {
+  const accounts = params.cfg.channels?.imessage?.accounts;
+  if (!accounts || typeof accounts !== "object") {
+    return undefined;
+  }
+  const requested = params.accountId?.trim().toLowerCase();
+  if (!requested) {
+    return undefined;
+  }
+  for (const [accountId, accountConfig] of Object.entries(accounts)) {
+    if (
+      accountId.trim().toLowerCase() === requested &&
+      accountConfig &&
+      typeof accountConfig === "object"
+    ) {
+      return accountConfig as Record<string, unknown>;
+    }
+  }
+  return undefined;
+}
+
+function readStringArrayField(
+  source: Record<string, unknown> | undefined,
+  field: string,
+): readonly string[] | undefined {
+  const value = source?.[field];
+  return Array.isArray(value) ? (value as readonly string[]) : undefined;
+}
+
+export function resolveIMessageAttachmentRoots(params: {
+  cfg: OpenClawConfig;
+  accountId?: string | null;
+}): string[] {
+  const account = resolveIMessageChannelAccountConfig(params);
+  return mergeInboundPathRoots(
+    readStringArrayField(account, "attachmentRoots"),
+    params.cfg.channels?.imessage?.attachmentRoots,
+    DEFAULT_IMESSAGE_ATTACHMENT_ROOTS,
+  );
+}
+
+export function resolveIMessageRemoteAttachmentRoots(params: {
+  cfg: OpenClawConfig;
+  accountId?: string | null;
+}): string[] {
+  const account = resolveIMessageChannelAccountConfig(params);
+  return mergeInboundPathRoots(
+    readStringArrayField(account, "remoteAttachmentRoots"),
+    params.cfg.channels?.imessage?.remoteAttachmentRoots,
+    readStringArrayField(account, "attachmentRoots"),
+    params.cfg.channels?.imessage?.attachmentRoots,
+    DEFAULT_IMESSAGE_ATTACHMENT_ROOTS,
+  );
 }

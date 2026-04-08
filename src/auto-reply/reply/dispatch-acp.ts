@@ -160,6 +160,23 @@ async function hasBoundConversationForSession(params: {
   });
 }
 
+async function shouldAttemptDirectAcpDispatch(params: {
+  cfg: OpenClawConfig;
+  sessionKey: string;
+  channelRaw: string | undefined;
+  accountIdRaw: string | undefined;
+}): Promise<boolean> {
+  const { readAcpSessionEntry } = await loadDispatchAcpSessionRuntime();
+  const entry = readAcpSessionEntry({
+    cfg: params.cfg,
+    sessionKey: params.sessionKey,
+  }) as { acp?: Record<string, unknown> } | null;
+  if (entry?.acp) {
+    return true;
+  }
+  return await hasBoundConversationForSession(params);
+}
+
 export type AcpDispatchAttemptResult = {
   queuedFinal: boolean;
   counts: Record<ReplyDispatchKind, number>;
@@ -395,6 +412,16 @@ export async function tryDispatchAcpReply(params: {
 }): Promise<AcpDispatchAttemptResult | null> {
   const sessionKey = normalizeOptionalString(params.sessionKey);
   if (!sessionKey || params.bypassForCommand) {
+    return null;
+  }
+  if (
+    !(await shouldAttemptDirectAcpDispatch({
+      cfg: params.cfg,
+      sessionKey,
+      channelRaw: params.ctx.OriginatingChannel ?? params.ctx.Surface ?? params.ctx.Provider,
+      accountIdRaw: params.ctx.AccountId,
+    }))
+  ) {
     return null;
   }
 

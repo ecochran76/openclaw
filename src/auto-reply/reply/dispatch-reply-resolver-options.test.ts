@@ -83,4 +83,32 @@ describe("createDispatchReplyResolverOptions", () => {
     expect(onBlockReply).toHaveBeenCalledWith({ text: "block payload" }, { timeoutMs: 25 });
     expect(calls).toEqual(["tool:tool payload", "block:block payload:25"]);
   });
+
+  it("emits concise verbose progress payloads for plan, approval, and patch events", async () => {
+    const observer = createObserver();
+    const onToolResult = vi.fn(async () => {});
+    const opts = createDispatchReplyResolverOptions({
+      observer,
+      onToolResult,
+      onBlockReply: vi.fn(async () => {}),
+      shouldEmitVerboseProgress: () => true,
+    });
+
+    await opts.onPlanUpdate?.({
+      explanation: "Inspect code, patch it, run tests.",
+      steps: ["Inspect code", "Patch code", "Run tests"],
+    });
+    await opts.onApprovalEvent?.({ status: "pending", command: "pnpm test" });
+    await opts.onPatchSummary?.({ summary: "1 added, 2 modified" });
+
+    expect(onToolResult.mock.calls).toEqual([
+      [
+        {
+          text: "Inspect code, patch it, run tests.\n\n1. Inspect code\n2. Patch code\n3. Run tests",
+        },
+      ],
+      [{ text: "Working: awaiting approval: pnpm test" }],
+      [{ text: "Working: 1 added, 2 modified" }],
+    ]);
+  });
 });

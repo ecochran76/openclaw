@@ -243,3 +243,13 @@ export function resolveDocumentMediaModel(params: {
   }
   return normalizeOptionalString(value);
 }
+
+export const AUTO_IMAGE_KEY_PROVIDERS = resolveAutoMediaKeyProviders({ capability: "image" });
+export const AUTO_AUDIO_KEY_PROVIDERS = resolveAutoMediaKeyProviders({ capability: "audio" });
+export const AUTO_VIDEO_KEY_PROVIDERS = resolveAutoMediaKeyProviders({ capability: "video" });
+export const DEFAULT_IMAGE_MODELS: Record<string, string> = Object.fromEntries(
+  AUTO_IMAGE_KEY_PROVIDERS.flatMap((providerId) => {
+    const model = resolveDefaultMediaModel({ providerId, capability: "image" });
+    return model ? [[providerId, model]] : [];
+  }),
+);

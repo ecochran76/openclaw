@@ -669,32 +669,10 @@ function readExecApprovalUnavailableDetails(result: unknown): {
   };
 }
 
-function isSessionAccessPermissionRequest(value: unknown): value is SessionAccessPermissionRequest {
-  if (!value || typeof value !== "object" || Array.isArray(value)) {
-    return false;
-  }
-  const record = value as Record<string, unknown>;
-  return (
-    record.kind === "config_permission_request" &&
-    (record.reason === "agent_to_agent_disabled" ||
-      record.reason === "agent_to_agent_allow" ||
-      record.reason === "session_visibility") &&
-    (record.action === "history" ||
-      record.action === "send" ||
-      record.action === "list" ||
-      record.action === "status") &&
-    typeof record.requesterAgentId === "string" &&
-    typeof record.targetAgentId === "string" &&
-    record.retryable === true &&
-    typeof record.askUser === "string" &&
-    Array.isArray(record.suggestedChanges)
-  );
-}
-
-function readA2APermissionApprovalPendingDetails(result: unknown): {
+function readA2APermissionApprovalDetails(result: unknown): {
   approvalId: string;
-  permissionRequest: SessionAccessPermissionRequest;
   expiresAt?: number;
+  permissionRequest: SessionAccessPermissionRequest;
 } | null {
   if (!result || typeof result !== "object") {
     return null;
@@ -704,24 +682,118 @@ function readA2APermissionApprovalPendingDetails(result: unknown): {
     outer.details && typeof outer.details === "object" && !Array.isArray(outer.details)
       ? (outer.details as Record<string, unknown>)
       : outer;
-  const permissionRequest = details.permissionRequest;
-  const pendingApproval = details.pendingApproval;
-  if (!isSessionAccessPermissionRequest(permissionRequest)) {
+  if (details.status !== "forbidden") {
     return null;
   }
-  if (!pendingApproval || typeof pendingApproval !== "object" || Array.isArray(pendingApproval)) {
+  const pendingApproval =
+    details.pendingApproval && typeof details.pendingApproval === "object"
+      ? (details.pendingApproval as Record<string, unknown>)
+      : null;
+  const permissionRequest =
+    details.permissionRequest && typeof details.permissionRequest === "object"
+      ? (details.permissionRequest as Record<string, unknown>)
+      : null;
+  if (!pendingApproval || !permissionRequest) {
     return null;
   }
-  const approvalId = readStringValue((pendingApproval as Record<string, unknown>).approvalId);
-  if (!approvalId) {
+  const approvalId =
+    typeof pendingApproval.approvalId === "string" ? pendingApproval.approvalId.trim() : "";
+  const state = typeof pendingApproval.state === "string" ? pendingApproval.state.trim() : "";
+  const reason =
+    permissionRequest.reason === "agent_to_agent_disabled" ||
+    permissionRequest.reason === "agent_to_agent_allow" ||
+    permissionRequest.reason === "session_visibility"
+      ? permissionRequest.reason
+      : null;
+  const action =
+    permissionRequest.action === "send" ||
+    permissionRequest.action === "history" ||
+    permissionRequest.action === "list" ||
+    permissionRequest.action === "status"
+      ? permissionRequest.action
+      : null;
+  const requesterAgentId =
+    typeof permissionRequest.requesterAgentId === "string"
+      ? permissionRequest.requesterAgentId.trim()
+      : "";
+  const targetAgentId =
+    typeof permissionRequest.targetAgentId === "string"
+      ? permissionRequest.targetAgentId.trim()
+      : "";
+  const suggestedChanges = Array.isArray(permissionRequest.suggestedChanges)
+    ? permissionRequest.suggestedChanges
+        .map((entry) => {
+          if (!entry || typeof entry !== "object" || Array.isArray(entry)) {
+            return null;
+          }
+          const record = entry as Record<string, unknown>;
+          const path =
+            record.path === "tools.agentToAgent.enabled" ||
+            record.path === "tools.agentToAgent.allow" ||
+            record.path === "tools.sessions.visibility"
+              ? record.path
+              : null;
+          if (!path) {
+            return null;
+          }
+          const value = record.value;
+          if (typeof value !== "boolean" && typeof value !== "string" && !Array.isArray(value)) {
+            return null;
+          }
+          return {
+            path,
+            value: value as boolean | string | string[],
+          };
+        })
+        .filter(
+          (
+            entry,
+          ): entry is {
+            path:
+              | "tools.agentToAgent.enabled"
+              | "tools.agentToAgent.allow"
+              | "tools.sessions.visibility";
+            value: boolean | string | string[];
+          } => Boolean(entry),
+        )
+    : [];
+  if (
+    !approvalId ||
+    state !== "pending" ||
+    !reason ||
+    !action ||
+    !requesterAgentId ||
+    !targetAgentId ||
+    suggestedChanges.length === 0 ||
+    permissionRequest.retryable !== true
+  ) {
     return null;
   }
-  const rawExpiresAt = (pendingApproval as Record<string, unknown>).expiresAt;
+  const missingAllowAgents = Array.isArray(permissionRequest.missingAllowAgents)
+    ? permissionRequest.missingAllowAgents.filter(
+        (entry): entry is string => typeof entry === "string" && entry.trim().length > 0,
+      )
+    : undefined;
   return {
     approvalId,
-    permissionRequest,
     expiresAt:
-      typeof rawExpiresAt === "number" && Number.isFinite(rawExpiresAt) ? rawExpiresAt : undefined,
+      typeof pendingApproval.expiresAt === "number" && Number.isFinite(pendingApproval.expiresAt)
+        ? pendingApproval.expiresAt
+        : undefined,
+    permissionRequest: {
+      kind: "config_permission_request",
+      reason,
+      action,
+      requesterAgentId,
+      targetAgentId,
+      retryable: true,
+      askUser:
+        typeof permissionRequest.askUser === "string"
+          ? permissionRequest.askUser
+          : "Ask the user to approve this agent-to-agent permission change and retry.",
+      suggestedChanges,
+      ...(missingAllowAgents?.length ? { missingAllowAgents } : {}),
+    },
   };
 }
 
@@ -802,7 +874,7 @@ async function emitToolResultOutput(params: {
     return;
   }
 
-  const a2aApprovalPending = readA2APermissionApprovalPendingDetails(result);
+  const a2aApprovalPending = readA2APermissionApprovalDetails(result);
   if (!isToolError && a2aApprovalPending) {
     if (!ctx.params.onToolResult) {
       return;

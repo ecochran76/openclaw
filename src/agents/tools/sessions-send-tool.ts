@@ -69,6 +69,7 @@ import {
   resolveSessionToolContext,
   resolveVisibleSessionReference,
 } from "./sessions-helpers.js";
+import { prepareSessionsSendA2AFlow } from "./sessions-send-a2a-prepare.js";
 import {
   buildAgentToAgentMessageContext,
   clampA2ATimeoutSeconds,
@@ -77,7 +78,7 @@ import {
   resolvePingPongTurns,
   resolveRelayPolicy,
 } from "./sessions-send-helpers.js";
-import { prepareSessionsSendA2AFlow, runSessionsSendA2AFlow } from "./sessions-send-tool.a2a.js";
+import { runSessionsSendA2AFlow } from "./sessions-send-tool.a2a.js";
 
 function parseNaturalSessionSelector(value?: string): {
   agentId?: string;

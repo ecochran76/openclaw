@@ -989,7 +989,7 @@ export function ensureAuthProfileStoreWithoutExternalProfiles(
   }
   const store = loadAuthProfileStoreForAgentFile(agentDir, effectiveOptions);
   const authPath = resolveAuthStorePath(agentDir);
-  const mainAuthPath = resolveMainAuthStorePath();
+  const mainAuthPath = resolveAuthStorePath();
   if (!agentDir || authPath === mainAuthPath) {
     return stripRuntimeExternalProfileMetadata(store);
   }
