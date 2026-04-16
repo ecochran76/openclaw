@@ -7,12 +7,7 @@ import fs from "node:fs/promises";
 import path from "node:path";
 import type { SessionEntry } from "../../config/sessions/types.js";
 import type { OpenClawConfig } from "../../config/types.openclaw.js";
-import { readCachedUsagePolicyDecision } from "../../infra/provider-usage.cache.js";
-import {
-  formatUsagePolicyDecisionDetail,
-  formatUsagePolicyDecisionLine,
-  type UsagePolicyDecision,
-} from "../../infra/provider-usage.policy.js";
+import { type UsagePolicyDecision } from "../../infra/provider-usage.policy.js";
 import { createLazyImportLoader } from "../../shared/lazy-promise.js";
 import {
   isConfiguredAwsSdkAuthProfileForProvider,
@@ -25,6 +20,9 @@ import { isProfileInCooldown } from "../auth-profiles/usage.js";
 const sessionAccessorLoader = createLazyImportLoader(
   () => import("../../config/sessions/session-accessor.js"),
 );
+const usagePolicyRuntimeLoader = createLazyImportLoader(
+  () => import("../../infra/provider-usage.selection.runtime.js"),
+);
 
 // Session accessor writes are lazy-loaded so read-only auth resolution paths do
 // not import persistence code unless an override must be updated.
@@ -34,6 +32,10 @@ function loadSessionAccessor() {
 
 // Current session overrides are only valid when the selected provider can use
 // that profile, including configured aws-sdk profiles without stored secrets.
+function loadUsagePolicyRuntime() {
+  return usagePolicyRuntimeLoader.load();
+}
+
 function isProfileForProvider(params: {
   cfg: OpenClawConfig;
   providers: readonly string[];
@@ -74,81 +76,6 @@ function uniqueProviders(provider: string, acceptedProviderIds?: readonly string
     acceptedProviderIds && acceptedProviderIds.length > 0 ? acceptedProviderIds : [provider];
   candidates.forEach(push);
   return [...providers];
-}
-
-export type ResolvedSessionAuthProfileSelection = {
-  profileId?: string;
-  source?: "auto" | "user";
-  usagePolicyDecision?: UsagePolicyDecision;
-  blockedReason?: {
-    kind: "usage_policy_stop";
-    message: string;
-    decision?: UsagePolicyDecision;
-  };
-  switchNotice?: {
-    message: string;
-    fromProfileId?: string;
-    toProfileId?: string;
-    decision?: UsagePolicyDecision;
-  };
-};
-
-export type SessionAuthProfileRunDecision =
-  | {
-      blocked: true;
-      profileId?: string;
-      source?: "auto" | "user";
-      error: string;
-      notice: string;
-      usagePolicyDecision?: undefined;
-    }
-  | {
-      blocked: false;
-      profileId?: string;
-      source?: "auto" | "user";
-      notice?: string;
-      usagePolicyDecision?: UsagePolicyDecision;
-    };
-
-export function resolveSessionAuthProfileRunDecision(
-  selection: ResolvedSessionAuthProfileSelection,
-): SessionAuthProfileRunDecision {
-  if (selection.blockedReason) {
-    return {
-      blocked: true,
-      profileId: selection.profileId,
-      source: selection.source,
-      error: selection.blockedReason.message,
-      notice: selection.blockedReason.message,
-      usagePolicyDecision: undefined,
-    };
-  }
-  return {
-    blocked: false,
-    profileId: selection.profileId,
-    source: selection.source,
-    notice: selection.switchNotice?.message,
-    usagePolicyDecision: selection.usagePolicyDecision,
-  };
-}
-
-function resolveSelectionSource(sessionEntry?: SessionEntry): "auto" | "user" | undefined {
-  if (sessionEntry?.authProfileOverrideSource === "user") {
-    return "user";
-  }
-  if (sessionEntry?.authProfileOverrideSource === "auto") {
-    return "auto";
-  }
-  return sessionEntry?.authProfileOverride ? "user" : "auto";
-}
-
-function buildUsagePolicyMessage(decision: UsagePolicyDecision): string {
-  return formatUsagePolicyDecisionLine(decision) ?? decision.message ?? "Usage policy matched.";
-}
-
-function buildNoSwitchTargetMessage(decision: UsagePolicyDecision): string {
-  const detail = formatUsagePolicyDecisionDetail(decision) ?? "switch threshold matched";
-  return `Usage policy: ${detail}. No eligible auth profile is available for automatic switching.`;
 }
 
 async function readAuthProfileOrderFromDisk(params: {
@@ -199,6 +126,134 @@ async function resolveAuthProfileOrderWithDiskFallback(params: {
   return [...new Set(fromDisk.flat())];
 }
 
+export type SessionAuthProfileBlockedReason = {
+  kind: "usage_policy_stop";
+  message: string;
+  decision: UsagePolicyDecision;
+};
+
+export type SessionAuthProfileSwitchNotice = {
+  fromProfileId: string;
+  toProfileId: string;
+  message: string;
+  decision: UsagePolicyDecision;
+};
+
+export type ResolvedSessionAuthProfileSelection = {
+  profileId?: string;
+  source?: SessionEntry["authProfileOverrideSource"];
+  usagePolicyDecision?: UsagePolicyDecision;
+  blockedReason?: SessionAuthProfileBlockedReason;
+  switchNotice?: SessionAuthProfileSwitchNotice;
+};
+
+export type SessionAuthProfileRunDecision =
+  | {
+      blocked: true;
+      profileId?: ResolvedSessionAuthProfileSelection["profileId"];
+      source?: ResolvedSessionAuthProfileSelection["source"];
+      error: string;
+      notice?: string;
+      usagePolicyDecision?: UsagePolicyDecision;
+    }
+  | {
+      blocked: false;
+      profileId?: ResolvedSessionAuthProfileSelection["profileId"];
+      source?: ResolvedSessionAuthProfileSelection["source"];
+      notice?: string;
+      usagePolicyDecision?: UsagePolicyDecision;
+    };
+
+export function resolveSessionAuthProfileRunDecision(
+  selection: ResolvedSessionAuthProfileSelection,
+): SessionAuthProfileRunDecision {
+  if (selection.blockedReason) {
+    return {
+      blocked: true,
+      profileId: selection.profileId,
+      source: selection.source,
+      error: selection.blockedReason.message,
+      notice: selection.blockedReason.message,
+      usagePolicyDecision: selection.usagePolicyDecision,
+    };
+  }
+  return {
+    blocked: false,
+    profileId: selection.profileId,
+    source: selection.source,
+    notice: selection.switchNotice?.message,
+    usagePolicyDecision: selection.usagePolicyDecision,
+  };
+}
+
+async function formatUsagePolicyDecisionDetailLazy(decision: UsagePolicyDecision) {
+  return (await loadUsagePolicyRuntime()).formatUsagePolicyDecisionDetail(decision);
+}
+
+async function buildUsagePolicyStopMessage(decision: UsagePolicyDecision): Promise<string> {
+  const profileLabel = decision.profileId?.trim() || "the active profile";
+  const detail = await formatUsagePolicyDecisionDetailLazy(decision);
+  const extraMessage = decision.message?.trim();
+  if (detail && extraMessage && /no eligible auth profile is available/i.test(extraMessage)) {
+    return `⚠️ Turn blocked by usage policy for ${profileLabel}: ${detail}. ${extraMessage} Use /profile to switch or adjust auth.usagePolicy.`;
+  }
+  if (detail) {
+    return `⚠️ Turn blocked by usage policy for ${profileLabel}: ${detail}. Use /profile to switch or adjust auth.usagePolicy.`;
+  }
+  if (extraMessage) {
+    return `⚠️ Turn blocked by usage policy for ${profileLabel}: ${extraMessage} Use /profile to switch or adjust auth.usagePolicy.`;
+  }
+  return `⚠️ Turn blocked by usage policy for ${profileLabel}. Use /profile to switch or adjust auth.usagePolicy.`;
+}
+
+async function buildUsagePolicySwitchMessage(params: {
+  fromProfileId: string;
+  toProfileId: string;
+  decision: UsagePolicyDecision;
+}): Promise<string> {
+  const detail = await formatUsagePolicyDecisionDetailLazy(params.decision);
+  const reason = detail ? ` (${detail})` : "";
+  return `ℹ️ Usage policy switched auth profile from ${params.fromProfileId} to ${params.toProfileId}${reason}.`;
+}
+
+async function persistSelectedSessionAuthProfile(params: {
+  sessionEntry: SessionEntry;
+  sessionStore: Record<string, SessionEntry>;
+  sessionKey: string;
+  storePath?: string;
+  profileId: string;
+  source: "auto" | "user";
+  compactionCount: number;
+}): Promise<void> {
+  const shouldPersist =
+    params.profileId !== params.sessionEntry.authProfileOverride ||
+    params.sessionEntry.authProfileOverrideSource !== params.source ||
+    (params.source === "user"
+      ? typeof params.sessionEntry.authProfileOverrideCompactionCount === "number"
+      : params.sessionEntry.authProfileOverrideCompactionCount !== params.compactionCount);
+  if (!shouldPersist) {
+    return;
+  }
+  params.sessionEntry.authProfileOverride = params.profileId;
+  params.sessionEntry.authProfileOverrideSource = params.source;
+  if (params.source === "user") {
+    delete params.sessionEntry.authProfileOverrideCompactionCount;
+  } else {
+    params.sessionEntry.authProfileOverrideCompactionCount = params.compactionCount;
+  }
+  params.sessionEntry.updatedAt = Date.now();
+  params.sessionStore[params.sessionKey] = params.sessionEntry;
+  if (params.storePath) {
+    await (
+      await loadSessionAccessor()
+    ).patchSessionEntry(
+      { storePath: params.storePath, sessionKey: params.sessionKey },
+      () => params.sessionEntry,
+      { fallbackEntry: params.sessionEntry, replaceEntry: true },
+    );
+  }
+}
+
 /** Clears an auth-profile override from a session and persists it when possible. */
 export async function clearSessionAuthProfileOverride(params: {
   sessionEntry: SessionEntry;
@@ -235,6 +290,20 @@ export async function resolveSessionAuthProfileOverride(params: {
   isNewSession: boolean;
   acceptedProviderIds?: string[];
 }): Promise<string | undefined> {
+  return (await resolveSessionAuthProfileSelection(params)).profileId;
+}
+
+export async function resolveSessionAuthProfileSelection(params: {
+  cfg: OpenClawConfig;
+  provider: string;
+  agentDir: string;
+  sessionEntry?: SessionEntry;
+  sessionStore?: Record<string, SessionEntry>;
+  sessionKey?: string;
+  storePath?: string;
+  isNewSession: boolean;
+  acceptedProviderIds?: string[];
+}): Promise<ResolvedSessionAuthProfileSelection> {
   const {
     cfg,
     provider,
@@ -246,22 +315,50 @@ export async function resolveSessionAuthProfileOverride(params: {
     isNewSession,
   } = params;
   if (!sessionEntry || !sessionStore || !sessionKey) {
-    return sessionEntry?.authProfileOverride;
+    const current = sessionEntry?.authProfileOverride?.trim() || undefined;
+    return {
+      profileId: current,
+      source: sessionEntry?.authProfileOverrideSource,
+      usagePolicyDecision:
+        current && sessionEntry
+          ? await (
+              await loadUsagePolicyRuntime()
+            ).readCachedUsagePolicyDecision({
+              config: cfg,
+              agentDir,
+              provider,
+              profileId: current,
+              selectionSource: sessionEntry.authProfileOverrideSource ?? "none",
+              now: Date.now(),
+            })
+          : undefined,
+    };
   }
 
+  const providers = uniqueProviders(provider, params.acceptedProviderIds);
   const hasConfiguredAuthProfiles =
-    Boolean(params.cfg.auth?.profiles && Object.keys(params.cfg.auth.profiles).length > 0) ||
-    Boolean(params.cfg.auth?.order && Object.keys(params.cfg.auth.order).length > 0);
+    Boolean(cfg.auth?.profiles && Object.keys(cfg.auth.profiles).length > 0) ||
+    Boolean(cfg.auth?.order && Object.keys(cfg.auth.order).length > 0);
+  const diskOrder = (
+    await Promise.all(
+      providers.map((candidateProvider) =>
+        readAuthProfileOrderFromDisk({ agentDir, provider: candidateProvider }),
+      ),
+    )
+  ).flat();
   if (
     !sessionEntry.authProfileOverride?.trim() &&
     !hasConfiguredAuthProfiles &&
-    !hasAnyAuthProfileStoreSource(agentDir)
+    !hasAnyAuthProfileStoreSource(agentDir) &&
+    diskOrder.length === 0
   ) {
-    return undefined;
+    return {
+      profileId: undefined,
+      source: sessionEntry.authProfileOverrideSource,
+    };
   }
 
   const store = ensureAuthProfileStore(agentDir, { allowKeychainPrompt: false });
-  const providers = uniqueProviders(provider, params.acceptedProviderIds);
   const order = await resolveAuthProfileOrderWithDiskFallback({
     cfg,
     store,
@@ -315,14 +412,16 @@ export async function resolveSessionAuthProfileOverride(params: {
     current = undefined;
   }
 
-  // Explicit user picks should survive provider rotation order changes.
   if (current && order.length > 0 && !order.includes(current) && source !== "user") {
     await clearSessionAuthProfileOverride({ sessionEntry, sessionStore, sessionKey, storePath });
     current = undefined;
   }
 
   if (order.length === 0) {
-    return undefined;
+    return {
+      profileId: undefined,
+      source: sessionEntry.authProfileOverrideSource,
+    };
   }
 
   const pickFirstAvailable = () =>
@@ -360,13 +459,11 @@ export async function resolveSessionAuthProfileOverride(params: {
   // first non-command message arrives, and that follow-up turn may still be
   // flagged as "new session". Rotating away from a user-picked profile there
   // makes /profile appear to "stick" only until the next message.
-  if (source === "user" && current) {
-    return current;
-  }
-
   let next = current;
   if (replacementForUnusableCurrent) {
     next = replacementForUnusableCurrent;
+  } else if (source === "user" && current) {
+    next = current;
   } else if (isNewSession) {
     next = current ? pickNextAvailable(current) : pickFirstAvailable();
   } else if (current && compactionCount > storedCompaction) {
@@ -376,156 +473,167 @@ export async function resolveSessionAuthProfileOverride(params: {
   }
 
   if (!next) {
-    return current;
-  }
-  const shouldPersist =
-    next !== sessionEntry.authProfileOverride ||
-    sessionEntry.authProfileOverrideSource !== "auto" ||
-    sessionEntry.authProfileOverrideCompactionCount !== compactionCount;
-  if (shouldPersist) {
-    sessionEntry.authProfileOverride = next;
-    sessionEntry.authProfileOverrideSource = "auto";
-    sessionEntry.authProfileOverrideCompactionCount = compactionCount;
-    sessionEntry.updatedAt = Date.now();
-    sessionStore[sessionKey] = sessionEntry;
-    if (storePath) {
-      await (
-        await loadSessionAccessor()
-      ).patchSessionEntry(
-        { storePath, sessionKey },
-        () => sessionEntry,
-        { fallbackEntry: sessionEntry, replaceEntry: true },
-      );
-    }
-  }
-
-  return next;
-}
-
-export async function resolveSessionAuthProfileSelection(params: {
-  cfg: OpenClawConfig;
-  provider: string;
-  agentDir: string;
-  sessionEntry?: SessionEntry;
-  sessionStore?: Record<string, SessionEntry>;
-  sessionKey?: string;
-  storePath?: string;
-  isNewSession: boolean;
-  acceptedProviderIds?: string[];
-}): Promise<ResolvedSessionAuthProfileSelection> {
-  const store = ensureAuthProfileStore(params.agentDir, { allowKeychainPrompt: false });
-  const order = await resolveAuthProfileOrderWithDiskFallback({
-    cfg: params.cfg,
-    store,
-    provider: params.provider,
-    agentDir: params.agentDir,
-    acceptedProviderIds: params.acceptedProviderIds,
-  });
-  const source = resolveSelectionSource(params.sessionEntry);
-  const userSelectedProfileId =
-    source === "user" ? params.sessionEntry?.authProfileOverride?.trim() : undefined;
-  const profileId =
-    userSelectedProfileId || (await resolveSessionAuthProfileOverride(params)) || order[0];
-  if (!profileId) {
-    return {};
-  }
-
-  const decision = await readCachedUsagePolicyDecision({
-    config: params.cfg,
-    agentDir: params.agentDir,
-    provider: params.provider,
-    profileId,
-    selectionSource: source ?? "auto",
-  });
-
-  if (decision.action === "stop") {
     return {
-      profileId,
-      source,
-      usagePolicyDecision: decision,
+      profileId: current,
+      source: sessionEntry.authProfileOverrideSource,
+    };
+  }
+
+  const preservingUserSelection = source === "user" && current === next;
+  const desiredSource = preservingUserSelection ? "user" : "auto";
+  await persistSelectedSessionAuthProfile({
+    sessionEntry,
+    sessionStore,
+    sessionKey,
+    storePath,
+    profileId: next,
+    source: desiredSource,
+    compactionCount,
+  });
+
+  const usagePolicyRuntime = await loadUsagePolicyRuntime();
+  const usagePolicyDecision = await usagePolicyRuntime.readCachedUsagePolicyDecision({
+    config: cfg,
+    agentDir,
+    provider,
+    profileId: next,
+    selectionSource: sessionEntry.authProfileOverrideSource ?? "none",
+    now: Date.now(),
+  });
+  if (usagePolicyDecision.action === "stop") {
+    return {
+      profileId: next,
+      source: sessionEntry.authProfileOverrideSource,
+      usagePolicyDecision,
       blockedReason: {
         kind: "usage_policy_stop",
-        message: buildUsagePolicyMessage(decision),
+        message: await buildUsagePolicyStopMessage(usagePolicyDecision),
+        decision: usagePolicyDecision,
       },
     };
   }
-
-  if (decision.action !== "switch") {
-    return {
-      profileId,
-      source,
-      usagePolicyDecision: decision.action === "warn" ? decision : undefined,
-    };
-  }
-
-  const targetProfileId = (
-    await Promise.all(
-      order
-        .filter((candidate) => candidate !== profileId)
-        .map(async (candidate) => {
-          const candidateDecision = await readCachedUsagePolicyDecision({
-            config: params.cfg,
-            agentDir: params.agentDir,
-            provider: params.provider,
+  if (usagePolicyDecision.action === "switch") {
+    const startIndex = order.indexOf(next);
+    let warnedCandidate: { profileId: string; decision: UsagePolicyDecision } | undefined;
+    if (startIndex >= 0) {
+      for (let offset = 1; offset < order.length; offset += 1) {
+        const candidate = order[(startIndex + offset) % order.length];
+        if (!candidate || isProfileInCooldown(store, candidate)) {
+          continue;
+        }
+        const candidateDecision = await usagePolicyRuntime.readCachedUsagePolicyDecision({
+          config: cfg,
+          agentDir,
+          provider,
+          profileId: candidate,
+          selectionSource: "auto",
+          now: Date.now(),
+        });
+        if (candidateDecision.action === "stop" || candidateDecision.action === "switch") {
+          continue;
+        }
+        if (candidateDecision.action === "allow") {
+          await persistSelectedSessionAuthProfile({
+            sessionEntry,
+            sessionStore,
+            sessionKey,
+            storePath,
             profileId: candidate,
-            selectionSource: "auto",
+            source: "auto",
+            compactionCount,
           });
-          return candidateDecision.action === "allow" || candidateDecision.action === "warn"
-            ? candidate
-            : undefined;
-        }),
-    )
-  ).find((candidate): candidate is string => Boolean(candidate));
-
-  if (!targetProfileId) {
-    const noSwitchDecision: UsagePolicyDecision = {
-      ...decision,
-      action: decision.onNoSwitchTarget === "stop" ? "stop" : "warn",
-      noSwitchTarget: true,
-      message: buildNoSwitchTargetMessage(decision),
-    };
-    if (noSwitchDecision.action === "stop") {
+          return {
+            profileId: candidate,
+            source: "auto",
+            usagePolicyDecision: candidateDecision,
+            switchNotice: {
+              fromProfileId: next,
+              toProfileId: candidate,
+              message: await buildUsagePolicySwitchMessage({
+                fromProfileId: next,
+                toProfileId: candidate,
+                decision: usagePolicyDecision,
+              }),
+              decision: usagePolicyDecision,
+            },
+          };
+        }
+        if (!warnedCandidate && candidateDecision.action === "warn") {
+          warnedCandidate = { profileId: candidate, decision: candidateDecision };
+        }
+      }
+    }
+    if (warnedCandidate) {
+      await persistSelectedSessionAuthProfile({
+        sessionEntry,
+        sessionStore,
+        sessionKey,
+        storePath,
+        profileId: warnedCandidate.profileId,
+        source: "auto",
+        compactionCount,
+      });
       return {
-        profileId,
-        source,
-        usagePolicyDecision: noSwitchDecision,
-        blockedReason: {
-          kind: "usage_policy_stop",
-          message: noSwitchDecision.message ?? buildNoSwitchTargetMessage(decision),
+        profileId: warnedCandidate.profileId,
+        source: "auto",
+        usagePolicyDecision: warnedCandidate.decision,
+        switchNotice: {
+          fromProfileId: next,
+          toProfileId: warnedCandidate.profileId,
+          message: await buildUsagePolicySwitchMessage({
+            fromProfileId: next,
+            toProfileId: warnedCandidate.profileId,
+            decision: usagePolicyDecision,
+          }),
+          decision: usagePolicyDecision,
         },
       };
     }
+    if (usagePolicyDecision.onNoSwitchTarget === "stop") {
+      const blockedDecision = {
+        ...usagePolicyDecision,
+        action: "stop",
+        message: usagePolicyDecision.message?.trim()
+          ? `${usagePolicyDecision.message.trim()} No eligible auth profile is available for automatic switching.`
+          : "No eligible auth profile is available for automatic switching.",
+      } satisfies UsagePolicyDecision;
+      return {
+        profileId: next,
+        source: sessionEntry.authProfileOverrideSource,
+        usagePolicyDecision: blockedDecision,
+        blockedReason: {
+          kind: "usage_policy_stop",
+          message: await buildUsagePolicyStopMessage(blockedDecision),
+          decision: blockedDecision,
+        },
+      };
+    }
+    if (usagePolicyDecision.onNoSwitchTarget === "allow") {
+      return {
+        profileId: next,
+        source: sessionEntry.authProfileOverrideSource,
+        usagePolicyDecision: {
+          ...usagePolicyDecision,
+          action: "allow",
+        } satisfies UsagePolicyDecision,
+      };
+    }
     return {
-      profileId,
-      source,
-      usagePolicyDecision: noSwitchDecision,
+      profileId: next,
+      source: sessionEntry.authProfileOverrideSource,
+      usagePolicyDecision: {
+        ...usagePolicyDecision,
+        action: "warn",
+        noSwitchTarget: true,
+        message: usagePolicyDecision.message?.trim()
+          ? `${usagePolicyDecision.message.trim()} No eligible auth profile is available for automatic switching.`
+          : "No eligible auth profile is available for automatic switching.",
+      } satisfies UsagePolicyDecision,
     };
   }
-
-  const compactionCount = params.sessionEntry?.compactionCount ?? 0;
-  if (params.sessionEntry && params.sessionStore && params.sessionKey) {
-    params.sessionEntry.authProfileOverride = targetProfileId;
-    params.sessionEntry.authProfileOverrideSource = "auto";
-    params.sessionEntry.authProfileOverrideCompactionCount = compactionCount;
-    params.sessionEntry.updatedAt = Date.now();
-    params.sessionStore[params.sessionKey] = params.sessionEntry;
-    if (params.storePath) {
-      await (
-        await loadSessionAccessor()
-      ).patchSessionEntry(
-        { storePath: params.storePath, sessionKey: params.sessionKey },
-        () => params.sessionEntry,
-        { fallbackEntry: params.sessionEntry, replaceEntry: true },
-      );
-    }
-  }
-
   return {
-    profileId: targetProfileId,
-    source: "auto",
-    usagePolicyDecision: decision,
-    switchNotice: {
-      message: `Usage policy switched auth profile from ${profileId} to ${targetProfileId}.`,
-    },
+    profileId: next,
+    source: sessionEntry.authProfileOverrideSource,
+    usagePolicyDecision,
   };
 }

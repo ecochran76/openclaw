@@ -236,7 +236,6 @@ function createDefaultWorkerTurnExecutor(opts: AutomationToolOptions, cliDeps: C
       message: buildWorkerControlPrompt(input.prompt),
       sessionKey: input.childSessionKey,
       agentId: resolveSessionAgentId({ sessionKey: input.childSessionKey, config: cfg }),
-      bootstrapContextRunKind: "automation",
     });
     return mapRunResultToWorkerTurnResult(runResult);
   };

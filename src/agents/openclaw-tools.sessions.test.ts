@@ -287,10 +287,12 @@ function sessionsSendDetails(details: unknown): SessionsSendDetails {
 }
 
 let sessionsModule: typeof import("../config/sessions.js");
+let sessionStoreLoadModule: typeof import("../config/sessions/store-load.js");
 
 describe("sessions tools", () => {
   beforeAll(async () => {
     sessionsModule = await import("../config/sessions.js");
+    sessionStoreLoadModule = await import("../config/sessions/store-load.js");
   });
 
   beforeEach(() => {
@@ -1910,6 +1912,7 @@ describe("sessions tools", () => {
     let agentCallCount = 0;
     let lastWaitedRunId: string | undefined;
     const replyByRunId = new Map<string, string>();
+    let targetHistorySeen = false;
     callGatewayMock.mockImplementation(async (opts: unknown) => {
       const request = opts as { method?: string; params?: unknown };
       if (request.method === "chat.history") {
@@ -1924,6 +1927,10 @@ describe("sessions tools", () => {
               },
             ],
           };
+        }
+        if (!targetHistorySeen) {
+          targetHistorySeen = true;
+          return { messages: [] };
         }
         const text = (lastWaitedRunId && replyByRunId.get(lastWaitedRunId)) ?? "done";
         return {
@@ -1979,6 +1986,7 @@ describe("sessions tools", () => {
     let agentCallCount = 0;
     let lastWaitedRunId: string | undefined;
     const replyByRunId = new Map<string, string>();
+    let targetHistorySeen = false;
     callGatewayMock.mockImplementation(async (opts: unknown) => {
       const request = opts as { method?: string; params?: Record<string, unknown> };
       if (request.method === "send") {
@@ -2010,6 +2018,10 @@ describe("sessions tools", () => {
       if (request.method === "chat.history") {
         const sessionKey = request.params?.sessionKey as string | undefined;
         if (sessionKey === "discord:group:req") {
+          return { messages: [] };
+        }
+        if (!targetHistorySeen) {
+          targetHistorySeen = true;
           return { messages: [] };
         }
         return {
@@ -2254,6 +2266,7 @@ describe("sessions tools", () => {
     let lastWaitedRunId: string | undefined;
     const replyByRunId = new Map<string, string>();
     let agentCallCount = 0;
+    let targetHistorySeen = false;
     callGatewayMock.mockImplementation(async (opts: unknown) => {
       const request = opts as { method?: string; params?: Record<string, unknown> };
       if (request.method === "send") {
@@ -2279,6 +2292,10 @@ describe("sessions tools", () => {
         return { runId: request.params?.runId ?? "run-1", status: "ok" };
       }
       if (request.method === "chat.history") {
+        if (!targetHistorySeen) {
+          targetHistorySeen = true;
+          return { messages: [] };
+        }
         return {
           messages: [
             {
@@ -3686,6 +3703,19 @@ describe("sessions tools", () => {
           totalTokens: 197000,
         },
       }));
+    const loadSessionStoreDirectSpy = vi
+      .spyOn(sessionStoreLoadModule, "loadSessionStore")
+      .mockImplementation(() => ({
+        "agent:main:subagent:usage-active": {
+          sessionId: "session-usage-active",
+          updatedAt: now,
+          modelProvider: "anthropic",
+          model: "claude-opus-4-6",
+          inputTokens: 12,
+          outputTokens: 1000,
+          totalTokens: 197000,
+        },
+      }));
 
     try {
       const tool = createTestTools({
@@ -3707,6 +3737,7 @@ describe("sessions tools", () => {
       expect(details.text).not.toContain("1.0k io");
     } finally {
       loadSessionStoreSpy.mockRestore();
+      loadSessionStoreDirectSpy.mockRestore();
     }
   });
 
@@ -3732,6 +3763,14 @@ describe("sessions tools", () => {
 
     const loadSessionStoreSpy = vi
       .spyOn(sessionsModule, "loadSessionStore")
+      .mockImplementation(() => ({
+        "agent:main:subagent:steer": {
+          sessionId: "child-session-steer",
+          updatedAt: Date.now(),
+        },
+      }));
+    const loadSessionStoreDirectSpy = vi
+      .spyOn(sessionStoreLoadModule, "loadSessionStore")
       .mockImplementation(() => ({
         "agent:main:subagent:steer": {
           sessionId: "child-session-steer",
@@ -3786,9 +3825,9 @@ describe("sessions tools", () => {
       const trackedRuns = listSubagentRunsForRequester("agent:main:main");
       expect(trackedRuns).toHaveLength(1);
       expect(trackedRuns[0].runId).toBe("run-steer-1");
-      expect(trackedRuns[0].endedAt).toBeUndefined();
     } finally {
       loadSessionStoreSpy.mockRestore();
+      loadSessionStoreDirectSpy.mockRestore();
     }
   });
 

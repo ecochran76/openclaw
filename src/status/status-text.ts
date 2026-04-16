@@ -671,7 +671,7 @@ export async function buildStatusText(params: BuildStatusTextParams): Promise<st
       showDetails: queueOverrides,
     },
     subagentsLine,
-    taskLine,
+    turnLine: taskLine,
     pluginHealthLine,
     channelFeatureLine,
     mediaDecisions: params.mediaDecisions,
