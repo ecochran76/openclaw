@@ -4,6 +4,7 @@
 import type { OpenClawConfig } from "../../../config/types.openclaw.js";
 import { joinPresentTextSegments } from "../../../shared/text/join-segments.js";
 import { normalizeStructuredPromptSection } from "../../prompt-cache-stability.js";
+import { resolveProviderEndpoint } from "../../provider-attribution.js";
 
 /** Custom transcript marker used to preserve cache-TTL pruning state across attempts. */
 export const ATTEMPT_CACHE_TTL_CUSTOM_TYPE = "openclaw.cache-ttl";
@@ -49,6 +50,42 @@ export function resolveAttemptSpawnWorkspaceDir(params: {
   return params.sandbox?.enabled && params.sandbox.workspaceAccess !== "rw"
     ? params.resolvedWorkspace
     : undefined;
+}
+
+export function shouldUseOpenAIWebSocketTransport(params: {
+  provider: string;
+  modelApi?: string | null;
+  modelBaseUrl?: string | null;
+}): boolean {
+  if (params.modelApi !== "openai-responses" || params.provider !== "openai") {
+    return false;
+  }
+
+  const endpointClass = resolveProviderEndpoint(params.modelBaseUrl).endpointClass;
+  return endpointClass === "default" || endpointClass === "openai-public";
+}
+
+function hasExplicitSseTransport(sources: Array<Record<string, unknown> | undefined>): boolean {
+  return sources.some((source) => {
+    const transport = typeof source?.transport === "string" ? source.transport : "";
+    return transport.trim().toLowerCase() === "sse";
+  });
+}
+
+export function shouldUseOpenAIWebSocketTransportForAttempt(params: {
+  provider: string;
+  modelApi?: string | null;
+  modelBaseUrl?: string | null;
+  streamParams?: Record<string, unknown>;
+  effectiveExtraParams?: Record<string, unknown>;
+  modelParams?: Record<string, unknown>;
+}): boolean {
+  if (
+    hasExplicitSseTransport([params.streamParams, params.effectiveExtraParams, params.modelParams])
+  ) {
+    return false;
+  }
+  return shouldUseOpenAIWebSocketTransport(params);
 }
 
 /**
