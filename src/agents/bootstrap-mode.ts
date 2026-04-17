@@ -5,7 +5,7 @@ export type BootstrapMode = "full" | "limited" | "none";
 /** Resolve the bootstrap mode for one agent run. */
 export function resolveBootstrapMode(params: {
   bootstrapPending: boolean;
-  runKind?: "default" | "heartbeat" | "cron";
+  runKind?: "default" | "heartbeat" | "cron" | "automation";
   isInteractiveUserFacing: boolean;
   isPrimaryRun: boolean;
   isCanonicalWorkspace: boolean;

@@ -1254,6 +1254,9 @@ export function classifyProviderRuntimeFailureKind(
   if (message && isOAuthCallbackValidationMessage(message)) {
     return "callback_validation";
   }
+  if (message && isReplayInvalidErrorMessage(message)) {
+    return "replay_invalid";
+  }
   if (message && classifyOAuthRefreshFailure(message)) {
     return "auth_refresh";
   }
@@ -1285,9 +1288,6 @@ export function classifyProviderRuntimeFailureKind(
   }
   if (message && isSandboxBlockedErrorMessage(message)) {
     return "sandbox_blocked";
-  }
-  if (message && isReplayInvalidErrorMessage(message)) {
-    return "replay_invalid";
   }
   if (message && isSchemaErrorMessage(message)) {
     return "schema";
@@ -1403,14 +1403,15 @@ export function formatAssistantErrorText(
   }
 
   if (providerRuntimeFailureKind === "auth_refresh") {
-    if (opts?.provider || opts?.authProfileId) {
-      return formatAuthFailureMessage({
-        provider: opts?.provider,
-        model: opts?.model ?? msg.model,
-        authProfileId: opts?.authProfileId,
-      });
+    if (!opts?.provider && !opts?.authProfileId) {
+      return "Authentication refresh failed. Re-authenticate this provider and try again.";
     }
-    return "Authentication refresh failed. Re-authenticate this provider and try again.";
+    return `Authentication refresh failed. ${formatAuthRecoveryHint({
+      provider: opts?.provider,
+      authProfileId: opts?.authProfileId,
+      allowChatReauth: true,
+      includeCliAlternative: true,
+    })}`;
   }
 
   if (providerRuntimeFailureKind === "refresh_contention") {
@@ -1552,6 +1553,10 @@ export function formatAssistantErrorText(
 
   if (providerRuntimeFailureKind === "schema") {
     return PROVIDER_SCHEMA_REJECTION_USER_TEXT;
+  }
+
+  if (providerRuntimeFailureKind === "schema") {
+    return "LLM request failed: provider rejected the request schema or tool payload.";
   }
 
   if (providerRuntimeFailureKind === "replay_invalid") {

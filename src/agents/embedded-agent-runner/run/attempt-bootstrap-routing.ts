@@ -8,7 +8,7 @@ import { DEFAULT_BOOTSTRAP_FILENAME, type WorkspaceBootstrapFile } from "../../w
 /** Inputs that decide whether this attempt should inject workspace bootstrap context. */
 type AttemptBootstrapRoutingInput = {
   workspaceBootstrapPending: boolean;
-  bootstrapContextRunKind?: "default" | "heartbeat" | "cron";
+  bootstrapContextRunKind?: "default" | "heartbeat" | "cron" | "automation";
   trigger?: string;
   sessionKey?: string;
   isPrimaryRun: boolean;

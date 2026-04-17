@@ -393,6 +393,7 @@ async function createApiKeyProvider(params: {
           groupLabel: params.label,
         },
         run: async (ctx) => {
+          const selectedProfileIds = ctx.profileId ? [ctx.profileId] : profileIds;
           const { input } = await resolveApiKeyInput({
             ctx,
             providerId: params.providerId,
@@ -404,7 +405,7 @@ async function createApiKeyProvider(params: {
             noteTitle: params.noteTitle,
           });
           return {
-            profiles: profileIds.map((profileId) => ({
+            profiles: selectedProfileIds.map((profileId) => ({
               profileId,
               credential: buildApiKeyCredential(
                 profileId.split(":", 1)[0] || params.providerId,
