@@ -135,7 +135,7 @@ export function summarizeLogTail(rawLines: string[], opts?: { maxLines?: number 
 
     // "Embedded agent failed before reply: OAuth token refresh failed for openai: ..."
     const embedded = line.match(
-      /^Embedded agent failed before reply:\s+OAuth token refresh failed for ([^:]+):/,
+      /^Embedded agent failed before reply:\s+OAuth token refresh failed for ([^:(\s]+)(?: \([^)]*\))?:/,
     );
     if (embedded) {
       const provider = normalizeOptionalString(embedded[1]) || "unknown";

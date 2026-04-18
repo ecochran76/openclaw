@@ -6992,7 +6992,7 @@ describe("runAgentTurnWithFallback", () => {
   it("surfaces gateway reauth guidance for known OAuth refresh failures", async () => {
     state.runEmbeddedAgentMock.mockRejectedValueOnce(
       new Error(
-        "OAuth token refresh failed for openai: refresh_token_reused. Please try again or re-authenticate.",
+        "OAuth token refresh failed for openai (openai:default): refresh_token_reused. Please try again or re-authenticate.",
       ),
     );
 
@@ -7205,7 +7205,7 @@ describe("runAgentTurnWithFallback", () => {
   it("falls back to a generic reauth command when the provider in the OAuth error is unsafe", async () => {
     state.runEmbeddedAgentMock.mockRejectedValueOnce(
       new Error(
-        "OAuth token refresh failed for openai`\nrm -rf /: invalid_grant. Please try again or re-authenticate.",
+        "OAuth token refresh failed for openai`\nrm -rf / (openai:default): invalid_grant. Please try again or re-authenticate.",
       ),
     );
 

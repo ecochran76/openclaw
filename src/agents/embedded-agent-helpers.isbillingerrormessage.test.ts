@@ -1490,12 +1490,12 @@ describe("classifyFailoverReason provider messages", () => {
     expect(classifyFailoverReason("当前负载过高")).toBe("overloaded");
   });
 
-  it("classifies provider-prefixed JSON server_error failures as timeout", () => {
+  it("preserves provider-prefixed JSON server_error classifications", () => {
     expect(
       classifyFailoverReason(
         'Codex error: {"type":"error","error":{"type":"server_error","message":"An error occurred while processing your request."},"request_id":"req_123"}',
       ),
-    ).toBe("timeout");
+    ).toBe("server_error");
   });
 });
 
@@ -1543,6 +1543,9 @@ describe("classifyProviderRuntimeFailureKind", () => {
   it("classifies OAuth refresh failures", () => {
     const refreshFailures = [
       "OAuth token refresh failed for openai: invalid_grant. Please try again or re-authenticate.",
+      "OAuth token refresh failed for openai (openai:default): invalid_grant. Please try again or re-authenticate.",
+      "OAuth token refresh failed for openai-codex: invalid_grant. Please try again or re-authenticate.",
+      "OAuth token refresh failed for openai-codex (openai-codex:default): invalid_grant. Please try again or re-authenticate.",
       "Your access token could not be refreshed because you have since logged out or signed in to another account. Please sign in again.",
       "Your authentication session could not be refreshed automatically. Please log out and sign in again.",
     ];

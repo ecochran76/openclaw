@@ -513,10 +513,16 @@ export async function resolveApiKeyForProfile(
       provider: cred.provider,
       profileId,
     });
+    log.error("OAuth token refresh failed", {
+      provider: cred.provider,
+      profileId,
+      agentDir: params.agentDir,
+      message,
+    });
     throw new OAuthRefreshFailureError({
       provider: cred.provider,
       message:
-        `OAuth token refresh failed for ${cred.provider}: ${message}. ` +
+        `OAuth token refresh failed for ${cred.provider} (${profileId}): ${message}. ` +
         "Please try again or re-authenticate." +
         (hint ? `\n\n${hint}` : ""),
       cause: error,

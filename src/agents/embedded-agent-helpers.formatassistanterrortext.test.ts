@@ -345,7 +345,7 @@ describe("formatAssistantErrorText", () => {
 
   it("returns a Slack reauth hint for openai-codex auth failures", () => {
     const msg = makeAssistantError(
-      "OAuth token refresh failed for openai-codex: refresh_token_reused. Please try again or re-authenticate.",
+      "OAuth token refresh failed for openai-codex (openai-codex:dillan): refresh_token_reused. Please try again or re-authenticate.",
     );
     expect(
       formatAssistantErrorText(msg, {
@@ -357,7 +357,9 @@ describe("formatAssistantErrorText", () => {
   });
 
   it("returns a CLI reauth hint for non-codex auth failures", () => {
-    const msg = makeAssistantError("401 Unauthorized");
+    const msg = makeAssistantError(
+      "OAuth token refresh failed for anthropic (anthropic:work): invalid_grant. Please try again or re-authenticate.",
+    );
     expect(
       formatAssistantErrorText(msg, {
         provider: "anthropic",
@@ -405,7 +407,7 @@ describe("formatAssistantErrorText", () => {
 
   it("returns an explicit re-authentication message for OAuth refresh failures", () => {
     const msg = makeAssistantError(
-      "OAuth token refresh failed for openai: invalid_grant. Please try again or re-authenticate.",
+      "OAuth token refresh failed for openai (openai:dillan): invalid_grant. Please try again or re-authenticate.",
     );
     expect(formatAssistantErrorText(msg)).toBe(
       "Authentication refresh failed. Re-authenticate this provider and try again.",
@@ -542,7 +544,7 @@ describe("formatAssistantErrorText", () => {
     });
     const friendly = formatAssistantErrorText(missingScope);
     expect(friendly).not.toBe(authInvalidTokenCopy);
-    expect(friendly).toContain("permission_error");
+    expect(friendly).toBe("🔐 Authentication failed. Re-authenticate and try again.");
   });
 
   it("returns a proxy-specific message for proxy misroutes", () => {

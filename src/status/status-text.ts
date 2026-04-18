@@ -9,6 +9,10 @@ import {
   resolveSessionAgentId,
   resolveAgentModelFallbacksOverride,
 } from "../agents/agent-scope.js";
+import { resolveAuthProfileDisplayLabel } from "../agents/auth-profiles/display.js";
+import { resolveAuthProfileOrder } from "../agents/auth-profiles/order.js";
+import { resolveMainAgentDir } from "../agents/auth-profiles/paths.js";
+import { loadPersistedAuthProfileState } from "../agents/auth-profiles/state.js";
 import { ensureAuthProfileStore } from "../agents/auth-profiles/store.js";
 import { resolveContextTokensForModel } from "../agents/context.js";
 import { resolveFastModeState } from "../agents/fast-mode.js";
@@ -17,7 +21,10 @@ import {
   areRuntimeModelRefsEquivalent,
   shouldPreferActiveRuntimeAliasAuthLabel,
 } from "../agents/model-runtime-aliases.js";
-import { resolveDefaultModelForAgent } from "../agents/model-selection.js";
+import {
+  findNormalizedProviderValue,
+  resolveDefaultModelForAgent,
+} from "../agents/model-selection.js";
 import { listOpenAIAuthProfileProvidersForAgentRuntime } from "../agents/openai-routing.js";
 import { resolveProviderIdForAuth } from "../agents/provider-auth-aliases.js";
 import {
@@ -307,6 +314,156 @@ function buildStatusUptimeLine(): string {
   return `⏱️ Uptime: gateway ${formatStatusUptimeDuration(gatewayUptimeMs)} · system ${formatStatusUptimeDuration(systemUptimeMs)}`;
 }
 
+function resolveSelectedAuthProfileId(params: {
+  provider?: string;
+  acceptedProviderIds?: readonly string[];
+  cfg?: OpenClawConfig;
+  sessionEntry?: Partial<Pick<SessionEntry, "authProfileOverride">>;
+  agentDir?: string;
+}): string | undefined {
+  const provider = params.provider?.trim();
+  if (!provider) {
+    return undefined;
+  }
+  const store = ensureAuthProfileStore(params.agentDir, {
+    allowKeychainPrompt: false,
+    config: params.cfg,
+    readOnly: true,
+    syncExternalCli: false,
+  });
+  const profileOverride = params.sessionEntry?.authProfileOverride?.trim();
+  const providers =
+    params.acceptedProviderIds && params.acceptedProviderIds.length > 0
+      ? params.acceptedProviderIds
+      : [provider];
+  const order = [
+    ...new Set(
+      providers.flatMap((candidateProvider) =>
+        resolveAuthProfileOrder({
+          cfg: params.cfg,
+          store,
+          provider: candidateProvider,
+          preferredProfile: profileOverride,
+        }),
+      ),
+    ),
+  ];
+  const candidates = [profileOverride, ...order].filter(Boolean) as string[];
+  const providerKeys = new Set(
+    providers
+      .map((candidateProvider) =>
+        resolveProviderIdForAuth(candidateProvider, { config: params.cfg }),
+      )
+      .filter(Boolean),
+  );
+  for (const profileId of candidates) {
+    const profile = store.profiles[profileId];
+    if (!profile) {
+      continue;
+    }
+    if (!providerKeys.has(resolveProviderIdForAuth(profile.provider, { config: params.cfg }))) {
+      continue;
+    }
+    return profileId;
+  }
+  return undefined;
+}
+
+export function resolveStatusModelAuthLabel(params: {
+  provider?: string;
+  acceptedProviderIds?: readonly string[];
+  cfg?: OpenClawConfig;
+  sessionEntry?: Partial<Pick<SessionEntry, "authProfileOverride">>;
+  agentDir?: string;
+  workspaceDir?: string;
+  includeExternalProfiles?: boolean;
+}): string | undefined {
+  const base = resolveModelAuthLabel(params);
+  const provider = params.provider?.trim();
+  if (!provider || !params.agentDir) {
+    return base;
+  }
+
+  const store = ensureAuthProfileStore(params.agentDir, {
+    allowKeychainPrompt: false,
+    config: params.cfg,
+    readOnly: true,
+    syncExternalCli: false,
+  });
+  const selectedProfileId = resolveSelectedAuthProfileId(params);
+  if (!selectedProfileId) {
+    return base;
+  }
+
+  const profile = store.profiles[selectedProfileId];
+  if (!profile) {
+    return base;
+  }
+
+  const profileLabel = resolveAuthProfileDisplayLabel({
+    cfg: params.cfg,
+    store,
+    profileId: selectedProfileId,
+  });
+  const authLabel =
+    profile.type === "oauth"
+      ? `oauth (${profileLabel})`
+      : profile.type === "token"
+        ? `token (${profileLabel})`
+        : `api-key (${profileLabel})`;
+
+  const mainAgentDir = resolveMainAgentDir();
+  if (params.agentDir === mainAgentDir) {
+    return authLabel;
+  }
+
+  const providerKeys = [
+    provider,
+    ...(params.acceptedProviderIds && params.acceptedProviderIds.length > 0
+      ? params.acceptedProviderIds
+      : []),
+  ];
+  const providerOrderKeys = [...new Set(providerKeys.map((value) => value.trim()).filter(Boolean))];
+  const providerAuthKeys = [
+    ...new Set(
+      providerOrderKeys.map((value) => resolveProviderIdForAuth(value, { config: params.cfg })),
+    ),
+  ];
+  const currentState = loadPersistedAuthProfileState(params.agentDir);
+  const mainState = loadPersistedAuthProfileState(mainAgentDir);
+  const currentPreferredOrder = providerOrderKeys
+    .map((providerKey) => findNormalizedProviderValue(currentState.order, providerKey)?.[0])
+    .find(Boolean);
+  const mainPreferredOrder = providerOrderKeys
+    .map(
+      (providerKey) =>
+        findNormalizedProviderValue(mainState.order, providerKey)?.[0] ??
+        findNormalizedProviderValue(params.cfg?.auth?.order, providerKey)?.[0],
+    )
+    .find(Boolean);
+  const currentLastGood = providerAuthKeys
+    .map((providerKey) => findNormalizedProviderValue(currentState.lastGood, providerKey))
+    .find(Boolean);
+  const mainLastGood = providerAuthKeys
+    .map((providerKey) => findNormalizedProviderValue(mainState.lastGood, providerKey))
+    .find(Boolean);
+
+  let note: string | undefined;
+  if (currentPreferredOrder && mainLastGood && currentPreferredOrder !== mainLastGood) {
+    note = `agent order prefers ${currentPreferredOrder}; main last-good ${mainLastGood}`;
+  } else if (
+    currentPreferredOrder &&
+    mainPreferredOrder &&
+    currentPreferredOrder !== mainPreferredOrder
+  ) {
+    note = `agent order prefers ${currentPreferredOrder}; main order prefers ${mainPreferredOrder}`;
+  } else if (currentLastGood && mainLastGood && currentLastGood !== mainLastGood) {
+    note = `agent last-good ${currentLastGood}; main last-good ${mainLastGood}`;
+  }
+
+  return note ? `${authLabel} · ${note}` : authLabel;
+}
+
 async function resolveRuntimePluginHealthLine(): Promise<string> {
   try {
     const { collectRuntimePluginHealthSnapshot } = await loadStatusPluginHealthRuntime();
@@ -391,7 +548,7 @@ export async function buildStatusText(params: BuildStatusTextParams): Promise<st
   });
   let selectedModelAuth = Object.hasOwn(params, "modelAuthOverride")
     ? params.modelAuthOverride
-    : resolveModelAuthLabel({
+    : resolveStatusModelAuthLabel({
         provider: selectedStatusProvider,
         acceptedProviderIds: selectedAuthProviders,
         cfg,
@@ -403,7 +560,7 @@ export async function buildStatusText(params: BuildStatusTextParams): Promise<st
   const activeModelAuth = Object.hasOwn(params, "activeModelAuthOverride")
     ? params.activeModelAuthOverride
     : modelRefs.activeDiffers
-      ? resolveModelAuthLabel({
+      ? resolveStatusModelAuthLabel({
           provider: activeStatusProvider,
           acceptedProviderIds: activeAuthProviders,
           cfg,
