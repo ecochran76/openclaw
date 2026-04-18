@@ -4,6 +4,8 @@ import { formatSlackError } from "../errors.js";
 const SLACK_AUTH_ERROR_RE =
   /account_inactive|invalid_auth|token_revoked|token_expired|not_authed|org_login_required|team_access_not_granted|user_removed_from_team|team_disabled|missing_scope|cannot_find_service|invalid_token/i;
 const NO_ERROR_DETAIL = "no error detail";
+const SLACK_RECOVERABLE_SOCKET_ERROR_RE =
+  /unexpected server response:\s*408|socket hang up|pong wasn't received|timed out|timeout|econnreset|econnrefused|eai_again|network|temporar(?:y|ily)|disconnect/i;
 
 export const SLACK_SOCKET_RECONNECT_POLICY = {
   initialMs: 2_000,
@@ -96,4 +98,12 @@ export function isNonRecoverableSlackAuthError(error: unknown): boolean {
 
 export function formatUnknownError(error: unknown, fallback = NO_ERROR_DETAIL): string {
   return formatSlackError(error, fallback);
+}
+
+export function isRecoverableSlackSocketTransportError(error: unknown): boolean {
+  const message = formatUnknownError(error).trim();
+  if (!message) {
+    return false;
+  }
+  return SLACK_RECOVERABLE_SOCKET_ERROR_RE.test(message);
 }

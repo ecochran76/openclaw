@@ -1,6 +1,6 @@
 // Slack tests cover provider.auth errors plugin behavior.
 import { describe, it, expect } from "vitest";
-import { isNonRecoverableSlackAuthError } from "./reconnect-policy.js";
+import { isNonRecoverableSlackAuthError, __testing } from "./provider.js";
 
 describe("isNonRecoverableSlackAuthError", () => {
   it.each([
@@ -64,5 +64,18 @@ describe("isNonRecoverableSlackAuthError", () => {
   it("returns false for empty string", () => {
     expect(isNonRecoverableSlackAuthError("")).toBe(false);
     expect(isNonRecoverableSlackAuthError(new Error(""))).toBe(false);
+  });
+
+  it.each([
+    "Unexpected server response: 408",
+    "socket hang up",
+    "A pong wasn't received from the server before the timeout of 5000ms!",
+    "ECONNRESET",
+  ])("treats recoverable socket transport error as recoverable: %s", (msg) => {
+    expect(__testing.isRecoverableSlackSocketTransportError(new Error(msg))).toBe(true);
+  });
+
+  it("does not treat auth failures as recoverable socket transport errors", () => {
+    expect(__testing.isRecoverableSlackSocketTransportError(new Error("invalid_auth"))).toBe(false);
   });
 });

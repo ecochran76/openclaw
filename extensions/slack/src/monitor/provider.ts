@@ -17,6 +17,7 @@ import { warn } from "openclaw/plugin-sdk/runtime-env";
 import {
   computeBackoff,
   createNonExitingRuntime,
+  registerUnhandledRejectionHandler,
   sleepWithAbort,
   type RuntimeEnv,
 } from "openclaw/plugin-sdk/runtime-env";
@@ -67,6 +68,7 @@ import {
   formatUnknownError,
   getSocketEmitter,
   isNonRecoverableSlackAuthError,
+  isRecoverableSlackSocketTransportError,
   SLACK_SOCKET_RECONNECT_POLICY,
   waitForSlackSocketDisconnect,
 } from "./reconnect-policy.js";
@@ -334,6 +336,39 @@ export async function monitorSlackProvider(opts: MonitorSlackOpts = {}) {
         }
       : null;
   let unregisterHttpHandler: (() => void) | null = null;
+  let recentSocketFaultAt = 0;
+  let recentSocketFaultMessage: string | undefined;
+  const noteRecentSocketFault = (error?: unknown) => {
+    if (!error) {
+      return;
+    }
+    if (!isRecoverableSlackSocketTransportError(error)) {
+      return;
+    }
+    recentSocketFaultAt = Date.now();
+    recentSocketFaultMessage = formatUnknownError(error);
+  };
+  const shouldSuppressSlackSocketUnhandledRejection = (reason: unknown) => {
+    if (slackMode !== "socket") {
+      return false;
+    }
+    if (recentSocketFaultAt <= 0 || Date.now() - recentSocketFaultAt > 15_000) {
+      return false;
+    }
+    if (reason == null) {
+      return true;
+    }
+    return isRecoverableSlackSocketTransportError(reason);
+  };
+  const unregisterUnhandledRejectionHandler = registerUnhandledRejectionHandler((reason) => {
+    if (!shouldSuppressSlackSocketUnhandledRejection(reason)) {
+      return false;
+    }
+    runtime.error?.(
+      `slack socket mode suppressed unhandled rejection after recoverable transport fault (${recentSocketFaultMessage ?? "unknown socket fault"})`,
+    );
+    return true;
+  });
 
   let botUserId = "";
   let botId = "";
@@ -610,6 +645,7 @@ export async function monitorSlackProvider(opts: MonitorSlackOpts = {}) {
           if (opts.abortSignal?.aborted) {
             break;
           }
+          noteRecentSocketFault(disconnect.error);
           publishSlackDisconnectedStatus(opts.setStatus, disconnect.error);
 
           // Permanent account and credential failures need operator action.
@@ -641,6 +677,9 @@ export async function monitorSlackProvider(opts: MonitorSlackOpts = {}) {
             break;
           }
         } catch (err) {
+          noteRecentSocketFault(err);
+          // Auth errors (account_inactive, invalid_auth, etc.) are permanent —
+          // retrying will never succeed and blocks the entire gateway.  Fail fast.
           if (isNonRecoverableSlackAuthError(err)) {
             runtime.error?.(
               `slack socket mode failed to start due to non-recoverable auth error — skipping channel (${formatUnknownError(err)})`,
@@ -694,6 +733,7 @@ export async function monitorSlackProvider(opts: MonitorSlackOpts = {}) {
       setSlackDefaultSendIdentity(account.accountId, undefined);
     }
     opts.abortSignal?.removeEventListener("abort", stopOnAbort);
+    unregisterUnhandledRejectionHandler();
     unregisterHttpHandler?.();
     await gracefulStop();
   }
@@ -716,6 +756,7 @@ export const testing = {
   createSlackBoltApp,
   createSlackSocketDisconnectWaiter,
   startSlackSocketAndWaitForDisconnect,
+  isRecoverableSlackSocketTransportError,
   getSocketEmitter,
   waitForSlackSocketDisconnect,
 };
