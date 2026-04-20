@@ -7,6 +7,7 @@ import type { RuntimeEnv } from "../runtime.js";
 import type { WizardPrompter } from "../wizard/prompts.js";
 import { resolveProviderRuntimePlugin } from "./provider-hook-runtime.js";
 import { createVpsAwareOAuthHandlers } from "./provider-oauth-flow.js";
+import type { ChatReauthCapability } from "./provider-auth-types.js";
 import type { ProviderAuthContext } from "./types.js";
 
 const OPENAI_CODEX_PROVIDER_ID = "openai";
@@ -196,6 +197,20 @@ export async function completeOpenAICodexManualAuthorization(params: {
     accountId,
   };
 }
+
+export const openAICodexChatReauthCapability: ChatReauthCapability = {
+  provider: OPENAI_CODEX_PROVIDER_ID,
+  looksLikeCallbackInput: looksLikeOpenAICodexCallbackInput,
+  createPendingAuthorization: (params) =>
+    createOpenAICodexManualAuthorization({ originator: params?.originator }),
+  completePendingAuthorization: async ({ input, pending }) =>
+    await completeOpenAICodexManualAuthorization({
+      input,
+      state: pending.state,
+      verifier: pending.verifier,
+      redirectUri: pending.redirectUri,
+    }),
+};
 
 /** @deprecated OpenAI Codex OAuth is owned by the OpenAI plugin auth hook. */
 export async function loginOpenAICodexOAuth(

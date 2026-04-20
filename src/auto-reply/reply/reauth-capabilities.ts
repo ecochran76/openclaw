@@ -1,27 +1,12 @@
-import type { OAuthCredentials } from "@earendil-works/pi-ai/oauth";
 import { getDefaultChatReauthProvider as getRegisteredDefaultChatReauthProvider } from "../../agents/auth-profiles/chat-reauth.js";
 import {
   normalizeRequestedProfileId,
   resolveAuthProfileProviderId,
 } from "../../agents/auth-profiles/profile-id.js";
-import type { PendingOAuthReauth } from "../../config/sessions/types.js";
-import {
-  completeOpenAICodexManualAuthorization,
-  createOpenAICodexManualAuthorization,
-  looksLikeOpenAICodexCallbackInput,
-} from "../../plugins/provider-openai-chatgpt-oauth.js";
+import type { ChatReauthCapability } from "../../plugins/provider-auth-types.js";
+import { openAICodexChatReauthCapability } from "../../plugins/provider-openai-chatgpt-oauth.js";
 
-export type ChatReauthCapability = {
-  provider: string;
-  looksLikeCallbackInput: (input: string) => boolean;
-  createPendingAuthorization: (params?: {
-    originator?: string;
-  }) => Omit<PendingOAuthReauth, "kind" | "provider" | "profileId">;
-  completePendingAuthorization: (params: {
-    input: string;
-    pending: Pick<PendingOAuthReauth, "state" | "verifier" | "redirectUri">;
-  }) => Promise<OAuthCredentials>;
-};
+const CHAT_REAUTH_CAPABILITIES: readonly ChatReauthCapability[] = [openAICodexChatReauthCapability];
 
 export function getDefaultChatReauthProvider(): string | undefined {
   return getRegisteredDefaultChatReauthProvider();
@@ -58,23 +43,9 @@ export function resolveChatReauthProvider(params: {
 }
 
 export function getChatReauthCapability(provider: string): ChatReauthCapability | null {
-  switch (provider) {
-    case "openai":
-    case "openai-codex":
-      return {
-        provider: "openai",
-        looksLikeCallbackInput: looksLikeOpenAICodexCallbackInput,
-        createPendingAuthorization: (params) =>
-          createOpenAICodexManualAuthorization({ originator: params?.originator }),
-        completePendingAuthorization: async ({ input, pending }) =>
-          await completeOpenAICodexManualAuthorization({
-            input,
-            state: pending.state,
-            verifier: pending.verifier,
-            redirectUri: pending.redirectUri,
-          }),
-      };
-    default:
-      return null;
+  const normalized = provider.trim();
+  if (normalized === "openai-codex") {
+    return openAICodexChatReauthCapability;
   }
+  return CHAT_REAUTH_CAPABILITIES.find((capability) => capability.provider === normalized) ?? null;
 }

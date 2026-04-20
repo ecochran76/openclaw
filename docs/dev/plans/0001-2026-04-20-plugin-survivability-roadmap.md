@@ -15,7 +15,9 @@ It complements:
 
 ## Current State
 
-The initial roadmap exists as the first serialized `docs/dev/plans/` artifact. The next implementation slice is Phase 1: provider auth capability seam for `/reauth`.
+Phase 1 is implemented on `ec-main`: OpenAI Codex now owns its chat reauth capability object, and auto-reply resolves capabilities through a provider-neutral lookup surface.
+
+The next implementation slice is Phase 2: Slack A2A presentation boundary.
 
 ## Goal
 
@@ -40,7 +42,7 @@ The goal is not to make every local feature a plugin. The goal is to put each be
 
 ## Phase 1: Provider Auth Capability Seam
 
-Status: next recommended implementation slice.
+Status: implemented on 2026-04-20.
 
 Purpose: reduce `/reauth` and profile/auth rebase pressure by moving provider-specific behavior behind provider-owned capabilities.
 
@@ -220,6 +222,6 @@ Exit criteria:
 
 ## Current Next Action
 
-Start with Phase 1: provider auth capability seam for `/reauth`.
+Start Phase 2: Slack A2A presentation boundary.
 
-That slice gives the best immediate rebase-survivability return because it moves a known provider-specific hotspot toward the provider boundary without changing user-visible behavior.
+That slice should preserve generic A2A safety in core while moving Slack-specific approval presentation and interaction behavior toward Slack-owned surfaces.

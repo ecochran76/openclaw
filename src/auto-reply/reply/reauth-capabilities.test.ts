@@ -7,9 +7,12 @@ const hoisted = vi.hoisted(() => ({
 }));
 
 vi.mock("../../plugins/provider-openai-chatgpt-oauth.js", () => ({
-  looksLikeOpenAICodexCallbackInput: hoisted.looksLikeCallbackInputMock,
-  createOpenAICodexManualAuthorization: hoisted.createManualAuthorizationMock,
-  completeOpenAICodexManualAuthorization: hoisted.completeManualAuthorizationMock,
+  openAICodexChatReauthCapability: {
+    provider: "openai",
+    looksLikeCallbackInput: hoisted.looksLikeCallbackInputMock,
+    createPendingAuthorization: hoisted.createManualAuthorizationMock,
+    completePendingAuthorization: hoisted.completeManualAuthorizationMock,
+  },
 }));
 
 const {

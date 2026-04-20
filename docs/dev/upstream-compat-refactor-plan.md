@@ -25,34 +25,47 @@ Practical result:
 - `src/auto-reply/reply/dispatch-from-config.ts` is still important, but much less structurally overloaded
 - future rebases should now conflict on smaller adapters instead of monolithic orchestration blocks
 
-## Phase 3
+## Phase 3 checkpoint
 
-Next focus: provider-auth capabilities.
+As of 2026-04-20, the first provider-auth capability slice landed on `ec-main`.
 
-The current `/reauth` flow is still too provider-specific. The first pass should extract a provider capability boundary that can answer:
+Completed extraction:
 
-- can this provider start chat-native reauth?
-- how does it start?
-- how does it complete?
-- what fallback guidance should be shown when chat reauth is unsupported?
+- OpenAI Codex now exports its chat reauth capability from `src/plugins/provider-openai-codex-oauth.ts`.
+- `src/auto-reply/reply/reauth-capabilities.ts` resolves provider capabilities through a provider-neutral lookup surface instead of composing OpenAI Codex start/complete behavior inline.
+- The generic capability type lives in `src/plugins/provider-auth-types.ts`.
+
+Validation:
+
+- `pnpm test -- src/auto-reply/reply/reauth-capabilities.test.ts src/auto-reply/reply/commands-reauth.test.ts src/plugins/provider-openai-codex-oauth.chat-reauth.test.ts src/plugins/provider-openai-codex-oauth.test.ts src/commands/models/auth.test.ts`
+- `pnpm build`
+
+## Phase 4
+
+Next focus: Slack A2A presentation boundary.
+
+The current A2A approval surface still has Slack-specific presentation pressure in generic routing/tool-event paths. The first pass should extract a boundary that can answer:
+
+- which parts of permission and routing semantics are generic A2A safety policy?
+- which parts are Slack-specific rendering and interaction handling?
+- how should Slack-owned helpers build approval payloads without owning generic A2A policy?
 
 Recommended first slice:
 
-- keep current `openai-codex` behavior unchanged
-- extract provider-neutral capability lookup behind `/reauth`
-- move OpenAI Codex-specific manual auth start/complete logic behind that capability
+- keep current Slack approve/deny behavior unchanged
+- keep permission semantics and config patching in core-owned A2A helpers
+- move Slack-specific approval payload construction toward Slack-owned helpers
 
 Primary files to watch in this phase:
 
-- `src/auto-reply/reply/commands-reauth.ts`
-- `src/plugins/provider-openai-codex-oauth.ts`
-- `src/commands/models/auth.ts`
-- `src/plugins/provider-auth-helpers.ts`
+- `src/agents/a2a/*`
+- `src/agents/pi-embedded-subscribe.handlers.tools*`
+- `extensions/slack/src/monitor/events/interactions.test.ts`
+- `src/agents/openclaw-tools.sessions.test.ts`
 
 Primary validation entry points:
 
-- `pnpm test -- src/auto-reply/reply/commands-reauth.test.ts`
-- `pnpm test -- src/commands/openai-codex-oauth.test.ts`
-- `pnpm test -- src/plugins/provider-openai-codex-oauth.chat-reauth.test.ts`
-- `pnpm test -- src/commands/models/auth.test.ts`
-- `pnpm build`
+- `pnpm test -- src/agents/openclaw-tools.sessions.test.ts`
+- `pnpm test -- src/agents/a2a/permission-approval-action.test.ts`
+- `pnpm test -- src/agents/pi-embedded-subscribe.handlers.tools.test.ts`
+- `pnpm test -- extensions/slack/src/monitor/events/interactions.test.ts`

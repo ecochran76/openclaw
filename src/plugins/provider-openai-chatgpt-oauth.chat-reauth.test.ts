@@ -3,6 +3,7 @@ import {
   completeOpenAICodexManualAuthorization,
   createOpenAICodexManualAuthorization,
   looksLikeOpenAICodexCallbackInput,
+  openAICodexChatReauthCapability,
 } from "./provider-openai-chatgpt-oauth.js";
 
 describe("provider-openai-chatgpt chat reauth", () => {
@@ -33,6 +34,19 @@ describe("provider-openai-chatgpt chat reauth", () => {
     expect(auth.authorizationUrl).toContain(
       "redirect_uri=http%3A%2F%2Flocalhost%3A1455%2Fauth%2Fcallback",
     );
+    expect(auth.authorizationUrl).toContain("originator=pi");
+  });
+
+  it("exposes the provider-owned chat reauth capability", async () => {
+    const auth = openAICodexChatReauthCapability.createPendingAuthorization({
+      originator: "pi",
+    });
+
+    expect(openAICodexChatReauthCapability.provider).toBe("openai");
+    expect(openAICodexChatReauthCapability.looksLikeCallbackInput("?code=test&state=state-1")).toBe(
+      true,
+    );
+    expect(auth.redirectUri).toBe("http://localhost:1455/auth/callback");
     expect(auth.authorizationUrl).toContain("originator=pi");
   });
 
