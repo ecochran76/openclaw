@@ -175,6 +175,12 @@ function createAuthStoreWithProfiles(params: {
 const TEST_PRIMARY_PROFILE_ID = "openai:primary@example.test";
 const TEST_SECONDARY_PROFILE_ID = "openai:secondary@example.test";
 
+async function writeMockedAuthStore(agentDir: string, store: AuthProfileStore) {
+  authStoreMocks.state.hasSource = true;
+  authStoreMocks.state.store = store;
+  await fs.writeFile(path.join(agentDir, "auth-profiles.json"), JSON.stringify(store), "utf-8");
+}
+
 async function writeUsageCache(params: {
   agentDir: string;
   entries: Array<{
@@ -645,8 +651,7 @@ describe("resolveSessionAuthProfileOverride", () => {
     await withAuthState(async (state) => {
       const agentDir = state.agentDir();
       await fs.mkdir(agentDir, { recursive: true });
-      authStoreMocks.state.hasSource = true;
-      authStoreMocks.state.store = {
+      await writeMockedAuthStore(agentDir, {
         version: 1,
         profiles: {
           "openai-codex:default": {
@@ -667,7 +672,7 @@ describe("resolveSessionAuthProfileOverride", () => {
         order: {
           "openai-codex": ["openai-codex:default", "openai-codex:dillan"],
         },
-      };
+      });
 
       const sessionEntry: SessionEntry = {
         sessionId: "s1",
@@ -700,25 +705,21 @@ describe("resolveSessionAuthProfileOverride", () => {
       await fs.mkdir(agentDir, { recursive: true });
       const profileId = "openai-codex:default";
       const provider = "openai-codex";
-      await fs.writeFile(
-        path.join(agentDir, "auth-profiles.json"),
-        JSON.stringify({
-          version: 1,
-          profiles: {
-            [profileId]: {
-              type: "oauth",
-              provider,
-              access: "access-default",
-              refresh: "refresh-default",
-              expires: Date.now() + 60_000,
-            },
+      await writeMockedAuthStore(agentDir, {
+        version: 1,
+        profiles: {
+          [profileId]: {
+            type: "oauth",
+            provider,
+            access: "access-default",
+            refresh: "refresh-default",
+            expires: Date.now() + 60_000,
           },
-          order: {
-            [provider]: [profileId],
-          },
-        }),
-        "utf-8",
-      );
+        },
+        order: {
+          [provider]: [profileId],
+        },
+      });
       await writeUsageCache({
         agentDir,
         entries: [{ profileId, provider, usedPercent: 85 }],
@@ -762,25 +763,21 @@ describe("resolveSessionAuthProfileOverride", () => {
       await fs.mkdir(agentDir, { recursive: true });
       const profileId = "openai-codex:default";
       const provider = "openai-codex";
-      await fs.writeFile(
-        path.join(agentDir, "auth-profiles.json"),
-        JSON.stringify({
-          version: 1,
-          profiles: {
-            [profileId]: {
-              type: "oauth",
-              provider,
-              access: "access-default",
-              refresh: "refresh-default",
-              expires: Date.now() + 60_000,
-            },
+      await writeMockedAuthStore(agentDir, {
+        version: 1,
+        profiles: {
+          [profileId]: {
+            type: "oauth",
+            provider,
+            access: "access-default",
+            refresh: "refresh-default",
+            expires: Date.now() + 60_000,
           },
-          order: {
-            [provider]: [profileId],
-          },
-        }),
-        "utf-8",
-      );
+        },
+        order: {
+          [provider]: [profileId],
+        },
+      });
       await writeUsageCache({
         agentDir,
         entries: [{ profileId, provider, usedPercent: 85 }],
@@ -847,32 +844,28 @@ describe("resolveSessionAuthProfileOverride", () => {
       const provider = "openai-codex";
       const primaryProfileId = "openai-codex:default";
       const backupProfileId = "openai-codex:backup";
-      await fs.writeFile(
-        path.join(agentDir, "auth-profiles.json"),
-        JSON.stringify({
-          version: 1,
-          profiles: {
-            [primaryProfileId]: {
-              type: "oauth",
-              provider,
-              access: "access-default",
-              refresh: "refresh-default",
-              expires: Date.now() + 60_000,
-            },
-            [backupProfileId]: {
-              type: "oauth",
-              provider,
-              access: "access-backup",
-              refresh: "refresh-backup",
-              expires: Date.now() + 60_000,
-            },
+      await writeMockedAuthStore(agentDir, {
+        version: 1,
+        profiles: {
+          [primaryProfileId]: {
+            type: "oauth",
+            provider,
+            access: "access-default",
+            refresh: "refresh-default",
+            expires: Date.now() + 60_000,
           },
-          order: {
-            [provider]: [primaryProfileId, backupProfileId],
+          [backupProfileId]: {
+            type: "oauth",
+            provider,
+            access: "access-backup",
+            refresh: "refresh-backup",
+            expires: Date.now() + 60_000,
           },
-        }),
-        "utf-8",
-      );
+        },
+        order: {
+          [provider]: [primaryProfileId, backupProfileId],
+        },
+      });
       await writeUsageCache({
         agentDir,
         entries: [
@@ -923,32 +916,28 @@ describe("resolveSessionAuthProfileOverride", () => {
       const provider = "openai-codex";
       const primaryProfileId = "openai-codex:default";
       const blockedProfileId = "openai-codex:blocked";
-      await fs.writeFile(
-        path.join(agentDir, "auth-profiles.json"),
-        JSON.stringify({
-          version: 1,
-          profiles: {
-            [primaryProfileId]: {
-              type: "oauth",
-              provider,
-              access: "access-default",
-              refresh: "refresh-default",
-              expires: Date.now() + 60_000,
-            },
-            [blockedProfileId]: {
-              type: "oauth",
-              provider,
-              access: "access-blocked",
-              refresh: "refresh-blocked",
-              expires: Date.now() + 60_000,
-            },
+      await writeMockedAuthStore(agentDir, {
+        version: 1,
+        profiles: {
+          [primaryProfileId]: {
+            type: "oauth",
+            provider,
+            access: "access-default",
+            refresh: "refresh-default",
+            expires: Date.now() + 60_000,
           },
-          order: {
-            [provider]: [primaryProfileId, blockedProfileId],
+          [blockedProfileId]: {
+            type: "oauth",
+            provider,
+            access: "access-blocked",
+            refresh: "refresh-blocked",
+            expires: Date.now() + 60_000,
           },
-        }),
-        "utf-8",
-      );
+        },
+        order: {
+          [provider]: [primaryProfileId, blockedProfileId],
+        },
+      });
       await writeUsageCache({
         agentDir,
         entries: [
@@ -998,32 +987,28 @@ describe("resolveSessionAuthProfileOverride", () => {
       const provider = "openai-codex";
       const primaryProfileId = "openai-codex:default";
       const blockedProfileId = "openai-codex:blocked";
-      await fs.writeFile(
-        path.join(agentDir, "auth-profiles.json"),
-        JSON.stringify({
-          version: 1,
-          profiles: {
-            [primaryProfileId]: {
-              type: "oauth",
-              provider,
-              access: "access-default",
-              refresh: "refresh-default",
-              expires: Date.now() + 60_000,
-            },
-            [blockedProfileId]: {
-              type: "oauth",
-              provider,
-              access: "access-blocked",
-              refresh: "refresh-blocked",
-              expires: Date.now() + 60_000,
-            },
+      await writeMockedAuthStore(agentDir, {
+        version: 1,
+        profiles: {
+          [primaryProfileId]: {
+            type: "oauth",
+            provider,
+            access: "access-default",
+            refresh: "refresh-default",
+            expires: Date.now() + 60_000,
           },
-          order: {
-            [provider]: [primaryProfileId, blockedProfileId],
+          [blockedProfileId]: {
+            type: "oauth",
+            provider,
+            access: "access-blocked",
+            refresh: "refresh-blocked",
+            expires: Date.now() + 60_000,
           },
-        }),
-        "utf-8",
-      );
+        },
+        order: {
+          [provider]: [primaryProfileId, blockedProfileId],
+        },
+      });
       await writeUsageCache({
         agentDir,
         entries: [
