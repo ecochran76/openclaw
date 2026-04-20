@@ -1,6 +1,7 @@
 // Runtime config tests cover gateway bind/auth resolution, trusted proxy rules,
 // container defaults, and invalid config rejection before server startup.
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import { captureEnv } from "../test-utils/env.js";
 import { __resetContainerCacheForTest } from "./net.js";
 import { resolveGatewayRuntimeConfig } from "./server-runtime-config.js";
 
@@ -17,6 +18,18 @@ const TOKEN_AUTH = {
 };
 
 describe("resolveGatewayRuntimeConfig", () => {
+  const gatewayCredentialEnv = captureEnv(["OPENCLAW_GATEWAY_TOKEN", "OPENCLAW_GATEWAY_PASSWORD"]);
+
+  beforeEach(() => {
+    gatewayCredentialEnv.restore();
+    delete process.env.OPENCLAW_GATEWAY_TOKEN;
+    delete process.env.OPENCLAW_GATEWAY_PASSWORD;
+  });
+
+  afterEach(() => {
+    gatewayCredentialEnv.restore();
+  });
+
   describe("trusted-proxy auth mode", () => {
     // This test validates BOTH validation layers:
     // 1. CLI validation in src/cli/gateway-cli/run.ts (line 246)
@@ -116,19 +129,8 @@ describe("resolveGatewayRuntimeConfig", () => {
   });
 
   describe("token/password auth modes", () => {
-    let originalToken: string | undefined;
-
     beforeEach(() => {
-      originalToken = process.env.OPENCLAW_GATEWAY_TOKEN;
       delete process.env.OPENCLAW_GATEWAY_TOKEN;
-    });
-
-    afterEach(() => {
-      if (originalToken !== undefined) {
-        process.env.OPENCLAW_GATEWAY_TOKEN = originalToken;
-      } else {
-        delete process.env.OPENCLAW_GATEWAY_TOKEN;
-      }
     });
 
     it.each([

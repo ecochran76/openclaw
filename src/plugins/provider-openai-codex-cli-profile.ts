@@ -2,8 +2,8 @@ import {
   CODEX_CLI_PROFILE_ID,
   OPENAI_CODEX_DEFAULT_PROFILE_ID,
 } from "../agents/auth-profiles/constants.js";
-import { readCodexCliCredentialsCached } from "../agents/cli-credentials.js";
 import type { OAuthCredential } from "../agents/auth-profiles/types.js";
+import { readCodexCliCredentialsCached } from "../agents/cli-credentials.js";
 
 export { CODEX_CLI_PROFILE_ID, OPENAI_CODEX_DEFAULT_PROFILE_ID };
 export const OPENAI_CODEX_PROVIDER_ID = "openai";

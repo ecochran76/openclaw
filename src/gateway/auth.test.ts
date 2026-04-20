@@ -524,6 +524,7 @@ describe("gateway auth", () => {
         mode: "password",
         password: { source: "exec", provider: "op", id: "pw" } as never,
       },
+      env: {} as NodeJS.ProcessEnv,
     });
     expect(() =>
       assertGatewayAuthConfigured(auth, {
@@ -555,7 +556,10 @@ describe("gateway auth", () => {
   });
 
   it("throws generic error when password mode has no password at all", () => {
-    const auth = resolveGatewayAuth({ authConfig: { mode: "password" } });
+    const auth = resolveGatewayAuth({
+      authConfig: { mode: "password" },
+      env: {} as NodeJS.ProcessEnv,
+    });
     expect(() => assertGatewayAuthConfigured(auth, { mode: "password" })).toThrow(
       "gateway auth mode is password, but no password was configured",
     );

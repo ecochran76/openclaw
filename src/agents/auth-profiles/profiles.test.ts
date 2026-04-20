@@ -6,7 +6,7 @@
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
 import { resolveOAuthDir } from "../../config/paths.js";
 import { closeOpenClawAgentDatabasesForTest } from "../../state/openclaw-agent-db.js";
 import { closeOpenClawStateDatabaseForTest } from "../../state/openclaw-state-db.js";
@@ -606,11 +606,10 @@ describe("promoteAuthProfileInOrder", () => {
 
 describe("syncAuthProfile", () => {
   function writeStore(agentDir: string, store: AuthProfileStore) {
-    fs.writeFileSync(path.join(agentDir, "auth-profiles.json"), JSON.stringify(store));
-  }
-
-  function readStore(agentDir: string): AuthProfileStore {
-    return JSON.parse(fs.readFileSync(path.join(agentDir, "auth-profiles.json"), "utf8"));
+    saveAuthProfileStore(store, agentDir, {
+      filterExternalAuthProfiles: false,
+      syncExternalCli: false,
+    });
   }
 
   it("syncs one profile without clobbering unrelated target metadata", async () => {
@@ -630,15 +629,15 @@ describe("syncAuthProfile", () => {
       writeStore(mainAgentDir, {
         version: 1,
         profiles: {
-          "openai-codex:work": {
+          "openai:work": {
             type: "oauth",
-            provider: "openai-codex",
+            provider: "openai",
             access: "fresh-access",
             refresh: "fresh-refresh",
             expires: Date.now() + 60_000,
           },
         },
-        lastGood: { "openai-codex": "openai-codex:work" },
+        lastGood: { openai: "openai:work" },
       });
 
       writeStore(kidAgentDir, {
@@ -658,7 +657,7 @@ describe("syncAuthProfile", () => {
       });
 
       const result = await syncAuthProfile({
-        profileId: "openai-codex:work",
+        profileId: "openai:work",
         sourceAgentDir: mainAgentDir,
         targetAgentDirs: [kidAgentDir, mainAgentDir],
       });
@@ -667,9 +666,9 @@ describe("syncAuthProfile", () => {
       expect(result.skippedAgentDirs).toEqual([path.resolve(mainAgentDir)]);
 
       const updatedKid = loadAuthProfileStoreForRuntime(kidAgentDir);
-      expect(updatedKid.profiles["openai-codex:work"]).toMatchObject({
+      expect(updatedKid.profiles["openai:work"]).toMatchObject({
         type: "oauth",
-        provider: "openai-codex",
+        provider: "openai",
         access: "fresh-access",
         refresh: "fresh-refresh",
       });

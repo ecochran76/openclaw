@@ -75,6 +75,7 @@ const GATEWAY_TEST_ENV_KEYS = [
   "OPENCLAW_CONFIG_PATH",
   "OPENCLAW_AGENT_DIR",
   "OPENCLAW_GATEWAY_TOKEN",
+  "OPENCLAW_GATEWAY_PASSWORD",
   "OPENCLAW_SKIP_BROWSER_CONTROL_SERVER",
   "OPENCLAW_SKIP_GMAIL_WATCHER",
   "OPENCLAW_SKIP_CANVAS_HOST",
@@ -240,6 +241,9 @@ async function setupGatewayTestHome() {
   process.env.OPENCLAW_STATE_DIR = path.join(tempHome, ".openclaw");
   delete process.env.OPENCLAW_CONFIG_PATH;
   delete process.env.OPENCLAW_AGENT_DIR;
+  delete process.env.PI_CODING_AGENT_DIR;
+  delete process.env.OPENCLAW_GATEWAY_TOKEN;
+  delete process.env.OPENCLAW_GATEWAY_PASSWORD;
 }
 
 function applyGatewaySkipEnv() {
@@ -265,6 +269,7 @@ async function resetGatewayTestState(options: { uniqueConfigRoot: boolean }) {
   }
   applyGatewaySkipEnv();
   delete process.env.OPENCLAW_GATEWAY_TOKEN;
+  delete process.env.OPENCLAW_GATEWAY_PASSWORD;
   resetTaskRegistryForTests({ persist: false });
   resetTaskFlowRegistryForTests({ persist: false });
   const stateDir = process.env.OPENCLAW_STATE_DIR;
@@ -404,6 +409,7 @@ async function resetGatewayTestRuntimeOnly() {
   setLoggerOverride({ level: "silent", consoleLevel: "silent" });
   applyGatewaySkipEnv();
   delete process.env.OPENCLAW_GATEWAY_TOKEN;
+  delete process.env.OPENCLAW_GATEWAY_PASSWORD;
   resetConfigRuntimeState();
   resetTestPluginRegistry();
   clearGatewaySubagentRuntime();

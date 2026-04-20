@@ -375,6 +375,9 @@ function shouldKeepProfileInLocalStore(params: {
   if (params.credential.type !== "oauth") {
     return true;
   }
+  if (params.options?.filterExternalAuthProfiles === false) {
+    return true;
+  }
   if (
     isInheritedMainOAuthCredential({
       agentDir: params.agentDir,

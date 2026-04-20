@@ -330,6 +330,7 @@ describe("callGateway url resolution", () => {
     "OPENCLAW_GATEWAY_PORT",
     "OPENCLAW_GATEWAY_URL",
     "OPENCLAW_GATEWAY_TOKEN",
+    "OPENCLAW_GATEWAY_PASSWORD",
     "OPENCLAW_STATE_DIR",
   ]);
 
@@ -340,6 +341,7 @@ describe("callGateway url resolution", () => {
     deleteTestEnvValue("OPENCLAW_GATEWAY_PORT");
     deleteTestEnvValue("OPENCLAW_GATEWAY_URL");
     deleteTestEnvValue("OPENCLAW_GATEWAY_TOKEN");
+    deleteTestEnvValue("OPENCLAW_GATEWAY_PASSWORD");
     deleteTestEnvValue("OPENCLAW_STATE_DIR");
     resetGatewayCallMocks();
   });

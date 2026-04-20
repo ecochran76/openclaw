@@ -298,6 +298,10 @@ export async function syncAuthProfile(params: {
     }
     const updated = await updateAuthProfileStoreFileWithLock({
       agentDir: targetAgentDir,
+      saveOptions: {
+        filterExternalAuthProfiles: false,
+        syncExternalCli: false,
+      },
       updater: (store) => {
         store.profiles[params.profileId] = structuredClone(credential);
         return true;
@@ -352,4 +356,21 @@ export async function markAuthProfileSuccess(params: {
   store.lastGood = { ...store.lastGood, [providerKey]: profileId };
   updateSuccessfulUsageStatsEntry(store, profileId, lastUsed);
   saveAuthProfileStore(store, agentDir);
+}
+
+export async function markAuthProfileUsed(params: {
+  store: AuthProfileStore;
+  profileId: string;
+  agentDir?: string;
+}): Promise<void> {
+  const provider = params.store.profiles[params.profileId]?.provider;
+  if (!provider) {
+    return;
+  }
+  await markAuthProfileSuccess({
+    store: params.store,
+    provider,
+    profileId: params.profileId,
+    agentDir: params.agentDir,
+  });
 }

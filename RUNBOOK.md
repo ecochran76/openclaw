@@ -28,3 +28,14 @@ This runbook is a dated log of planning-contract and execution events that shoul
 - Updated core and Slack tests so core asserts safety metadata while Slack asserts Slack-specific interactive rendering.
 - Validation passed:
   - `pnpm test -- src/agents/openclaw-tools.sessions.test.ts src/agents/a2a/permission-approval-action.test.ts src/agents/pi-embedded-subscribe.handlers.tools.test.ts extensions/slack/src/monitor/events/interactions.test.ts extensions/slack/src/channel.test.ts extensions/slack/src/interactive-replies.test.ts`
+
+## Turn 4 | 2026-04-20
+
+- Stabilized the first failing-test slice observed after the plugin-survivability work.
+- Isolated gateway auth tests from live `OPENCLAW_GATEWAY_TOKEN` / `OPENCLAW_GATEWAY_PASSWORD` environment credentials so local operator secrets cannot change expected unauthenticated request behavior.
+- Isolated auth-profile store tests from live `CODEX_HOME` so real Codex CLI profile state cannot be imported into temp fixture stores.
+- Split Codex CLI OAuth reuse from runtime overlays: Codex CLI credentials can still be used as explicit usable bootstrap credentials, but they no longer silently overlay persisted profile health/status or agent runtime store state.
+- Kept expired external CLI credentials from replacing the canonical OAuth refresh context.
+- Updated auth-profile state tests for the current storage contract: order, last-good, and usage stats live in per-agent `auth-state.json`, while `auth-profiles.json` stores secret-bearing credentials.
+- Validation passed:
+  - `pnpm test -- src/gateway/auth.test.ts src/gateway/call.test.ts src/gateway/server-runtime-config.test.ts src/gateway/server.auth.compat-baseline.test.ts src/gateway/server.auth.control-ui.test.ts src/agents/auth-health.test.ts src/agents/auth-profiles.external-cli-sync.test.ts src/agents/auth-profiles/external-oauth.test.ts src/agents/auth-profiles/oauth.openai-codex-refresh-fallback.test.ts src/agents/auth-profiles/profiles.test.ts src/agents/auth-profiles.runtime-snapshot-order.test.ts src/agents/auth-profiles.runtime-snapshot-external-update.test.ts src/agents/auth-profiles.ensureauthprofilestore.test.ts`

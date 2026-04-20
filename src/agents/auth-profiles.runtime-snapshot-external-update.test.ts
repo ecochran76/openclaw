@@ -8,6 +8,7 @@ import {
   prepareSecretsRuntimeSnapshot,
 } from "../secrets/runtime.js";
 import { ensureAuthProfileStore, markAuthProfileUsed } from "./auth-profiles.js";
+import { resolveAuthStatePath } from "./auth-profiles/paths.js";
 
 describe("auth profile runtime snapshot external updates", () => {
   it("preserves out-of-process order updates when runtime later writes usage stats", async () => {
@@ -15,6 +16,7 @@ describe("auth profile runtime snapshot external updates", () => {
     const mainAgentDir = path.join(stateDir, "agents", "main", "agent");
     const workerAgentDir = path.join(stateDir, "agents", "worker", "agent");
     const workerAuthPath = path.join(workerAgentDir, "auth-profiles.json");
+    const workerAuthStatePath = resolveAuthStatePath(workerAgentDir);
     const previousStateDir = process.env.OPENCLAW_STATE_DIR;
 
     try {
@@ -68,11 +70,10 @@ describe("auth profile runtime snapshot external updates", () => {
 
       // Simulate an external CLI process writing a new per-agent order.
       await fs.writeFile(
-        workerAuthPath,
+        workerAuthStatePath,
         `${JSON.stringify(
           {
             version: 1,
-            profiles: {},
             order: {
               "openai-codex": ["openai-codex:dillan"],
             },
@@ -92,7 +93,7 @@ describe("auth profile runtime snapshot external updates", () => {
         agentDir: workerAgentDir,
       });
 
-      const persisted = JSON.parse(await fs.readFile(workerAuthPath, "utf8")) as {
+      const persisted = JSON.parse(await fs.readFile(workerAuthStatePath, "utf8")) as {
         order?: Record<string, string[]>;
       };
       expect(persisted.order?.["openai-codex"]).toEqual(["openai-codex:dillan"]);

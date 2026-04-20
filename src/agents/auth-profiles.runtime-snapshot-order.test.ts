@@ -9,10 +9,10 @@ import {
 } from "../secrets/runtime.js";
 import {
   ensureAuthProfileStore,
-  markAuthProfileSuccess,
+  markAuthProfileUsed,
   setAuthProfileOrder,
 } from "./auth-profiles.js";
-import { resolveAuthStatePath, resolveAuthStorePath } from "./auth-profiles/paths.js";
+import { resolveAuthStorePath } from "./auth-profiles/paths.js";
 
 describe("auth profile runtime snapshot order persistence", () => {
   it("preserves per-agent auth order after usage stat writes", async () => {
@@ -20,7 +20,6 @@ describe("auth profile runtime snapshot order persistence", () => {
     const mainAgentDir = path.join(stateDir, "agents", "main", "agent");
     const workerAgentDir = path.join(stateDir, "agents", "worker", "agent");
     const workerAuthPath = resolveAuthStorePath(workerAgentDir);
-    const workerStatePath = resolveAuthStatePath(workerAgentDir);
     const previousStateDir = process.env.OPENCLAW_STATE_DIR;
 
     try {
@@ -79,22 +78,17 @@ describe("auth profile runtime snapshot order persistence", () => {
       });
       expect(updated).not.toBeNull();
 
-      const afterOrderWrite = JSON.parse(await fs.readFile(workerStatePath, "utf8")) as {
-        order?: Record<string, string[]>;
-      };
+      const afterOrderWrite = ensureAuthProfileStore(workerAgentDir);
       expect(afterOrderWrite.order?.["openai-codex"]).toEqual(["openai-codex:dillan"]);
 
       const runtimeStore = ensureAuthProfileStore(workerAgentDir);
-      await markAuthProfileSuccess({
+      await markAuthProfileUsed({
         store: runtimeStore,
-        provider: "openai-codex",
         profileId: "openai-codex:dillan",
         agentDir: workerAgentDir,
       });
 
-      const afterUsageWrite = JSON.parse(await fs.readFile(workerStatePath, "utf8")) as {
-        order?: Record<string, string[]>;
-      };
+      const afterUsageWrite = ensureAuthProfileStore(workerAgentDir);
       expect(afterUsageWrite.order?.["openai-codex"]).toEqual(["openai-codex:dillan"]);
     } finally {
       clearSecretsRuntimeSnapshot();

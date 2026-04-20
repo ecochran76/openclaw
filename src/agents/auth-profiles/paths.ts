@@ -8,6 +8,8 @@ import path from "node:path";
 import { resolveStateDir } from "../../config/paths.js";
 import { saveJsonFile } from "../../infra/json-file.js";
 import { DEFAULT_AGENT_ID, normalizeAgentId } from "../../routing/session-key.js";
+import { resolveUserPath } from "../../utils.js";
+import { resolveDefaultAgentDir } from "../agent-scope-config.js";
 import { AUTH_STORE_VERSION } from "./constants.js";
 import { AUTH_PROFILE_FILENAME } from "./path-constants.js";
 import type { AuthProfileSecretsStore } from "./types.js";
@@ -25,7 +27,9 @@ export function resolveCanonicalAgentDir(agentId: string = DEFAULT_AGENT_ID): st
 }
 
 export function resolveMainAgentDir(): string {
-  return resolveCanonicalAgentDir(DEFAULT_AGENT_ID);
+  const override =
+    process.env.OPENCLAW_AGENT_DIR?.trim() || process.env.PI_CODING_AGENT_DIR?.trim();
+  return override ? resolveUserPath(override) : resolveDefaultAgentDir({});
 }
 
 export function resolveMainAuthStorePath(): string {
