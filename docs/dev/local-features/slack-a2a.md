@@ -29,6 +29,7 @@ That makes this one of the highest-value local docs to maintain.
 - especially sensitive to helper-vs-inline implementation drift
 - structured `permissionRequest` + pending approval records landed
 - Slack in-thread approve/deny buttons now handle config-fixable A2A permission misses
+- core approval payloads are channel-neutral; Slack renders `channelData.a2aApproval` metadata into approve/deny buttons in the Slack plugin
 - current approval flow patches config narrowly and tells the operator or agent to retry
 - later auto-resume work is still governed by [A2A Slack interactive approval plan](/dev/a2a-slack-interactive-approval-plan)
 - preservation/rebase strategy is tracked in `docs/dev/upstream-compat-feature-preservation-plan.md`
@@ -76,6 +77,7 @@ These files have repeatedly conflicted:
 When replaying old A2A commits onto newer code:
 
 - prefer the newer helper-based `HEAD` shape over reintroducing older inline `callGateway("agent")` logic
+- keep generic A2A approval payloads free of Slack blocks; Slack-specific approval button rendering belongs in `extensions/slack/src/interactive-replies.ts`
 - verify whether a commit is truly missing vs merely replaying an older subset of already-present behavior
 - after resolving, run focused A2A and gateway selector tests before pushing
 

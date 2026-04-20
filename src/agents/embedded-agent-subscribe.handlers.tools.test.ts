@@ -55,9 +55,6 @@ function createTestContext(): {
       onAgentEvent,
       onExecutionPhase,
       onToolResult: undefined,
-      sessionKey: "agent:main:slack:channel:C1:thread:100.100",
-      sessionId: "session-test",
-      agentId: "main",
     },
     flushBlockReplyBuffer: vi.fn(),
     hookRunner: undefined,
@@ -2108,7 +2105,7 @@ describe("handleToolExecutionEnd derived tool events", () => {
 });
 
 describe("handleToolExecutionEnd A2A approval prompts", () => {
-  it("emits a deterministic Slack approval payload for config-fixable A2A denials", async () => {
+  it("emits a deterministic approval payload for config-fixable A2A denials", async () => {
     const { ctx } = createTestContext();
     const onToolResult = vi.fn();
     ctx.params.onToolResult = onToolResult;
@@ -2149,29 +2146,12 @@ describe("handleToolExecutionEnd A2A approval prompts", () => {
       } as never,
     );
 
-    expect(onToolResult).toHaveBeenCalledWith(
+    const payload = onToolResult.mock.calls[0]?.[0];
+    expect(payload).toEqual(
       expect.objectContaining({
         text: expect.stringContaining(
           "`dev-agent -> gpod` is blocked by `tools.agentToAgent.allow`",
         ),
-        interactive: {
-          blocks: expect.arrayContaining([
-            expect.objectContaining({ type: "text" }),
-            expect.objectContaining({
-              type: "buttons",
-              buttons: expect.arrayContaining([
-                expect.objectContaining({
-                  label: "Approve",
-                  value: "a2aapproval:approval-123:a",
-                }),
-                expect.objectContaining({
-                  label: "Deny",
-                  value: "a2aapproval:approval-123:d",
-                }),
-              ]),
-            }),
-          ]),
-        },
         channelData: {
           a2aApproval: {
             approvalId: "approval-123",
@@ -2184,6 +2164,7 @@ describe("handleToolExecutionEnd A2A approval prompts", () => {
         },
       }),
     );
+    expect(payload?.interactive).toBeUndefined();
     expect(ctx.state.deterministicApprovalPromptSent).toBe(true);
   });
 
@@ -2227,10 +2208,10 @@ describe("handleToolExecutionEnd A2A approval prompts", () => {
       } as never,
     );
 
-    expect(onToolResult).toHaveBeenCalledWith(
+    const payload = onToolResult.mock.calls[0]?.[0];
+    expect(payload).toEqual(
       expect.objectContaining({
         text: expect.stringContaining("Approve the narrow config change, then retry the request."),
-        interactive: undefined,
         channelData: {
           a2aApproval: expect.objectContaining({
             approvalId: "approval-456",
@@ -2239,6 +2220,7 @@ describe("handleToolExecutionEnd A2A approval prompts", () => {
         },
       }),
     );
+    expect(payload?.interactive).toBeUndefined();
     expect(ctx.state.deterministicApprovalPromptSent).toBe(true);
   });
 });

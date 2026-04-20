@@ -1287,12 +1287,13 @@ export async function handleToolExecutionEnd(
   const isError = evt.isError;
   const result = evt.result;
   const toolSendReceiptResult = ctx.consumeToolSendReceipt?.(toolCallId);
+  const a2aApprovalPending = readA2APermissionApprovalDetails(result);
   const observerIsError = isError || isToolResultError(result);
   const sanitizedResult = sanitizeToolResult(result);
   const approvalUnavailable =
     isExecToolName(toolName) &&
     readExecToolDetails(sanitizedResult)?.status === "approval-unavailable";
-  const isToolError = observerIsError && !approvalUnavailable;
+  const isToolError = observerIsError && !approvalUnavailable && !a2aApprovalPending;
   try {
     ctx.params.onAgentToolResult?.({
       toolName,

@@ -40,32 +40,45 @@ Validation:
 - `pnpm test -- src/auto-reply/reply/reauth-capabilities.test.ts src/auto-reply/reply/commands-reauth.test.ts src/plugins/provider-openai-codex-oauth.chat-reauth.test.ts src/plugins/provider-openai-codex-oauth.test.ts src/commands/models/auth.test.ts`
 - `pnpm build`
 
-## Phase 4
+## Phase 4 checkpoint
 
-Next focus: Slack A2A presentation boundary.
+As of 2026-04-20, the Slack A2A presentation boundary slice landed on `ec-main`.
 
-The current A2A approval surface still has Slack-specific presentation pressure in generic routing/tool-event paths. The first pass should extract a boundary that can answer:
+Completed extraction:
 
-- which parts of permission and routing semantics are generic A2A safety policy?
-- which parts are Slack-specific rendering and interaction handling?
-- how should Slack-owned helpers build approval payloads without owning generic A2A policy?
+- core A2A approval payloads now emit generic text plus `channelData.a2aApproval` metadata
+- Slack-owned interactive reply helpers render A2A approval metadata as Slack approve/deny buttons
+- Slack approval button rendering stays available even when optional inline interactive reply directives are disabled
+- core tests assert A2A safety metadata instead of Slack presentation blocks
+
+Validation:
+
+- `pnpm test -- src/agents/openclaw-tools.sessions.test.ts src/agents/a2a/permission-approval-action.test.ts src/agents/pi-embedded-subscribe.handlers.tools.test.ts extensions/slack/src/monitor/events/interactions.test.ts extensions/slack/src/channel.test.ts extensions/slack/src/interactive-replies.test.ts`
+
+## Phase 5
+
+Next focus: automation command and status seams.
+
+The current automation surface is useful but still rebase-sensitive because command parsing, help/status text, progress presentation, and lifecycle semantics can be easy to mix in the same files.
 
 Recommended first slice:
 
-- keep current Slack approve/deny behavior unchanged
-- keep permission semantics and config patching in core-owned A2A helpers
-- move Slack-specific approval payload construction toward Slack-owned helpers
+- keep bounds, turn accounting, session lifecycle, and stop guards in core
+- extract automation command parsing and help/status text into feature-owned helpers
+- extract automation progress/status payload shaping away from generic dispatch/tool handlers
+- add preservation tests for multi-turn progress announcements and status output
 
 Primary files to watch in this phase:
 
-- `src/agents/a2a/*`
-- `src/agents/pi-embedded-subscribe.handlers.tools*`
-- `extensions/slack/src/monitor/events/interactions.test.ts`
-- `src/agents/openclaw-tools.sessions.test.ts`
+- `src/agents/tools/automation-tool.ts`
+- `src/automation/*`
+- `src/auto-reply/reply/commands-automation.ts`
+- `src/auto-reply/reply/commands-automation-shared.ts`
+- `src/auto-reply/reply/commands-automation-status.test.ts`
 
 Primary validation entry points:
 
-- `pnpm test -- src/agents/openclaw-tools.sessions.test.ts`
-- `pnpm test -- src/agents/a2a/permission-approval-action.test.ts`
-- `pnpm test -- src/agents/pi-embedded-subscribe.handlers.tools.test.ts`
-- `pnpm test -- extensions/slack/src/monitor/events/interactions.test.ts`
+- `pnpm test -- src/agents/openclaw-tools.automation.test.ts`
+- `pnpm test -- src/auto-reply/reply/commands-automation.test.ts`
+- `pnpm test -- src/auto-reply/reply/commands-automation-status.test.ts`
+- `pnpm test -- src/config/config.automation-defaults.test.ts`

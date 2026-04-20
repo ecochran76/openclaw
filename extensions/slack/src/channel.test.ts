@@ -355,6 +355,47 @@ describe("slackPlugin actions", () => {
     ).toBe(true);
   });
 
+  it("renders A2A approval buttons even when inline interactive replies are disabled", () => {
+    const transformReplyPayload = slackPlugin.messaging?.transformReplyPayload;
+    if (!transformReplyPayload) {
+      throw new Error("slack messaging.transformReplyPayload unavailable");
+    }
+
+    const payload = transformReplyPayload({
+      cfg: {
+        channels: {
+          slack: {
+            botToken: "xoxb-test",
+            appToken: "xapp-test",
+            capabilities: { interactiveReplies: false },
+          },
+        },
+      },
+      payload: {
+        text: "Permission required",
+        channelData: {
+          a2aApproval: {
+            approvalId: "approval-123",
+          },
+        },
+      },
+    });
+
+    if (!payload) {
+      throw new Error("expected transformed Slack payload");
+    }
+    expect(payload.interactive?.blocks).toEqual([
+      { type: "text", text: "Permission required" },
+      {
+        type: "buttons",
+        buttons: [
+          { label: "Approve", value: "a2aapproval:approval-123:a", style: "success" },
+          { label: "Deny", value: "a2aapproval:approval-123:d", style: "danger" },
+        ],
+      },
+    ]);
+  });
+
   it("forwards read threadId to Slack action handler", async () => {
     handleSlackActionMock.mockResolvedValueOnce({ messages: [], hasMore: false });
     const handleAction = requireSlackHandleAction();

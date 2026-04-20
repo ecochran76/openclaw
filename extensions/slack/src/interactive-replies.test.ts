@@ -1,8 +1,43 @@
 // Slack tests cover interactive replies plugin behavior.
 import { describe, expect, it } from "vitest";
-import { compileSlackInteractiveReplies } from "./interactive-replies.js";
+import {
+  compileSlackA2AApprovalInteractive,
+  compileSlackInteractiveReplies,
+} from "./interactive-replies.js";
 
 describe("compileSlackInteractiveReplies", () => {
+  it("renders A2A approval metadata as Slack-owned interactive buttons", () => {
+    const result = compileSlackA2AApprovalInteractive({
+      text: "Permission required",
+      channelData: {
+        a2aApproval: {
+          approvalId: "approval-123",
+        },
+      },
+    });
+
+    expect(result.interactive).toEqual({
+      blocks: [
+        { type: "text", text: "Permission required" },
+        {
+          type: "buttons",
+          buttons: [
+            {
+              label: "Approve",
+              value: "a2aapproval:approval-123:a",
+              style: "success",
+            },
+            {
+              label: "Deny",
+              value: "a2aapproval:approval-123:d",
+              style: "danger",
+            },
+          ],
+        },
+      ],
+    });
+  });
+
   it("compiles inline Slack button directives into shared interactive blocks", () => {
     const result = compileSlackInteractiveReplies({
       text: "[bot] hello [[slack_buttons: Retry:retry, Ignore:ignore]]",

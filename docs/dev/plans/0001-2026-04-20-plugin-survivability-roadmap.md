@@ -17,7 +17,9 @@ It complements:
 
 Phase 1 is implemented on `ec-main`: OpenAI Codex now owns its chat reauth capability object, and auto-reply resolves capabilities through a provider-neutral lookup surface.
 
-The next implementation slice is Phase 2: Slack A2A presentation boundary.
+Phase 2 is implemented on `ec-main`: core A2A approval payloads now carry generic approval metadata, and Slack owns Slack-specific approval button presentation.
+
+The next implementation slice is Phase 3: automation command and status seams.
 
 ## Goal
 
@@ -77,6 +79,8 @@ Exit criteria:
 - the provider capability seam is documented or typed clearly enough for another provider to implement later
 
 ## Phase 2: Slack A2A Presentation Boundary
+
+Status: implemented on 2026-04-20.
 
 Purpose: keep Slack-specific approval rendering and interaction handling in Slack-owned surfaces while preserving generic A2A safety in core.
 
@@ -212,8 +216,8 @@ Exit criteria:
 | Feature area                          | Durable home                                        | Next move                                       |
 | ------------------------------------- | --------------------------------------------------- | ----------------------------------------------- |
 | OpenAI Codex reauth/profile specifics | provider capability seam                            | implement Phase 1                               |
-| Slack A2A approval rendering          | Slack plugin plus generic A2A core seam             | implement Phase 2 after provider auth           |
-| Automation command/status UX          | feature-owned helpers, then possible plugin surface | extract seams before pluginizing                |
+| Slack A2A approval rendering          | Slack plugin plus generic A2A core seam             | implemented Phase 2                             |
+| Automation command/status UX          | feature-owned helpers, then possible plugin surface | implement Phase 3                               |
 | Automation bounds/session lifecycle   | core                                                | preserve as global invariant                    |
 | Slack turn lifecycle                  | core turn tracking plus channel presentation seams  | avoid Slack-specific policy in generic dispatch |
 | Voice-call telephony runtime          | extension/plugin                                    | harden existing plugin-owned seams              |
@@ -222,6 +226,6 @@ Exit criteria:
 
 ## Current Next Action
 
-Start Phase 2: Slack A2A presentation boundary.
+Start Phase 3: automation command and status seams.
 
-That slice should preserve generic A2A safety in core while moving Slack-specific approval presentation and interaction behavior toward Slack-owned surfaces.
+That slice should preserve bounds, turn accounting, and session lifecycle in core while extracting automation command/status text and progress payload shaping into feature-owned helpers.

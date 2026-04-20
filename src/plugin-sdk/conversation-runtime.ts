@@ -99,7 +99,10 @@ export {
   resolvePendingA2APermissionApproval,
   type ResolvePendingA2APermissionApprovalResult,
 } from "../agents/a2a/permission-approval-action.js";
-export { parseA2APermissionApprovalCustomId } from "../agents/a2a/permission-approval-reply.js";
+export {
+  buildA2APermissionApprovalCustomId,
+  parseA2APermissionApprovalCustomId,
+} from "../agents/a2a/permission-approval-reply.js";
 export {
   buildPluginBindingApprovalCustomId,
   buildPluginBindingDeclinedText,

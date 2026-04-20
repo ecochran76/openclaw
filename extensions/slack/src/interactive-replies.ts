@@ -1,5 +1,6 @@
 // Slack plugin module implements interactive replies behavior.
 import type { OpenClawConfig } from "openclaw/plugin-sdk/config-contracts";
+import { buildA2APermissionApprovalCustomId } from "openclaw/plugin-sdk/conversation-runtime";
 import type { ReplyPayload } from "openclaw/plugin-sdk/reply-runtime";
 import {
   normalizeLowercaseStringOrEmpty,
@@ -128,6 +129,58 @@ function hasSlackBlocks(payload: ReplyPayload): boolean {
   return Array.isArray(blocks) && blocks.length > 0;
 }
 
+function readA2AApprovalId(payload: ReplyPayload): string | undefined {
+  const approval = payload.channelData?.a2aApproval;
+  if (!approval || typeof approval !== "object" || Array.isArray(approval)) {
+    return undefined;
+  }
+  const approvalId = (approval as { approvalId?: unknown }).approvalId;
+  return typeof approvalId === "string" && approvalId.trim() ? approvalId.trim() : undefined;
+}
+
+function hasA2AApprovalButtons(payload: ReplyPayload, approvalId: string): boolean {
+  const values = new Set([
+    buildA2APermissionApprovalCustomId(approvalId, "approve"),
+    buildA2APermissionApprovalCustomId(approvalId, "deny"),
+  ]);
+  return (payload.interactive?.blocks ?? []).some(
+    (block) => block.type === "buttons" && block.buttons.some((button) => values.has(button.value)),
+  );
+}
+
+export function compileSlackA2AApprovalInteractive(payload: ReplyPayload): ReplyPayload {
+  const approvalId = readA2AApprovalId(payload);
+  if (!approvalId || hasA2AApprovalButtons(payload, approvalId)) {
+    return payload;
+  }
+  const blocks: NonNullable<ReplyPayload["interactive"]>["blocks"] = [];
+  const textBlock = buildTextBlock(payload.text ?? "");
+  if (textBlock) {
+    blocks.push(textBlock);
+  }
+  blocks.push({
+    type: "buttons",
+    buttons: [
+      {
+        label: "Approve",
+        value: buildA2APermissionApprovalCustomId(approvalId, "approve"),
+        style: "success",
+      },
+      {
+        label: "Deny",
+        value: buildA2APermissionApprovalCustomId(approvalId, "deny"),
+        style: "danger",
+      },
+    ],
+  });
+  return {
+    ...payload,
+    interactive: {
+      blocks: [...(payload.interactive?.blocks ?? []), ...blocks],
+    },
+  };
+}
+
 function parseSimpleSlackOptions(raw: string): SlackChoice[] | null {
   const entries = normalizeStringEntries(raw.split(","));
   if (entries.length < 2 || entries.length > SLACK_AUTO_SELECT_MAX_ITEMS) {
@@ -179,9 +232,10 @@ export function isSlackInteractiveRepliesEnabled(params: {
  * @deprecated Slack reply directives are legacy. New producers should emit presentation payloads.
  */
 export function compileSlackInteractiveReplies(payload: ReplyPayload): ReplyPayload {
-  const text = payload.text;
+  const payloadWithA2AApproval = compileSlackA2AApprovalInteractive(payload);
+  const text = payloadWithA2AApproval.text;
   if (!text) {
-    return payload;
+    return payloadWithA2AApproval;
   }
 
   const generatedBlocks: NonNullable<ReplyPayload["interactive"]>["blocks"] = [];
@@ -223,14 +277,14 @@ export function compileSlackInteractiveReplies(payload: ReplyPayload): ReplyPayl
   const cleanedText = visibleTextParts.join("");
 
   if (!matchedDirective || !generatedInteractiveBlock) {
-    return parseSlackOptionsLine(payload);
+    return parseSlackOptionsLine(payloadWithA2AApproval);
   }
 
   return {
-    ...payload,
+    ...payloadWithA2AApproval,
     text: cleanedText.trim() || undefined,
     interactive: {
-      blocks: [...(payload.interactive?.blocks ?? []), ...generatedBlocks],
+      blocks: [...(payloadWithA2AApproval.interactive?.blocks ?? []), ...generatedBlocks],
     },
   };
 }

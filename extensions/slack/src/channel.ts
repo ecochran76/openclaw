@@ -55,6 +55,7 @@ import { resolveSlackChannelType, resolveSlackConversationInfo } from "./channel
 import { shouldSuppressLocalSlackExecApprovalPrompt } from "./exec-approvals.js";
 import { resolveSlackGroupRequireMention, resolveSlackGroupToolPolicy } from "./group-policy.js";
 import {
+  compileSlackA2AApprovalInteractive,
   compileSlackInteractiveReplies,
   isSlackInteractiveRepliesEnabled,
 } from "./interactive-replies.js";
@@ -591,7 +592,7 @@ export const slackPlugin: ChannelPlugin<ResolvedSlackAccount, SlackProbe> = crea
       transformReplyPayload: ({ payload, cfg, accountId }) =>
         isSlackInteractiveRepliesEnabled({ cfg, accountId })
           ? compileSlackInteractiveReplies(payload)
-          : payload,
+          : compileSlackA2AApprovalInteractive(payload),
       enableInteractiveReplies: ({ cfg, accountId }) =>
         isSlackInteractiveRepliesEnabled({ cfg, accountId }),
       hasStructuredReplyPayload: ({ payload }) => {

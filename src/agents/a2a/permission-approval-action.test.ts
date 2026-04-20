@@ -47,7 +47,7 @@ async function withTempConfigState(
 }
 
 describe("A2A permission approval reply helpers", () => {
-  it("builds Slack approval payloads with metadata and interactive buttons", () => {
+  it("builds approval payloads with metadata for channel-owned presentation", () => {
     const payload = buildA2APermissionApprovalPendingReplyPayload({
       approvalId: "approval-123",
       sessionKey: "agent:dev-agent:slack:channel:C1:thread:100.100",
@@ -82,14 +82,7 @@ describe("A2A permission approval reply helpers", () => {
       action: "send",
       expiresAt: 60_000,
     });
-    expect(payload.interactive).toEqual(
-      expect.objectContaining({
-        blocks: expect.arrayContaining([
-          expect.objectContaining({ type: "text" }),
-          expect.objectContaining({ type: "buttons" }),
-        ]),
-      }),
-    );
+    expect(payload.interactive).toBeUndefined();
   });
 });
 

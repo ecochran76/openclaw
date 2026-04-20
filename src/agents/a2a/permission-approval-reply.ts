@@ -1,5 +1,4 @@
 import type { ReplyPayload } from "../../auto-reply/types.js";
-import { parseAgentSessionKey } from "../../sessions/session-key-utils.js";
 import type { SessionAccessPermissionRequest } from "../tools/sessions-access.js";
 
 export type A2APermissionApprovalDecision = "approve" | "deny";
@@ -103,11 +102,6 @@ function buildPendingApprovalText(
   return lines.join("\n\n");
 }
 
-function shouldRenderInteractiveButtons(sessionKey?: string): boolean {
-  const parsed = parseAgentSessionKey(sessionKey);
-  return (parsed?.rest ?? "").startsWith("slack:");
-}
-
 export function buildA2APermissionApprovalCustomId(
   approvalId: string,
   decision: A2APermissionApprovalDecision,
@@ -150,32 +144,9 @@ export function buildA2APermissionApprovalPendingReplyPayload(
   params: BuildA2APermissionApprovalPendingReplyPayloadParams,
 ): ReplyPayload {
   const text = buildPendingApprovalText(params);
-  const interactive = shouldRenderInteractiveButtons(params.sessionKey)
-    ? {
-        blocks: [
-          { type: "text" as const, text },
-          {
-            type: "buttons" as const,
-            buttons: [
-              {
-                label: "Approve",
-                value: buildA2APermissionApprovalCustomId(params.approvalId, "approve"),
-                style: "success" as const,
-              },
-              {
-                label: "Deny",
-                value: buildA2APermissionApprovalCustomId(params.approvalId, "deny"),
-                style: "danger" as const,
-              },
-            ],
-          },
-        ],
-      }
-    : undefined;
 
   return {
     text,
-    interactive,
     channelData: {
       a2aApproval: {
         approvalId: params.approvalId,
