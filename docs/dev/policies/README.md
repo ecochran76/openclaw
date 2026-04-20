@@ -16,11 +16,14 @@ These policies were adopted from the local `agent-policies` library as a custom 
   - `multi-agent-reconciliation`
   - `subagent-workflow-optimization`
   - `graph-backed-memory-usage`
+  - `planning-discipline`
+  - `notes-and-memories`
 
 ## Policy Files
 
 - `ec-main-integration.md`: branch, rebase, live-patch, and local feature preservation rules for `ec-main`.
 - `architecture-and-plugin-survivability.md`: architecture guardrails for keeping local features rebase-friendly and plugin-oriented where appropriate.
+- `planning-notes-memory.md`: serialized plan, note, and repo-memory conventions.
 - `graph-backed-memory.md`: Graphiti-backed memory boundaries for durable operator context.
 - `validation-and-handoff.md`: validation, closeout, and handoff expectations for local feature work.
 - `policy-adoption-feedback.md`: notes from first policy installation and future update guidance.
@@ -31,6 +34,7 @@ Agents must read the relevant policy file at the start of any non-trivial turn t
 
 - Rebase, live patch, branch surgery, or local feature preservation: read `ec-main-integration.md`.
 - Plugin migration, core seam work, architecture changes, or feature survivability questions: read `architecture-and-plugin-survivability.md`.
+- New plans, dated notes, repo memories, or continuity-artifact migration: read `planning-notes-memory.md`.
 - Graphiti reads/writes, durable operator memory, or memory cleanup: read `graph-backed-memory.md`.
 - Commit, push, test selection, release, live patch closeout, or handoff: read `validation-and-handoff.md`.
 - Policy changes or policy friction: read `policy-adoption-feedback.md`.

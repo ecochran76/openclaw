@@ -1,5 +1,9 @@
 # Plugin Survivability Roadmap
 
+State: OPEN
+Roadmap: P01
+Created: 2026-04-20
+
 This roadmap tracks how `ec-main` should reduce rebase pressure by moving local feature behavior toward plugins, provider/channel capabilities, or narrow core seams.
 
 It complements:
@@ -8,6 +12,10 @@ It complements:
 - `docs/dev/upstream-compat-feature-preservation-plan.md`
 - `docs/dev/upstream-compat-refactor-plan.md`
 - `docs/dev/policies/architecture-and-plugin-survivability.md`
+
+## Current State
+
+The initial roadmap exists as the first serialized `docs/dev/plans/` artifact. The next implementation slice is Phase 1: provider auth capability seam for `/reauth`.
 
 ## Goal
 

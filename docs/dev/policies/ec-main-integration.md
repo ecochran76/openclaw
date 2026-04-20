@@ -39,14 +39,19 @@ This order keeps dependencies coherent: automation command/status behavior depen
 
 ## Planning Authority
 
-This repo does not currently use top-level `ROADMAP.md` and `RUNBOOK.md` as canonical planning files. Until that is migrated deliberately, use these canonical local planning surfaces:
+This repo now uses top-level `ROADMAP.md` and `RUNBOOK.md` as lightweight indexes for serialized planning-contract adoption. Existing feature planning remains under `docs/dev/` and should be migrated only when active or touched.
 
+Use these canonical local planning surfaces:
+
+- roadmap index: `ROADMAP.md`
+- runbook log: `RUNBOOK.md`
+- bounded active plans: `docs/dev/plans/`
 - feature map: `docs/dev/local-feature-index.md`
 - compatibility plan: `docs/dev/upstream-compat-feature-preservation-plan.md`
 - rebase playbook: `docs/dev/rebase-friendly-branching-playbook.md`
 - feature-specific plans under `docs/dev/*.md` and `docs/dev/local-features/*.md`
 
-Do not scatter new durable plans into arbitrary docs paths. If a new local feature family is added, update `docs/dev/local-feature-index.md` and create a bounded feature note under `docs/dev/local-features/`.
+Do not scatter new durable plans into arbitrary docs paths. New bounded plans should use serialized filenames under `docs/dev/plans/`. If a new local feature family is added, update `docs/dev/local-feature-index.md` and create a bounded feature note under `docs/dev/local-features/`.
 
 ## Live Patch Flow
 

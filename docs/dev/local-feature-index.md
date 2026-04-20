@@ -8,7 +8,7 @@ Related compatibility plan:
 
 - `docs/dev/upstream-compat-refactor-plan.md`
 - `docs/dev/upstream-compat-feature-preservation-plan.md`
-- `docs/dev/plugin-survivability-roadmap.md`
+- `docs/dev/plans/0001-2026-04-20-plugin-survivability-roadmap.md`
 
 ## Why this exists
 

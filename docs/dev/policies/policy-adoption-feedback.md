@@ -33,7 +33,8 @@ Local overlays:
 
 - The selector correctly found that this repo has no current `docs/dev/policies/` adoption.
 - It identified many existing `AGENTS.md` sections as mature local policy to preserve or merge, not overwrite.
-- It detected planning drift: there are many `docs/dev/*.md` plan files but no canonical top-level `ROADMAP.md`, `RUNBOOK.md`, or `docs/dev/plans/` contract.
+- It initially detected planning drift: there are many legacy `docs/dev/*.md` plan files and no canonical top-level `ROADMAP.md` or `RUNBOOK.md`.
+- Follow-up adoption created top-level `ROADMAP.md` and `RUNBOOK.md`, the first serialized `docs/dev/plans/` artifact, and matching `docs/dev/notes/` and `docs/dev/memories/` continuity directories.
 
 ## What Needed Override
 
