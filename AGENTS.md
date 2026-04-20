@@ -3,6 +3,16 @@
 Telegraph style. Root rules only. Read scoped `AGENTS.md` before subtree work.
 Skills own workflows; root owns hard policy and routing.
 
+## Local Policy Layer
+
+- Repo-local policies live under `docs/dev/policies/`; treat `AGENTS.md` as the entrypoint, not the full policy body.
+- At the start of non-trivial work, read the relevant policy file:
+  - `docs/dev/policies/ec-main-integration.md` for `ec-main` rebases, upstream sync, live patch, branch surgery, or local feature preservation.
+  - `docs/dev/policies/architecture-and-plugin-survivability.md` for plugin migration, core seam work, architecture decisions, or local feature survivability.
+  - `docs/dev/policies/validation-and-handoff.md` for test selection, commit/push, live patch closeout, or handoff.
+  - `docs/dev/policies/policy-adoption-feedback.md` when changing policy or recording policy friction.
+- These policies complement the repo-specific rules below; do not replace existing build, test, plugin-boundary, release, security, or platform instructions with generic policy text.
+
 ## Start
 
 - Repo: `https://github.com/openclaw/openclaw`
