@@ -46,7 +46,7 @@ export async function runRoundOneBootstrap(
 
   if (!primaryReply && params.waitRunId) {
     const waitMs = Math.min(params.announceTimeoutMs, 60_000);
-    const wait = await deps.callGateway<{ status?: string }>({
+    const wait = await deps.callGateway({
       method: "agent.wait",
       params: {
         runId: params.waitRunId,

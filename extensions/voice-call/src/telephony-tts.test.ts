@@ -5,6 +5,8 @@ import type { VoiceCallTtsConfig } from "./config.js";
 import type { CoreConfig } from "./core-bridge.js";
 import { createTelephonyTtsProvider } from "./telephony-tts.js";
 
+type MergedTtsRuntimeConfig = { messages?: { tts?: VoiceCallTtsConfig } };
+
 function createCoreConfig(): CoreConfig {
   const tts: VoiceCallTtsConfig = {
     provider: "openai",
@@ -18,7 +20,7 @@ function createCoreConfig(): CoreConfig {
   return { messages: { tts } };
 }
 
-function requireMergedTtsConfig(mergedConfig: CoreConfig | undefined) {
+function requireMergedTtsConfig(mergedConfig: MergedTtsRuntimeConfig | undefined) {
   const tts = mergedConfig?.messages?.tts;
   if (!tts) {
     throw new Error("telephony TTS runtime did not receive merged TTS config");
@@ -39,7 +41,7 @@ function requireOpenAIProviderConfig(tts: Record<string, unknown>): Record<strin
 }
 
 async function mergeOverride(override: unknown): Promise<Record<string, unknown>> {
-  let mergedConfig: CoreConfig | undefined;
+  let mergedConfig: MergedTtsRuntimeConfig | undefined;
   const provider = createTelephonyTtsProvider({
     coreConfig: createCoreConfig(),
     ttsOverride: override as VoiceCallTtsConfig,

@@ -21,12 +21,12 @@ type ParsedReauthCommand =
   | { kind: "cancel" };
 
 function resolveMessageBody(params: Parameters<CommandHandler>[0]): string {
-  return String(
+  return (
     params.ctx.BodyForCommands ??
-      params.ctx.CommandBody ??
-      params.ctx.RawBody ??
-      params.ctx.Body ??
-      "",
+    params.ctx.CommandBody ??
+    params.ctx.RawBody ??
+    params.ctx.Body ??
+    ""
   ).trim();
 }
 

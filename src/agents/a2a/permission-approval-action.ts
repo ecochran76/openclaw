@@ -105,7 +105,7 @@ function applyPendingApprovalPatch(
 
   if (request.reason === "agent_to_agent_allow") {
     const currentAllow = Array.isArray(tools.agentToAgent?.allow)
-      ? tools.agentToAgent.allow.map((entry) => String(entry ?? ""))
+      ? tools.agentToAgent.allow.map((entry) => entry)
       : [];
     const missingAllowAgents = dedupeTrimmedStrings(request.missingAllowAgents ?? []);
     const nextAllow = dedupeTrimmedStrings([...currentAllow, ...missingAllowAgents]);

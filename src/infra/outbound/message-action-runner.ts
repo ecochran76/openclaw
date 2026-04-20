@@ -1,6 +1,8 @@
 // Message-action runner normalizes tool params, resolves channel/target/media,
 // applies policies, and dispatches send/poll/plugin actions.
+import fs from "node:fs/promises";
 import {
+  normalizeLowercaseStringOrEmpty,
   normalizeOptionalLowercaseString,
   normalizeOptionalString,
 } from "@openclaw/normalization-core/string-coerce";
@@ -24,7 +26,7 @@ import type {
   ChannelMessageActionName,
   ChannelThreadingToolContext,
 } from "../../channels/plugins/types.public.js";
-import { loadSessionStore, resolveStorePath } from "../../config/sessions.js";
+import { resolveSessionStoreTargets, type SessionEntry } from "../../config/sessions.js";
 import type { OpenClawConfig } from "../../config/types.openclaw.js";
 import {
   hasInteractiveReplyBlocks,
@@ -112,6 +114,69 @@ function loadMessageActionGatewayRuntime() {
   // idempotency keys; keep normal in-process actions import-light.
   messageActionGatewayRuntimePromise ??= import("./message.gateway.runtime.js");
   return messageActionGatewayRuntimePromise;
+}
+
+function normalizeBoundSessionTarget(raw: unknown, channel: ChannelId): string | undefined {
+  if (typeof raw !== "string") {
+    return undefined;
+  }
+  let value = raw.trim();
+  if (!value) {
+    return undefined;
+  }
+  const channelPrefix = `${normalizeLowercaseStringOrEmpty(channel)}:`;
+  if (normalizeLowercaseStringOrEmpty(value).startsWith(channelPrefix)) {
+    value = value.slice(channelPrefix.length).trim();
+  }
+  value = value.replace(/^(user|channel|group|conversation|room|dm):/i, "").trim();
+  return normalizeLowercaseStringOrEmpty(value) || undefined;
+}
+
+async function assertAgentSendDoesNotTargetOtherBoundSession(params: {
+  cfg: OpenClawConfig;
+  channel: ChannelId;
+  to: string;
+  agentId?: string;
+}): Promise<void> {
+  const agentId = normalizeOptionalString(params.agentId);
+  if (!agentId) {
+    return;
+  }
+  const normalizedAgentId = normalizeAgentId(agentId);
+  const normalizedTarget = normalizeBoundSessionTarget(params.to, params.channel);
+  if (!normalizedTarget) {
+    return;
+  }
+  const targets = resolveSessionStoreTargets(params.cfg, { allAgents: true });
+  for (const target of targets) {
+    let raw: string;
+    try {
+      raw = await fs.readFile(target.storePath, "utf-8");
+    } catch (err) {
+      const code = (err as NodeJS.ErrnoException | undefined)?.code;
+      if (code === "ENOENT" || code === "ENOTDIR") {
+        continue;
+      }
+      throw err;
+    }
+    const store = JSON.parse(raw) as Record<string, SessionEntry>;
+    for (const [sessionKey, entry] of Object.entries(store)) {
+      const boundAgentId = resolveAgentIdFromSessionKey(sessionKey);
+      if (!boundAgentId || normalizeAgentId(boundAgentId) === normalizedAgentId) {
+        continue;
+      }
+      const delivery = entry.deliveryContext;
+      if (delivery?.channel !== params.channel) {
+        continue;
+      }
+      if (normalizeBoundSessionTarget(delivery.to, params.channel) !== normalizedTarget) {
+        continue;
+      }
+      throw new Error(
+        `Use sessions_send with agentId="${boundAgentId}" for ${params.channel} target ${params.to}; this conversation is bound to another local agent.`,
+      );
+    }
+  }
 }
 
 export type RunMessageActionParams = {
@@ -620,57 +685,6 @@ function applyImplicitSourceReplySendPolicy(
   params.bestEffort = true;
 }
 
-function normalizeDeliveryCompareValue(value: unknown): string {
-  return normalizeOptionalString(value)?.toLowerCase() ?? "";
-}
-
-function findBoundAgentForOutboundTarget(params: {
-  cfg: OpenClawConfig;
-  channel: ChannelId;
-  to: string;
-  accountId?: string | null;
-  agentId?: string;
-}): string | undefined {
-  const requesterAgentId = normalizeOptionalString(params.agentId);
-  if (!requesterAgentId) {
-    return undefined;
-  }
-
-  const targetChannel = normalizeDeliveryCompareValue(params.channel);
-  const targetTo = normalizeDeliveryCompareValue(params.to);
-  const targetAccountId = normalizeDeliveryCompareValue(params.accountId);
-  if (!targetChannel || !targetTo) {
-    return undefined;
-  }
-
-  const storePath = resolveStorePath(params.cfg.session?.store, { agentId: requesterAgentId });
-  const store = loadSessionStore(storePath);
-  const normalizedRequesterAgentId = normalizeAgentId(requesterAgentId);
-
-  for (const [sessionKey, entry] of Object.entries(store)) {
-    const deliveryContext = entry.deliveryContext;
-    if (!deliveryContext) {
-      continue;
-    }
-    if (normalizeDeliveryCompareValue(deliveryContext.channel) !== targetChannel) {
-      continue;
-    }
-    if (normalizeDeliveryCompareValue(deliveryContext.to) !== targetTo) {
-      continue;
-    }
-    const boundAccountId = normalizeDeliveryCompareValue(deliveryContext.accountId);
-    if (targetAccountId && boundAccountId && targetAccountId !== boundAccountId) {
-      continue;
-    }
-    const boundAgentId = normalizeAgentId(resolveAgentIdFromSessionKey(sessionKey));
-    if (boundAgentId && boundAgentId !== normalizedRequesterAgentId) {
-      return boundAgentId;
-    }
-  }
-
-  return undefined;
-}
-
 async function runGatewayPluginMessageActionOrNull(params: {
   cfg: OpenClawConfig;
   params: Record<string, unknown>;
@@ -1094,18 +1108,12 @@ async function handleSendAction(ctx: ResolvedActionContext): Promise<MessageActi
   throwIfAborted(abortSignal);
   const action: ChannelMessageActionName = "send";
   const to = readStringParam(params, "to", { required: true });
-  const boundAgentId = findBoundAgentForOutboundTarget({
+  await assertAgentSendDoesNotTargetOtherBoundSession({
     cfg,
     channel,
     to,
-    accountId,
     agentId,
   });
-  if (boundAgentId) {
-    throw new Error(
-      `Target ${channel}:${to} is bound to local agent "${boundAgentId}". Use sessions_send with agentId="${boundAgentId}" instead of a direct message action.`,
-    );
-  }
   let sendPayload = await buildSendPayloadParts({
     cfg,
     actionParams: params,

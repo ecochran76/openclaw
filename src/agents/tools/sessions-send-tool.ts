@@ -621,7 +621,11 @@ export function createSessionsSendTool(opts?: {
         };
         let resolvedKey;
         try {
-          const resolved = await gatewayCall<{
+          const resolved = (await gatewayCall({
+            method: "sessions.resolve",
+            params: resolveParams,
+            timeoutMs: 10_000,
+          })) as {
             key?: string;
             agentId?: string;
             deliveryContext?: {
@@ -638,11 +642,7 @@ export function createSessionsSendTool(opts?: {
               search?: string;
               searchFields?: string[];
             };
-          }>({
-            method: "sessions.resolve",
-            params: resolveParams,
-            timeoutMs: 10_000,
-          });
+          };
           resolvedKey = typeof resolved?.key === "string" ? resolved.key.trim() : "";
           if (resolvedKey) {
             resolvedTarget = {
@@ -856,11 +856,11 @@ export function createSessionsSendTool(opts?: {
         cfg.session?.agentToAgent?.guard?.allowNestedSessionsSend === true;
       if (!allowNestedSessionsSend && opts?.agentSessionKey) {
         try {
-          const currentHistory = await gatewayCall<{ messages?: Array<Record<string, unknown>> }>({
+          const currentHistory = (await gatewayCall({
             method: "chat.history",
             params: { sessionKey: opts.agentSessionKey, limit: 20 },
             timeoutMs: 10_000,
-          });
+          })) as { messages?: Array<Record<string, unknown>> };
           const messages = Array.isArray(currentHistory?.messages) ? currentHistory.messages : [];
           const latestUser = [...messages].toReversed().find((entry) => entry?.role === "user");
           const provenance = latestUser?.provenance as Record<string, unknown> | undefined;

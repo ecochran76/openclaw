@@ -79,10 +79,11 @@ export function buildHelpMessage(cfg?: OpenClawConfig): string {
 
   lines.push("Status");
   lines.push("  /status  |  /tasks  |  /whoami  |  /context");
+  lines.push("  /turn-status  |  /why-silent  |  /turns  |  /nudge  |  /turn-steer <text>");
   lines.push("");
 
-  lines.push("Skills");
-  lines.push("  /skill <name> [input]");
+  lines.push("Tools");
+  lines.push("  /skill <name> [input]  |  /automation <run|list|status|steer|stop>");
 
   lines.push("");
   lines.push("More: /commands for full list, /tools for available capabilities");

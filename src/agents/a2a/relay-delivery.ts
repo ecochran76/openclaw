@@ -110,7 +110,7 @@ export async function relayTurn(
     }
 
     try {
-      const response = await gatewayCall<{ messageId?: string; id?: string; threadId?: string }>({
+      const response = await gatewayCall({
         method: "send",
         params: {
           to: spec.target.to,

@@ -108,7 +108,7 @@ export async function deliverAnnounceStep(
   }
 
   try {
-    const response = await gatewayCall<{ messageId?: string; id?: string }>({
+    const response = await gatewayCall({
       method: "send",
       params: {
         to: params.announceTarget.to,

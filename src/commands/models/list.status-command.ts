@@ -57,9 +57,7 @@ import {
 } from "../../infra/parse-finite-number.js";
 import {
   formatUsagePolicyDecisionDetail,
-  formatUsageWindowSummary,
   isUsagePolicySurfaceEnabled,
-  loadProviderUsageSummary,
   loadProviderUsageSummaryWithCache,
   readCachedUsagePolicyDecision,
   resolveUsageProviderId,

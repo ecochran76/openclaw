@@ -101,15 +101,20 @@ const MAX_INBOUND_MESSAGE_BYTES = 64 * 1024;
 const MAX_WS_BUFFERED_BYTES = 1024 * 1024;
 const CLOSE_REASON_LOG_MAX_CHARS = 120;
 
+function replaceControlCharacters(value: string): string {
+  return Array.from(value, (character) => {
+    const codePoint = character.codePointAt(0);
+    return codePoint !== undefined && (codePoint <= 0x1f || codePoint === 0x7f) ? " " : character;
+  }).join("");
+}
+
 export function sanitizeLogText(value: string, maxChars: number): string {
-  const sanitized = value
-    .replace(/[\u0000-\u001f\u007f]/g, " ")
-    .replace(/\s+/g, " ")
-    .trim();
-  if (sanitized.length <= maxChars) {
-    return sanitized;
+  const sanitized = value.replaceAll(/\s+/g, " ").trim();
+  const withoutControlCharacters = replaceControlCharacters(sanitized).replace(/\s+/g, " ").trim();
+  if (withoutControlCharacters.length <= maxChars) {
+    return withoutControlCharacters;
   }
-  return `${sanitized.slice(0, maxChars)}...`;
+  return `${withoutControlCharacters.slice(0, maxChars)}...`;
 }
 
 function normalizeWsMessageData(data: RawData): Buffer {

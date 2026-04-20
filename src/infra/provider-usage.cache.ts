@@ -193,17 +193,24 @@ function buildUsageSummaryFromCachedStates(params: {
     : params.states;
   return {
     updatedAt: states.reduce((max, state) => Math.max(max, state.updatedAt), 0),
-    providers: states.map((state) => ({
-      provider: state.provider as ProviderUsageSnapshot["provider"],
-      displayName: state.provider,
-      windows: state.windows.map((window) => ({
-        label: window.label,
-        usedPercent: window.usedPercent,
-        resetAt: window.resetAt,
-      })),
-      ...(state.plan ? { plan: state.plan } : {}),
-      ...(state.error ? { error: state.error } : {}),
-    })),
+    providers: states.map((state) => {
+      const snapshot: ProviderUsageSnapshot = {
+        provider: state.provider as ProviderUsageSnapshot["provider"],
+        displayName: state.provider,
+        windows: state.windows.map((window) => ({
+          label: window.label,
+          usedPercent: window.usedPercent,
+          resetAt: window.resetAt,
+        })),
+      };
+      if (state.plan) {
+        snapshot.plan = state.plan;
+      }
+      if (state.error) {
+        snapshot.error = state.error;
+      }
+      return snapshot;
+    }),
   };
 }
 

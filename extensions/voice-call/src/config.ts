@@ -1,5 +1,8 @@
 // Voice Call helper module supports config behavior.
-import { REALTIME_VOICE_AGENT_CONSULT_TOOL_POLICIES } from "openclaw/plugin-sdk/realtime-voice";
+import {
+  REALTIME_VOICE_AGENT_CONSULT_TOOL_POLICIES,
+  type RealtimeVoiceAgentConsultToolPolicy,
+} from "openclaw/plugin-sdk/realtime-voice";
 import { normalizeAgentId, parseAgentSessionKey } from "openclaw/plugin-sdk/routing";
 import {
   buildSecretInputSchema,
@@ -248,7 +251,8 @@ const VoiceCallRealtimeProvidersConfigSchema = z
   .record(z.string(), z.record(z.string(), z.unknown()))
   .default({});
 
-const VoiceCallRealtimeToolPolicySchema = z.enum(REALTIME_VOICE_AGENT_CONSULT_TOOL_POLICIES);
+export const VoiceCallRealtimeToolPolicySchema = z.enum(REALTIME_VOICE_AGENT_CONSULT_TOOL_POLICIES);
+export type VoiceCallRealtimeToolPolicy = RealtimeVoiceAgentConsultToolPolicy;
 const VoiceCallRealtimeConsultPolicySchema = z.enum(["auto", "substantive", "always"]);
 
 const VoiceCallRealtimeFastContextSourceSchema = z.enum(["memory", "sessions"]);
@@ -638,14 +642,14 @@ export function resolveVoiceCallEffectiveConfig(
 function sanitizeVoiceCallProviderConfigs(
   value: Record<string, Record<string, unknown> | undefined> | undefined,
 ): Record<string, Record<string, unknown>> {
-  if (!value) {
-    return {};
+  const sanitized: Record<string, Record<string, unknown>> = {};
+  for (const [providerId, providerConfig] of Object.entries(value ?? {})) {
+    if (!providerId.trim() || !providerConfig || typeof providerConfig !== "object") {
+      continue;
+    }
+    sanitized[providerId] = { ...providerConfig };
   }
-  return Object.fromEntries(
-    Object.entries(value).filter(
-      (entry): entry is [string, Record<string, unknown>] => entry[1] !== undefined,
-    ),
-  );
+  return sanitized;
 }
 
 function sanitizeVoiceCallNumberRoutes(
@@ -732,6 +736,7 @@ export function normalizeVoiceCallConfig(config: VoiceCallConfigInput): VoiceCal
       agentContext: realtimeAgentContext,
       providers: realtimeProviders,
     },
+    stt: { ...defaults.stt, ...config.stt },
     tts: normalizeVoiceCallTtsConfig(defaults.tts, config.tts),
   };
 }

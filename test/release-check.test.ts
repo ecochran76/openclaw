@@ -16,7 +16,6 @@ import {
 import { collectInstalledRootDependencyManifestErrors } from "../scripts/openclaw-npm-postpublish-verify.ts";
 import {
   collectAppcastSparkleVersionErrors,
-  collectBundledDistEntryErrors,
   collectBundledExtensionManifestErrors,
   collectCriticalPluginSdkEntrypointSizeErrors,
   collectForbiddenPackContentPaths,

@@ -352,6 +352,8 @@ function describePhase(phase: TrackedTurnPhase): string {
       return "done";
     case "error":
       return "error";
+    default:
+      return phase;
   }
 }
 

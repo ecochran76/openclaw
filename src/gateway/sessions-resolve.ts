@@ -234,6 +234,8 @@ function matchesSearch(
         return row.derivedTitle;
       case "lastMessage":
         return row.lastMessagePreview;
+      default:
+        return undefined;
     }
   });
   return values.some((value) => typeof value === "string" && value.toLowerCase().includes(query));

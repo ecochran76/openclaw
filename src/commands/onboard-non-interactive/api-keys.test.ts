@@ -3,15 +3,9 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 import { resolveNonInteractiveApiKey } from "./api-keys.js";
 
 const ensureAuthProfileStore = vi.hoisted(() => vi.fn());
-const resolveApiKeyForProfile = vi.hoisted(() => vi.fn());
 const resolveAuthProfileOrder = vi.hoisted(() => vi.fn());
 const resolveEnvApiKey = vi.hoisted(() => vi.fn());
 
-vi.mock("../../agents/auth-profiles.js", () => ({
-  ensureAuthProfileStore,
-  resolveApiKeyForProfile,
-  resolveAuthProfileOrder,
-}));
 vi.mock("../../agents/model-auth.js", () => ({
   resolveEnvApiKey,
 }));
@@ -23,6 +17,17 @@ const authStore = vi.hoisted(
       profiles: {} as Record<string, { type: "api_key"; provider: string; key: string }>,
     }) as const,
 );
+const resolveApiKeyForProfile = vi.hoisted(() =>
+  vi.fn(async (params: { profileId: string }) => {
+    const profile = authStore.profiles[params.profileId];
+    return profile?.type === "api_key" ? { apiKey: profile.key, source: "profile" } : null;
+  }),
+);
+vi.mock("../../agents/auth-profiles.js", () => ({
+  ensureAuthProfileStore,
+  resolveApiKeyForProfile,
+  resolveAuthProfileOrder,
+}));
 
 beforeEach(() => {
   vi.clearAllMocks();
@@ -215,11 +220,14 @@ describe("resolveNonInteractiveApiKey", () => {
     };
     resolveEnvApiKey.mockReturnValue(undefined);
     resolveApiKeyForProfile.mockImplementation(async ({ profileId }: { profileId: string }) =>
-      profileId === "openai:work" ? { apiKey: "sk-work" } : { apiKey: "sk-default" },
+      profileId === "openai:work"
+        ? { apiKey: "sk-work", source: "profile" }
+        : { apiKey: "sk-default", source: "profile" },
     );
 
+    let resolved: Awaited<ReturnType<typeof resolveNonInteractiveApiKey>>;
     try {
-      const resolved = await resolveNonInteractiveApiKey({
+      resolved = await resolveNonInteractiveApiKey({
         provider: "openai",
         profileId: "openai:work",
         cfg: {},

@@ -22,12 +22,7 @@ import {
   buildAutomationListText,
   buildAutomationStatusText,
 } from "../../automation/status.js";
-import { createDefaultDeps } from "../../cli/deps.js";
-import { createOutboundSendDeps, type CliDeps } from "../../cli/outbound-send-deps.js";
 import { loadConfig, type OpenClawConfig } from "../../config/config.js";
-import { runCronIsolatedAgentTurn } from "../../cron/isolated-agent.js";
-import type { CronJob } from "../../cron/types.js";
-import { deliverOutboundPayloads } from "../../infra/outbound/deliver.js";
 import type { GatewayMessageChannel } from "../../utils/message-channel.js";
 import { resolveSessionAgentId } from "../agent-scope.js";
 import { stringEnum } from "../schema/typebox.js";
@@ -42,6 +37,36 @@ import {
 const AUTOMATION_ACTIONS = ["run", "list", "status", "steer", "stop"] as const;
 const CONTROL_RESULTS = ["completed", "progress", "blocked", "approval_required", "error"] as const;
 type ControlResult = (typeof CONTROL_RESULTS)[number];
+type AutomationCliDeps = Record<string, unknown>;
+type AutomationWorkerRunResult = {
+  status?: string;
+  outputText?: string;
+  summary?: string;
+  usage?: {
+    total_tokens?: number;
+    input_tokens?: number;
+    output_tokens?: number;
+  };
+};
+type RunCronIsolatedAgentTurn = (params: {
+  cfg: OpenClawConfig;
+  deps: AutomationCliDeps;
+  job: ReturnType<typeof buildAutomationWorkerJob>;
+  message: string;
+  sessionKey: string;
+  agentId: string;
+}) => Promise<AutomationWorkerRunResult>;
+type DeliverOutboundPayloads = (params: {
+  cfg: OpenClawConfig;
+  channel: never;
+  to: string;
+  accountId?: string;
+  threadId?: string | number;
+  payloads: Array<{ text: string }>;
+  deps: unknown;
+  bestEffort: boolean;
+}) => Promise<unknown>;
+type CreateOutboundSendDeps = (deps: AutomationCliDeps) => unknown;
 
 const AutomationToolSchema = Type.Object({
   action: stringEnum(AUTOMATION_ACTIONS),
@@ -59,7 +84,7 @@ const AutomationToolSchema = Type.Object({
 });
 
 export type AutomationToolDeps = {
-  cliDeps?: CliDeps;
+  cliDeps?: AutomationCliDeps;
   executeWorkerTurn?: (input: AutomationWorkerTurnInput) => Promise<AutomationWorkerTurnResult>;
   deliverTurnUpdate?: (params: { updateText: string; runId: string }) => Promise<void> | void;
   deliverFinalSummary?: (params: { summaryText: string; runId: string }) => Promise<void> | void;
@@ -78,6 +103,22 @@ type AutomationToolOptions = {
 
 function resolveConfig(config?: OpenClawConfig): OpenClawConfig {
   return config ?? loadConfig();
+}
+
+function resolveCliDepsModulePath(): "../../cli/deps.js" {
+  return "../../cli/deps.js";
+}
+
+function resolveOutboundSendDepsModulePath(): "../../cli/outbound-send-deps.js" {
+  return "../../cli/outbound-send-deps.js";
+}
+
+function resolveCronIsolatedAgentModulePath(): "../../cron/isolated-agent.js" {
+  return "../../cron/isolated-agent.js";
+}
+
+function resolveOutboundDeliverModulePath(): "../../infra/outbound/deliver.js" {
+  return "../../infra/outbound/deliver.js";
 }
 
 function resolveSelector(params: Record<string, unknown>): string | undefined {
@@ -123,7 +164,7 @@ function parseWorkerControlResult(text?: string): {
 }
 
 export function mapRunResultToWorkerTurnResult(
-  result: Awaited<ReturnType<typeof runCronIsolatedAgentTurn>>,
+  result: AutomationWorkerRunResult,
 ): AutomationWorkerTurnResult {
   const rawText = result.outputText?.trim() || result.summary?.trim() || undefined;
   const parsed = parseWorkerControlResult(rawText);
@@ -179,7 +220,7 @@ export function mapRunResultToWorkerTurnResult(
   }
 }
 
-function buildAutomationWorkerJob(input: AutomationWorkerTurnInput): CronJob {
+function buildAutomationWorkerJob(input: AutomationWorkerTurnInput) {
   const now = Date.now();
   return {
     id: `automation-${input.runId}-${input.turnIndex}`,
@@ -201,6 +242,14 @@ function buildAutomationWorkerJob(input: AutomationWorkerTurnInput): CronJob {
     delivery: { mode: "none" },
     state: {},
   };
+}
+
+async function resolveAutomationCliDeps(cliDeps?: AutomationCliDeps) {
+  if (cliDeps) {
+    return cliDeps;
+  }
+  const { createDefaultDeps } = await import(resolveCliDepsModulePath());
+  return createDefaultDeps() as AutomationCliDeps;
 }
 
 function resolveAnnounceTarget(opts: AutomationToolOptions): {
@@ -226,12 +275,19 @@ function resolveAnnounceTarget(opts: AutomationToolOptions): {
   return {};
 }
 
-function createDefaultWorkerTurnExecutor(opts: AutomationToolOptions, cliDeps: CliDeps) {
+function createDefaultWorkerTurnExecutor(opts: AutomationToolOptions, cliDeps?: AutomationCliDeps) {
   const cfg = resolveConfig(opts.config);
   return async (input: AutomationWorkerTurnInput): Promise<AutomationWorkerTurnResult> => {
+    const [cronModule, resolvedCliDeps] = await Promise.all([
+      import(resolveCronIsolatedAgentModulePath()),
+      resolveAutomationCliDeps(cliDeps),
+    ]);
+    const { runCronIsolatedAgentTurn } = cronModule as {
+      runCronIsolatedAgentTurn: RunCronIsolatedAgentTurn;
+    };
     const runResult = await runCronIsolatedAgentTurn({
       cfg,
-      deps: cliDeps,
+      deps: resolvedCliDeps,
       job: buildAutomationWorkerJob(input),
       message: buildWorkerControlPrompt(input.prompt),
       sessionKey: input.childSessionKey,
@@ -241,13 +297,24 @@ function createDefaultWorkerTurnExecutor(opts: AutomationToolOptions, cliDeps: C
   };
 }
 
-function createDefaultAnnounceDelivery(opts: AutomationToolOptions, cliDeps: CliDeps) {
+function createDefaultAnnounceDelivery(opts: AutomationToolOptions, cliDeps?: AutomationCliDeps) {
   const cfg = resolveConfig(opts.config);
   const target = resolveAnnounceTarget(opts);
   return async (text: string) => {
     if (!target.channel || !target.to || !text.trim()) {
       return;
     }
+    const [deliverModule, outboundDepsModule, resolvedCliDeps] = await Promise.all([
+      import(resolveOutboundDeliverModulePath()),
+      import(resolveOutboundSendDepsModulePath()),
+      resolveAutomationCliDeps(cliDeps),
+    ]);
+    const { deliverOutboundPayloads } = deliverModule as {
+      deliverOutboundPayloads: DeliverOutboundPayloads;
+    };
+    const { createOutboundSendDeps } = outboundDepsModule as {
+      createOutboundSendDeps: CreateOutboundSendDeps;
+    };
     await deliverOutboundPayloads({
       cfg,
       channel: target.channel as never,
@@ -255,7 +322,7 @@ function createDefaultAnnounceDelivery(opts: AutomationToolOptions, cliDeps: Cli
       accountId: opts.agentAccountId,
       threadId: target.threadId,
       payloads: [{ text }],
-      deps: createOutboundSendDeps(cliDeps),
+      deps: createOutboundSendDeps(resolvedCliDeps),
       bestEffort: true,
     });
   };
@@ -266,7 +333,7 @@ export function createAutomationTool(
   deps?: AutomationToolDeps,
 ): AnyAgentTool {
   const cfg = resolveConfig(opts?.config);
-  const cliDeps = deps?.cliDeps ?? createDefaultDeps();
+  const cliDeps = deps?.cliDeps;
   const executeWorkerTurn =
     deps?.executeWorkerTurn ?? createDefaultWorkerTurnExecutor(opts ?? {}, cliDeps);
   const announceDelivery = createDefaultAnnounceDelivery(opts ?? {}, cliDeps);
