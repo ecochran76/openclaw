@@ -1,6 +1,7 @@
 import type { RealtimeTranscriptionProviderPlugin } from "openclaw/plugin-sdk/realtime-transcription";
 import type { CoreAgentDeps, CoreConfig } from "../core-bridge.js";
 import { BufferedMediaSttProvider } from "./stt-buffered-media.js";
+import { resolveBufferedMediaSttConfig } from "./stt-provider-config.js";
 
 export type BufferedMediaRealtimeTranscriptionProviderDeps = {
   coreConfig?: CoreConfig | null;
@@ -21,13 +22,13 @@ export function buildBufferedMediaRealtimeTranscriptionProvider(
       if (!cfg) {
         throw new Error("media-audio transcription requires core config");
       }
+      const providerOptions = resolveBufferedMediaSttConfig(req.providerConfig);
       const raw = req.providerConfig;
       const provider = new BufferedMediaSttProvider({
         cfg,
         agentDir: deps.agentRuntime?.resolveAgentDir?.(cfg, "main"),
-        silenceDurationMs:
-          typeof raw.silenceDurationMs === "number" ? raw.silenceDurationMs : undefined,
-        vadThreshold: typeof raw.vadThreshold === "number" ? raw.vadThreshold : undefined,
+        silenceDurationMs: providerOptions.silenceDurationMs,
+        vadThreshold: providerOptions.vadThreshold,
         minSpeechMs: typeof raw.minSpeechMs === "number" ? raw.minSpeechMs : undefined,
         maxSegmentMs: typeof raw.maxSegmentMs === "number" ? raw.maxSegmentMs : undefined,
       });

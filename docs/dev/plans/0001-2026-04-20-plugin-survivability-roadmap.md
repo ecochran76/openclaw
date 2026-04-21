@@ -19,7 +19,9 @@ Phase 1 is implemented on `ec-main`: OpenAI Codex now owns its chat reauth capab
 
 Phase 2 is implemented on `ec-main`: core A2A approval payloads now carry generic approval metadata, and Slack owns Slack-specific approval button presentation.
 
-The next implementation slice is Phase 3: automation command and status seams.
+Phase 3 is implemented on `ec-main`: automation command, status, progress reporting, worker result mapping, and worker job construction now live in automation-owned helpers while core bounds, accounting, and lifecycle remain in core.
+
+The next implementation slice is Phase 4: voice and local STT plugin hardening.
 
 ## Goal
 
@@ -114,6 +116,8 @@ Exit criteria:
 - shared tool-event handlers route payloads rather than owning Slack-specific formatting
 
 ## Phase 3: Automation Command And Status Seams
+
+Status: implemented across Turns 8-10 on 2026-04-21.
 
 Purpose: make automation easier to preserve during rebases without prematurely forcing the whole feature into a plugin.
 
@@ -217,7 +221,7 @@ Exit criteria:
 | ------------------------------------- | --------------------------------------------------- | ----------------------------------------------- |
 | OpenAI Codex reauth/profile specifics | provider capability seam                            | implement Phase 1                               |
 | Slack A2A approval rendering          | Slack plugin plus generic A2A core seam             | implemented Phase 2                             |
-| Automation command/status UX          | feature-owned helpers, then possible plugin surface | implement Phase 3                               |
+| Automation command/status UX          | feature-owned helpers, then possible plugin surface | implemented Phase 3                             |
 | Automation bounds/session lifecycle   | core                                                | preserve as global invariant                    |
 | Slack turn lifecycle                  | core turn tracking plus channel presentation seams  | avoid Slack-specific policy in generic dispatch |
 | Voice-call telephony runtime          | extension/plugin                                    | harden existing plugin-owned seams              |
@@ -226,6 +230,6 @@ Exit criteria:
 
 ## Current Next Action
 
-Start Phase 3: automation command and status seams.
+Start Phase 4: voice and local STT plugin hardening.
 
-That slice should preserve bounds, turn accounting, and session lifecycle in core while extracting automation command/status text and progress payload shaping into feature-owned helpers.
+That slice should keep voice-call provider choices extension-owned, preserve the streaming STT contract, and prefer shared media/runtime autodetect for local STT integration without moving telephony runtime behavior into core.

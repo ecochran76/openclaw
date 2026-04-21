@@ -125,3 +125,15 @@ This runbook is a dated log of planning-contract and execution events that shoul
   - `pnpm test -- src/automation/worker-job.test.ts src/automation/worker-result.test.ts src/automation/progress-reporting.test.ts src/automation/runner.test.ts src/automation/status.test.ts src/agents/tools/automation-tool.test.ts src/auto-reply/reply/commands-automation.test.ts src/auto-reply/reply/commands-automation-status.test.ts src/automation/command-surface.test.ts src/automation/config.test.ts`
   - `pnpm check`
   - `pnpm build`
+
+## Turn 11 | 2026-04-21
+
+- Marked Phase 3 complete in `docs/dev/plans/0001-2026-04-20-plugin-survivability-roadmap.md` and advanced the current next action to Phase 4.
+- Started Phase 4 voice/local STT plugin hardening with a small extension-owned seam.
+- Added `extensions/voice-call/src/providers/stt-provider-config.ts` to normalize voice-call streaming STT provider ids, provider-owned config blobs, OpenAI realtime defaults/API-key lookup, and buffered media numeric options.
+- Updated `extensions/voice-call/src/providers/stt-factory.ts` to consume the voice-call-owned config helper while keeping provider selection and provider construction inside the extension.
+- Added helper-level tests for default provider resolution, provider config lookup, OpenAI realtime defaults/API key precedence, and media-audio numeric option fallback.
+- Validation passed:
+  - `pnpm test -- extensions/voice-call/src/providers/stt-provider-config.test.ts extensions/voice-call/src/providers/stt-factory.test.ts extensions/voice-call/src/providers/stt-buffered-media.test.ts extensions/voice-call/src/providers/stt-openai-realtime.test.ts extensions/voice-call/src/media-stream.test.ts extensions/voice-call/src/webhook.test.ts src/media-understanding/apply.test.ts`
+  - `pnpm check`
+  - `pnpm build`
