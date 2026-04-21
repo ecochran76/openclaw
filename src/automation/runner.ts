@@ -2,6 +2,12 @@ import type { OpenClawConfig } from "../config/config.js";
 import { isLikelyInterimCronMessage } from "../cron/isolated-agent/subagent-followup-hints.js";
 import { resolveAutomationRunSpec } from "./config.js";
 import {
+  resolveAutomationFinalSummaryCandidate,
+  resolveAutomationTurnOutcome,
+  resolveAutomationTurnUpdateText,
+  summarizeAutomationTurnProgress,
+} from "./progress-reporting.js";
+import {
   buildAutomationContinuationPrompt,
   buildAutomationInitialPrompt,
   buildAutomationInterimAckFollowupPrompt,
@@ -27,6 +33,7 @@ import type {
   AutomationRunSpec,
   AutomationStopSpec,
 } from "./types.js";
+import type { AutomationWorkerTurnResultShape } from "./worker-result.js";
 
 export type AutomationWorkerTurnInput = {
   runId: AutomationRunId;
@@ -43,16 +50,7 @@ export type AutomationWorkerTurnInput = {
   remaining: ReturnType<typeof resolveAutomationBudgetRemaining>;
 };
 
-export type AutomationWorkerTurnResult = {
-  outputText?: string;
-  progressText?: string;
-  finalSummaryText?: string;
-  totalTokensUsedDelta?: number;
-  completed?: boolean;
-  blocked?: boolean;
-  approvalRequired?: boolean;
-  errored?: boolean;
-};
+export type AutomationWorkerTurnResult = AutomationWorkerTurnResultShape;
 
 export type AutomationFinalSummaryDelivery = {
   run: AutomationRunRecord;
@@ -95,56 +93,6 @@ function normalizeTokenDelta(value?: number): number {
 function normalizeText(value?: string | null): string | undefined {
   const normalized = value?.trim();
   return normalized ? normalized : undefined;
-}
-
-function summarizeProgress(result: AutomationWorkerTurnResult): string | undefined {
-  const text = normalizeText(result.progressText) ?? normalizeText(result.outputText);
-  if (!text) {
-    return undefined;
-  }
-  return text.length <= 280 ? text : `${text.slice(0, 277)}...`;
-}
-
-function looksSelfReportedIncomplete(text?: string | null): boolean {
-  const normalized = normalizeText(text);
-  if (!normalized) {
-    return false;
-  }
-
-  return [
-    /not started in this pass/i,
-    /what remains\s*[:\n]/i,
-    /remaining work\s*[:\n]/i,
-    /still to do\s*[:\n]/i,
-    /next recommended implementation step/i,
-    /\bi left .+ as the next\b/i,
-  ].some((pattern) => pattern.test(normalized));
-}
-
-function resolveFinalSummaryCandidate(
-  record: AutomationRunRecord,
-  result?: AutomationWorkerTurnResult,
-): string | undefined {
-  return (
-    normalizeText(result?.finalSummaryText) ??
-    normalizeText(result?.outputText) ??
-    normalizeText(result?.progressText) ??
-    normalizeText(record.finalSummaryText) ??
-    normalizeText(record.lastProgressText)
-  );
-}
-
-function resolveTurnUpdateText(
-  record: AutomationRunRecord,
-  result?: AutomationWorkerTurnResult,
-): string | undefined {
-  return (
-    normalizeText(result?.outputText) ??
-    normalizeText(result?.progressText) ??
-    normalizeText(result?.finalSummaryText) ??
-    normalizeText(record.lastProgressText) ??
-    normalizeText(record.finalSummaryText)
-  );
 }
 
 function shouldRetryInterimAck(result: AutomationWorkerTurnResult): boolean {
@@ -314,7 +262,7 @@ async function runAutomationLoop(params: {
         workerTurnsUsed: latest.workerTurnsUsed + 1,
         totalTokensUsed:
           latest.totalTokensUsed + normalizeTokenDelta(turnResult.totalTokensUsedDelta),
-        lastProgressText: summarizeProgress(turnResult) ?? latest.lastProgressText,
+        lastProgressText: summarizeAutomationTurnProgress(turnResult) ?? latest.lastProgressText,
         pendingOperatorNote: undefined,
       },
       { config: params.config, now: resolveNow(params.deps) },
@@ -328,7 +276,10 @@ async function runAutomationLoop(params: {
         runId: params.runId,
         reason: "stopped_by_user",
         deps: params.deps,
-        summaryText: resolveFinalSummaryCandidate(updated, turnResult),
+        summaryText: resolveAutomationFinalSummaryCandidate({
+          record: updated,
+          result: turnResult,
+        }),
       });
       return;
     }
@@ -339,11 +290,15 @@ async function runAutomationLoop(params: {
       approvalRequired: turnResult.approvalRequired,
       errored: turnResult.errored,
     });
-    const selfReportedIncomplete =
-      explicitStopReason === "completed" &&
-      looksSelfReportedIncomplete(resolveFinalSummaryCandidate(updated, turnResult));
-    const turnOutcome = selfReportedIncomplete ? "progress" : (explicitStopReason ?? "progress");
-    const turnUpdateText = resolveTurnUpdateText(updated, turnResult);
+    const finalSummaryCandidate = resolveAutomationFinalSummaryCandidate({
+      record: updated,
+      result: turnResult,
+    });
+    const { outcome: turnOutcome, selfReportedIncomplete } = resolveAutomationTurnOutcome({
+      explicitStopReason,
+      finalSummaryCandidate,
+    });
+    const turnUpdateText = resolveAutomationTurnUpdateText({ record: updated, result: turnResult });
     const active = activeExecutions.get(params.runId);
     if (active?.deliveryMode === "announce" && params.deps.deliverTurnUpdate && turnUpdateText) {
       await params.deps.deliverTurnUpdate({
@@ -363,7 +318,7 @@ async function runAutomationLoop(params: {
         runId: params.runId,
         reason: explicitStopReason,
         deps: params.deps,
-        summaryText: resolveFinalSummaryCandidate(updated, turnResult),
+        summaryText: finalSummaryCandidate,
       });
       return;
     }
@@ -385,7 +340,7 @@ async function runAutomationLoop(params: {
         runId: params.runId,
         reason: postTurnGuard.reason,
         deps: params.deps,
-        summaryText: resolveFinalSummaryCandidate(updated, turnResult),
+        summaryText: finalSummaryCandidate,
       });
       return;
     }

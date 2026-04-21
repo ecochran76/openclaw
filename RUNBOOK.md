@@ -102,3 +102,15 @@ This runbook is a dated log of planning-contract and execution events that shoul
   - `pnpm test -- src/automation/command-surface.test.ts src/auto-reply/reply/commands-automation.test.ts src/auto-reply/reply/commands-automation-status.test.ts src/agents/tools/automation-tool.test.ts src/automation/status.test.ts src/automation/config.test.ts`
   - `pnpm check`
   - `pnpm build`
+
+## Turn 9 | 2026-04-21
+
+- Continued Phase 3 by extracting automation progress/status payload shaping out of generic tool/runner code.
+- Moved isolated worker result parsing and `RESULT:` control-line mapping into `src/automation/worker-result.ts`.
+- Moved progress summary truncation, final-summary candidate selection, turn-update candidate selection, and self-reported-incomplete detection into `src/automation/progress-reporting.ts`.
+- Kept `src/agents/tools/automation-tool.ts` and `src/automation/runner.ts` as thin orchestration surfaces for execution, delivery, accounting, and lifecycle.
+- Added helper-level coverage for worker result mapping and progress-reporting decisions.
+- Validation passed:
+  - `pnpm test -- src/automation/worker-result.test.ts src/automation/progress-reporting.test.ts src/automation/runner.test.ts src/automation/status.test.ts src/agents/tools/automation-tool.test.ts src/auto-reply/reply/commands-automation.test.ts src/auto-reply/reply/commands-automation-status.test.ts src/automation/command-surface.test.ts src/automation/config.test.ts`
+  - `pnpm check`
+  - `pnpm build`
