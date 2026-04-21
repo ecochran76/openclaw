@@ -114,3 +114,14 @@ This runbook is a dated log of planning-contract and execution events that shoul
   - `pnpm test -- src/automation/worker-result.test.ts src/automation/progress-reporting.test.ts src/automation/runner.test.ts src/automation/status.test.ts src/agents/tools/automation-tool.test.ts src/auto-reply/reply/commands-automation.test.ts src/auto-reply/reply/commands-automation-status.test.ts src/automation/command-surface.test.ts src/automation/config.test.ts`
   - `pnpm check`
   - `pnpm build`
+
+## Turn 10 | 2026-04-21
+
+- Finished the remaining obvious Phase 3 automation seam by moving worker protocol/job construction into automation-owned code.
+- Added `src/automation/worker-job.ts` for the worker control-line prompt and isolated cron-compatible automation worker job shape.
+- Updated `src/agents/tools/automation-tool.ts` to consume the automation-owned worker job/control prompt while keeping it focused on dependency wiring, delivery, and tool action orchestration.
+- Added helper-level coverage for the worker control-line contract and cron job shape.
+- Validation passed:
+  - `pnpm test -- src/automation/worker-job.test.ts src/automation/worker-result.test.ts src/automation/progress-reporting.test.ts src/automation/runner.test.ts src/automation/status.test.ts src/agents/tools/automation-tool.test.ts src/auto-reply/reply/commands-automation.test.ts src/auto-reply/reply/commands-automation-status.test.ts src/automation/command-surface.test.ts src/automation/config.test.ts`
+  - `pnpm check`
+  - `pnpm build`

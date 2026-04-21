@@ -23,6 +23,11 @@ import {
   buildAutomationStatusText,
 } from "../../automation/status.js";
 import {
+  buildAutomationWorkerControlPrompt,
+  buildAutomationWorkerJob,
+  type AutomationWorkerJob,
+} from "../../automation/worker-job.js";
+import {
   mapRunResultToWorkerTurnResult,
   type AutomationWorkerRunResult,
 } from "../../automation/worker-result.js";
@@ -43,7 +48,7 @@ type AutomationCliDeps = Record<string, unknown>;
 type RunCronIsolatedAgentTurn = (params: {
   cfg: OpenClawConfig;
   deps: AutomationCliDeps;
-  job: ReturnType<typeof buildAutomationWorkerJob>;
+  job: AutomationWorkerJob;
   message: string;
   sessionKey: string;
   agentId: string;
@@ -125,42 +130,7 @@ function buildChildSessionKey(agentId: string): string {
   return `agent:${agentId}:subagent:auto-${crypto.randomUUID()}`;
 }
 
-function buildWorkerControlPrompt(prompt: string): string {
-  return [
-    prompt.trim(),
-    "",
-    "Return format requirements:",
-    "- First line must be exactly one of: RESULT: completed, RESULT: progress, RESULT: blocked, RESULT: approval_required, RESULT: error",
-    "- After the first line, include only the substantive result text.",
-    "- Use RESULT: progress only when there is meaningful progress and another worker turn is still needed.",
-  ].join("\n");
-}
-
 export { mapRunResultToWorkerTurnResult };
-
-function buildAutomationWorkerJob(input: AutomationWorkerTurnInput) {
-  const now = Date.now();
-  return {
-    id: `automation-${input.runId}-${input.turnIndex}`,
-    sessionKey: input.childSessionKey,
-    name: input.label?.trim() || `Automation ${input.runId}`,
-    enabled: true,
-    createdAtMs: now,
-    updatedAtMs: now,
-    schedule: { kind: "at", at: new Date(now).toISOString() },
-    sessionTarget: "isolated",
-    wakeMode: "now",
-    payload: {
-      kind: "agentTurn",
-      message: buildWorkerControlPrompt(input.prompt),
-      model: input.model,
-      thinking: input.thinking,
-      timeoutSeconds: 0,
-    },
-    delivery: { mode: "none" },
-    state: {},
-  };
-}
 
 async function resolveAutomationCliDeps(cliDeps?: AutomationCliDeps) {
   if (cliDeps) {
@@ -207,7 +177,7 @@ function createDefaultWorkerTurnExecutor(opts: AutomationToolOptions, cliDeps?: 
       cfg,
       deps: resolvedCliDeps,
       job: buildAutomationWorkerJob(input),
-      message: buildWorkerControlPrompt(input.prompt),
+      message: buildAutomationWorkerControlPrompt(input.prompt),
       sessionKey: input.childSessionKey,
       agentId: resolveSessionAgentId({ sessionKey: input.childSessionKey, config: cfg }),
     });
