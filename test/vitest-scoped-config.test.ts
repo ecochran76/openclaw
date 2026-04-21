@@ -469,7 +469,6 @@ describe("scoped vitest configs", () => {
     for (const config of [
       defaultAcpConfig,
       defaultExtensionsConfig,
-      defaultExtensionChannelsConfig,
       defaultExtensionDiscordConfig,
       defaultExtensionImessageConfig,
       defaultExtensionLineConfig,
@@ -496,6 +495,13 @@ describe("scoped vitest configs", () => {
     expectThreadedIsolatedRunner(defaultExtensionMemoryConfig);
     expectThreadedIsolatedRunner(defaultExtensionProvidersConfig);
     expectForkedIsolatedRunner(defaultInfraConfig);
+
+    const extensionChannelsTestConfig = requireTestConfig(defaultExtensionChannelsConfig);
+    expect(extensionChannelsTestConfig.pool).toBe("forks");
+    expect(extensionChannelsTestConfig.isolate).toBe(false);
+    expect(normalizeConfigPath(extensionChannelsTestConfig.runner)).toBe(
+      "test/non-isolated-runner.ts",
+    );
   });
 
   it("keeps the process lane off the openclaw runtime setup", () => {
@@ -604,6 +610,15 @@ describe("scoped vitest configs", () => {
       expect(testConfig.dir).toBe(path.join(process.cwd(), "extensions"));
       expect(testConfig.include).toEqual([include]);
     }
+  });
+
+  it("normalizes extension channel include patterns relative to the scoped dir", () => {
+    const testConfig = requireTestConfig(defaultExtensionChannelsConfig);
+    expect(testConfig.dir).toBe(path.join(process.cwd(), "extensions"));
+    expect(testConfig.maxWorkers).toBe(4);
+    expect(testConfig.fileParallelism).toBe(true);
+    expect(testConfig.include).toEqual([]);
+    expect(testConfig.passWithNoTests).toBe(true);
   });
 
   it("normalizes acpx extension include patterns relative to the scoped dir", () => {

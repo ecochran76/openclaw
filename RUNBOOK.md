@@ -76,3 +76,18 @@ This runbook is a dated log of planning-contract and execution events that shoul
   - `pnpm check`
 - Full-suite note:
   - The original `OPENCLAW_VITEST_MAX_WORKERS=1 pnpm test` run completed red before these fixes landed. It exposed the fixed deterministic failures above plus one `ERR_WORKER_OUT_OF_MEMORY` in an extension lane. Rerun the full suite after this turn if a final all-green landing gate is required.
+
+## Turn 7 | 2026-04-21
+
+- Closed the Turn 6 full-suite caveat with a final end-to-end full test pass.
+- Fixed the launchd supervised gateway restart test to use fake timers only around the restart-delay assertion, avoiding cross-test `Date.now()` / timer contamination while preserving the startup path on real timers.
+- Stabilized the oversized extension-channels shard:
+  - `test/vitest/vitest.extension-channels.config.ts` now uses `pool: "forks"`.
+  - The shard overrides full-suite `OPENCLAW_VITEST_MAX_WORKERS=1` with a small fixed 4-worker split so Discord/Slack/Signal/iMessage/Line tests do not accumulate the whole channel graph in one process.
+  - Updated the scoped-config meta-test to document the extension-channels fork-pool exception and worker split.
+- Validation passed:
+  - `pnpm test -- src/cli/gateway-cli/run-loop.test.ts`
+  - `OPENCLAW_VITEST_MAX_WORKERS=1 pnpm exec vitest run --config test/vitest/vitest.extension-channels.config.ts`
+  - `pnpm exec vitest run --config test/vitest/vitest.full-core-support-boundary.config.ts`
+  - `OPENCLAW_VITEST_MAX_WORKERS=1 pnpm test`
+  - `pnpm check`
