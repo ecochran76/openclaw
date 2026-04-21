@@ -33,7 +33,14 @@ import {
 } from "../agents/tools/sessions-helpers.js";
 import { normalizeGroupActivation } from "../auto-reply/group-activation.js";
 import { resolveSelectedAndActiveModel } from "../auto-reply/model-runtime.js";
-import type { ThinkLevel } from "../auto-reply/thinking.js";
+import type {
+  ElevatedLevel,
+  ReasoningLevel,
+  ThinkLevel,
+  VerboseLevel,
+} from "../auto-reply/thinking.js";
+import { getLatestAutomationRunForRequester } from "../automation/registry.js";
+import { buildAutomationCompactStatusLine } from "../automation/status.js";
 import { toAgentModelListLike } from "../config/model-input.js";
 import type { SessionEntry } from "../config/sessions.js";
 import { hasSessionAutoModelFallbackProvenance } from "../config/sessions/model-override-provenance.js";
@@ -696,6 +703,7 @@ export async function buildStatusText(params: BuildStatusTextParams): Promise<st
 
   let subagentsLine: string | undefined;
   let taskLine: string | undefined;
+  let automationLine: string | undefined;
   if (sessionKey) {
     const { mainKey, alias } = resolveMainSessionAlias(cfg);
     const requesterKey = resolveInternalSessionKey({ key: sessionKey, alias, mainKey });
@@ -716,6 +724,10 @@ export async function buildStatusText(params: BuildStatusTextParams): Promise<st
       verboseEnabled,
       pendingDescendantsForRun: (entry) => countPendingDescendantRuns(entry.childSessionKey),
     });
+    const automationRun = getLatestAutomationRunForRequester(requesterKey);
+    automationLine = automationRun
+      ? buildAutomationCompactStatusLine({ run: automationRun })
+      : undefined;
   }
   const groupActivation = isGroup
     ? (normalizeGroupActivation(sessionEntry?.groupActivation) ?? defaultGroupActivation())
@@ -831,6 +843,7 @@ export async function buildStatusText(params: BuildStatusTextParams): Promise<st
     turnLine: taskLine,
     pluginHealthLine,
     channelFeatureLine,
+    automationLine,
     mediaDecisions: params.mediaDecisions,
     includeTranscriptUsage: params.includeTranscriptUsage ?? true,
   });

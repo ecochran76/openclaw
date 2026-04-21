@@ -58,3 +58,21 @@ This runbook is a dated log of planning-contract and execution events that shoul
   - `pnpm check`
 - Full-suite note:
   - A full `OPENCLAW_VITEST_MAX_WORKERS=1 pnpm test` probe was run far enough to expose and fix these clusters through the agent/gateway lanes, but was not rerun to final completion after the last WebSocket patch due runtime cost. Treat the focused set plus `pnpm check` as the evidence for this stabilization turn.
+
+## Turn 6 | 2026-04-21
+
+- Continued full-suite stabilization from the clean `ec-main` state after Turn 5.
+- Restored `/tasks` to the native command registry so implemented task status handling is exposed consistently through native command specs and chat command lists.
+- Added the active automation run compact line to `/status` by reusing the automation registry/status formatter, preserving the Slack-visible automation state the operator expected.
+- Updated abort cascade coverage to use the current controller-owned subagent listing seam instead of the legacy requester-list mock.
+- Preserved voice-call plugin compatibility:
+  - Plugin runtime config parsing now uses the existing voice-call legacy config migration helper, so deprecated `provider: "log"`, `twilio.from`, and legacy streaming keys normalize before strict schema validation.
+  - `responseModel` is optional again so voice responses inherit the active runtime default unless explicitly configured.
+- Updated Telegram command pagination expectations after `/tasks` returned to the command registry.
+- Hardened browser Chrome internal tests on Linux by making mocked executable discovery cover both macOS `Google Chrome` and Linux `google-chrome` candidate paths.
+- Validation passed:
+  - `pnpm test -- src/auto-reply/commands-registry.test.ts src/auto-reply/reply/abort.test.ts src/auto-reply/reply/commands-automation-status.test.ts src/automation/status.test.ts src/auto-reply/status.test.ts extensions/telegram/src/bot.test.ts extensions/voice-call/index.test.ts extensions/voice-call/src/config.test.ts extensions/voice-call/src/response-generator.test.ts extensions/voice-call/src/response-model.test.ts extensions/voice-call/src/config-compat.test.ts`
+  - `pnpm test -- extensions/browser/src/browser/chrome.internal.test.ts`
+  - `pnpm check`
+- Full-suite note:
+  - The original `OPENCLAW_VITEST_MAX_WORKERS=1 pnpm test` run completed red before these fixes landed. It exposed the fixed deterministic failures above plus one `ERR_WORKER_OUT_OF_MEMORY` in an extension lane. Rerun the full suite after this turn if a final all-green landing gate is required.

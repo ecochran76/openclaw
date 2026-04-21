@@ -515,7 +515,7 @@ export const VoiceCallConfigSchema = z
     /** Agent ID to use for voice response generation. Defaults to "main". */
     agentId: z.string().min(1).optional(),
 
-    /** Optional model override for generating voice responses. */
+    /** Model for generating voice responses (e.g., "anthropic/claude-sonnet-4", "openai/gpt-4o") */
     responseModel: z.string().optional(),
 
     /** System prompt for voice responses */

@@ -1295,7 +1295,7 @@ describe("abort detection", () => {
   });
 
   it("cascade stop still traverses an ended current parent when a stale older active row exists", async () => {
-    subagentRegistryMocks.listSubagentRunsForRequester.mockClear();
+    subagentRegistryMocks.listSubagentRunsForController.mockClear();
     subagentRegistryMocks.markSubagentRunTerminated.mockClear();
     const sessionKey = "telegram:parent";
     const depth1Key = "agent:main:subagent:child-ended-stale";
@@ -1310,7 +1310,7 @@ describe("abort detection", () => {
       },
     });
 
-    subagentRegistryMocks.listSubagentRunsForRequester
+    subagentRegistryMocks.listSubagentRunsForController
       .mockReturnValueOnce([
         {
           runId: "run-stale-parent",
@@ -1395,7 +1395,7 @@ describe("abort detection", () => {
   });
 
   it("stopSubagentsForRequester does not traverse a child that moved to a newer parent", () => {
-    subagentRegistryMocks.listSubagentRunsForRequester.mockClear();
+    subagentRegistryMocks.listSubagentRunsForController.mockClear();
     subagentRegistryMocks.markSubagentRunTerminated.mockClear();
     const oldParentKey = "agent:main:subagent:old-parent";
     const newParentKey = "agent:main:subagent:new-parent";
@@ -1403,7 +1403,7 @@ describe("abort detection", () => {
     const leafKey = `${childKey}:subagent:leaf`;
     const now = Date.now();
 
-    subagentRegistryMocks.listSubagentRunsForRequester
+    subagentRegistryMocks.listSubagentRunsForController
       .mockReturnValueOnce([
         {
           runId: "run-shared-child-stale-parent",

@@ -287,7 +287,7 @@ export function buildBuiltinChatCommands(
     defineChatCommand({
       key: "tasks",
       nativeName: "tasks",
-      description: "List background tasks for this session.",
+      description: "List active and recent tasks for this session.",
       textAlias: "/tasks",
       category: "status",
       tier: "standard",
