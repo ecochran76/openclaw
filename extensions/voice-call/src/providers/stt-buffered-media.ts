@@ -1,14 +1,10 @@
-import { randomUUID } from "node:crypto";
-import fs from "node:fs/promises";
-import path from "node:path";
 import type { OpenClawConfig } from "openclaw/plugin-sdk/config-runtime";
-import { resolvePreferredOpenClawTmpDir } from "openclaw/plugin-sdk/infra-runtime";
 import { transcribeAudioFile } from "openclaw/plugin-sdk/media-understanding-runtime";
+import { convertMulawToPcm16, getTelephonyPcmDurationMs } from "../telephony-audio.js";
 import {
-  buildTelephonyWavBuffer,
-  convertMulawToPcm16,
-  getTelephonyPcmDurationMs,
-} from "../telephony-audio.js";
+  createBufferedMediaTranscriber,
+  type VoiceCallBufferedMediaTranscriber,
+} from "./stt-buffered-media-transcriber.js";
 import type { VoiceCallStreamingSttProvider, VoiceCallStreamingSttSession } from "./stt-types.js";
 
 const DEFAULT_MIN_SPEECH_MS = 300;
@@ -22,6 +18,7 @@ export interface BufferedMediaSttConfig {
   minSpeechMs?: number;
   maxSegmentMs?: number;
   transcribeAudioFileImpl?: typeof transcribeAudioFile;
+  transcriber?: VoiceCallBufferedMediaTranscriber;
 }
 
 function resolveSpeechThreshold(vadThreshold: number): number {
@@ -46,6 +43,16 @@ type TranscriptWaiter = {
   timeout: ReturnType<typeof setTimeout>;
 };
 
+type BufferedMediaSttSessionConfig = {
+  cfg: OpenClawConfig;
+  agentDir?: string;
+  silenceDurationMs: number;
+  vadThreshold: number;
+  minSpeechMs: number;
+  maxSegmentMs: number;
+  transcriber: VoiceCallBufferedMediaTranscriber;
+};
+
 class BufferedMediaSttSession implements VoiceCallStreamingSttSession {
   private connected = false;
   private closed = false;
@@ -61,11 +68,7 @@ class BufferedMediaSttSession implements VoiceCallStreamingSttSession {
   private segmentTotalMs = 0;
   private silenceMs = 0;
 
-  constructor(
-    private readonly config: Required<Omit<BufferedMediaSttConfig, "agentDir">> & {
-      agentDir?: string;
-    },
-  ) {}
+  constructor(private readonly config: BufferedMediaSttSessionConfig) {}
 
   async connect(): Promise<void> {
     this.closed = false;
@@ -178,20 +181,12 @@ class BufferedMediaSttSession implements VoiceCallStreamingSttSession {
 
     this.transcriptionChain = this.transcriptionChain
       .then(async () => {
-        const tempRoot = resolvePreferredOpenClawTmpDir();
-        await fs.mkdir(tempRoot, { recursive: true, mode: 0o700 });
-        const tempDir = await fs.mkdtemp(path.join(tempRoot, "voice-call-stt-"));
-        const filePath = path.join(tempDir, `segment-${randomUUID()}.wav`);
-
         try {
-          await fs.writeFile(filePath, buildTelephonyWavBuffer(pcm));
-          const result = await this.config.transcribeAudioFileImpl({
-            filePath,
+          const transcript = await this.config.transcriber({
+            pcm,
             cfg: this.config.cfg,
             agentDir: this.config.agentDir,
-            mime: "audio/wav",
           });
-          const transcript = result.text?.trim();
           if (!transcript) {
             return;
           }
@@ -210,8 +205,6 @@ class BufferedMediaSttSession implements VoiceCallStreamingSttSession {
               error instanceof Error ? error.message : String(error)
             }`,
           );
-        } finally {
-          await fs.rm(tempDir, { recursive: true, force: true }).catch(() => {});
         }
       })
       .catch(() => {});
@@ -226,7 +219,7 @@ export class BufferedMediaSttProvider implements VoiceCallStreamingSttProvider {
   private readonly vadThreshold: number;
   private readonly minSpeechMs: number;
   private readonly maxSegmentMs: number;
-  private readonly transcribeAudioFileImpl: typeof transcribeAudioFile;
+  private readonly transcriber: VoiceCallBufferedMediaTranscriber;
 
   constructor(config: BufferedMediaSttConfig) {
     this.cfg = config.cfg;
@@ -235,7 +228,9 @@ export class BufferedMediaSttProvider implements VoiceCallStreamingSttProvider {
     this.vadThreshold = config.vadThreshold ?? 0.5;
     this.minSpeechMs = config.minSpeechMs ?? DEFAULT_MIN_SPEECH_MS;
     this.maxSegmentMs = config.maxSegmentMs ?? DEFAULT_MAX_SEGMENT_MS;
-    this.transcribeAudioFileImpl = config.transcribeAudioFileImpl ?? transcribeAudioFile;
+    this.transcriber =
+      config.transcriber ??
+      createBufferedMediaTranscriber({ transcribeAudioFileImpl: config.transcribeAudioFileImpl });
   }
 
   createSession(): VoiceCallStreamingSttSession {
@@ -246,7 +241,7 @@ export class BufferedMediaSttProvider implements VoiceCallStreamingSttProvider {
       vadThreshold: this.vadThreshold,
       minSpeechMs: this.minSpeechMs,
       maxSegmentMs: this.maxSegmentMs,
-      transcribeAudioFileImpl: this.transcribeAudioFileImpl,
+      transcriber: this.transcriber,
     });
   }
 }

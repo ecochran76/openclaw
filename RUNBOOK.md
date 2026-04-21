@@ -137,3 +137,14 @@ This runbook is a dated log of planning-contract and execution events that shoul
   - `pnpm test -- extensions/voice-call/src/providers/stt-provider-config.test.ts extensions/voice-call/src/providers/stt-factory.test.ts extensions/voice-call/src/providers/stt-buffered-media.test.ts extensions/voice-call/src/providers/stt-openai-realtime.test.ts extensions/voice-call/src/media-stream.test.ts extensions/voice-call/src/webhook.test.ts src/media-understanding/apply.test.ts`
   - `pnpm check`
   - `pnpm build`
+
+## Turn 12 | 2026-04-21
+
+- Continued Phase 4 by separating buffered media STT segmentation from local media-runtime transcription staging.
+- Added `extensions/voice-call/src/providers/stt-buffered-media-transcriber.ts` as the voice-call-owned adapter that stages telephony PCM as a temporary WAV and invokes the shared media-understanding transcription runtime.
+- Updated `BufferedMediaSttProvider` so it owns telephony buffering/VAD/session behavior while delegating temp-file and transcription invocation details to the adapter.
+- Preserved the existing `transcribeAudioFileImpl` test injection path and added direct adapter coverage for WAV staging, transcript trimming, blank transcript normalization, and temp cleanup.
+- Validation passed:
+  - `pnpm test -- extensions/voice-call/src/providers/stt-buffered-media-transcriber.test.ts extensions/voice-call/src/providers/stt-buffered-media.test.ts extensions/voice-call/src/providers/stt-provider-config.test.ts extensions/voice-call/src/providers/stt-factory.test.ts extensions/voice-call/src/media-stream.test.ts extensions/voice-call/src/webhook.test.ts src/media-understanding/apply.test.ts`
+  - `pnpm check`
+  - `pnpm build`
