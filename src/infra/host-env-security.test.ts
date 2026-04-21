@@ -39,6 +39,8 @@ function getSystemMakePath() {
   return findSystemCommandPath("make");
 }
 
+const GIT_HELPER_TIMEOUT_MS = 5_000;
+
 function clearMarker(marker: string) {
   try {
     fs.unlinkSync(marker);
@@ -54,8 +56,15 @@ function envRecord(entries: ReadonlyArray<readonly [string, string]>): Record<st
 async function runGitLsRemote(gitPath: string, target: string, env: NodeJS.ProcessEnv) {
   await new Promise<void>((resolve) => {
     const child = spawn(gitPath, ["ls-remote", target], { env, stdio: "ignore" });
-    child.once("error", () => resolve());
-    child.once("close", () => resolve());
+    const timeout = setTimeout(() => {
+      child.kill("SIGTERM");
+    }, GIT_HELPER_TIMEOUT_MS);
+    const done = () => {
+      clearTimeout(timeout);
+      resolve();
+    };
+    child.once("error", done);
+    child.once("close", done);
   });
 }
 

@@ -514,22 +514,22 @@ describe("applyAuthChoiceLoadedPluginProvider", () => {
     const run = vi.fn(async ({ profileId }: { profileId?: string }) => ({
       profiles: [
         {
-          profileId: profileId ?? "ollama:default",
+          profileId: profileId ?? "local-profile-provider:default",
           credential: {
             type: "api_key" as const,
-            provider: "ollama",
-            key: "ollama-local",
+            provider: "local-profile-provider",
+            key: "local-profile-provider-key",
           },
         },
       ],
     }));
     const provider: ProviderPlugin = {
-      id: "ollama",
-      label: "Ollama",
+      id: "local-profile-provider",
+      label: "Local Profile Provider",
       auth: [
         {
           id: "local",
-          label: "Ollama",
+          label: "Local Profile Provider",
           kind: "custom",
           run,
         },
@@ -549,15 +549,15 @@ describe("applyAuthChoiceLoadedPluginProvider", () => {
 
     expect(run).toHaveBeenCalledWith(
       expect.objectContaining({
-        profileId: "ollama:work",
+        profileId: "local-profile-provider:work",
       }),
     );
     expect(upsertAuthProfile).toHaveBeenCalledWith({
-      profileId: "ollama:work",
+      profileId: "local-profile-provider:work",
       credential: {
         type: "api_key",
-        provider: "ollama",
-        key: "ollama-local",
+        provider: "local-profile-provider",
+        key: "local-profile-provider-key",
       },
       agentDir: "/tmp/agent",
     });

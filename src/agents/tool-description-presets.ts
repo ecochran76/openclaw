@@ -63,6 +63,7 @@ export function describeSessionsSpawnTool(options?: {
     "Use for fresh child-session work.",
     "Delegate sidecar/parallel tasks: batch file reads, multi-step searches, data collection.",
     "Avoid delegating quick lookups or single-file reads unless policy prefers delegation.",
+    "Do not use this to emulate /automation; use the automation tool for bounded background work.",
     completionGuidance,
   ];
   if (options?.acpAvailable === false) {

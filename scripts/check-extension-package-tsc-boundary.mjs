@@ -14,6 +14,7 @@ import {
 import { createRequire } from "node:module";
 import os from "node:os";
 import path, { dirname, join, resolve } from "node:path";
+import { performance } from "node:perf_hooks";
 import { parsePositiveInt } from "./lib/numeric-options.mjs";
 import {
   forwardSignalToVitestProcessGroup,
@@ -122,6 +123,11 @@ function formatCapturedStepOutput(buffer) {
     return buffer.text;
   }
   return `[output truncated ${buffer.truncatedChars} chars; showing tail]\n${buffer.text}`;
+}
+
+function startElapsedTimer() {
+  const startedAt = performance.now();
+  return () => Math.max(0, Math.round(performance.now() - startedAt));
 }
 
 /**
@@ -803,12 +809,12 @@ export function acquireBoundaryCheckLock(params = {}) {
 }
 
 async function runCompileCheck(extensionIds) {
-  const prepStartedAt = Date.now();
+  const prepElapsedMs = startElapsedTimer();
   process.stdout.write(
     `preparing plugin-sdk boundary artifacts for ${extensionIds.length} plugins\n`,
   );
   runNodeStep("plugin-sdk boundary prep", [prepareBoundaryArtifactsBin], 420_000);
-  const prepElapsedMs = Date.now() - prepStartedAt;
+  const prepElapsed = prepElapsedMs();
   const concurrency = resolveCompileConcurrency();
   const verboseFreshLogs = process.env.OPENCLAW_EXTENSION_BOUNDARY_VERBOSE_FRESH === "1";
   const sharedNewestInputMtimeMs = Math.max(
@@ -820,7 +826,7 @@ async function runCompileCheck(extensionIds) {
     }),
   );
   process.stdout.write(`compile concurrency ${concurrency}\n`);
-  const compileStartedAt = Date.now();
+  const compileElapsedMs = startElapsedTimer();
   let skippedCompileCount = 0;
   const compileTimings = [];
   const steps = extensionIds
@@ -884,16 +890,16 @@ async function runCompileCheck(extensionIds) {
     await runNodeStepsWithConcurrency(steps, concurrency);
   }
   return {
-    prepElapsedMs,
+    prepElapsedMs: prepElapsed,
     compileCount: steps.length,
     skippedCompileCount,
-    compileElapsedMs: Date.now() - compileStartedAt,
+    compileElapsedMs: compileElapsedMs(),
     compileTimings,
   };
 }
 
 async function runCanaryCheck(extensionIds) {
-  const startedAt = Date.now();
+  const elapsedMs = startElapsedTimer();
   await Promise.all(
     extensionIds.map(async (extensionId, index) => {
       const { canaryPath, tsconfigPath } = resolveCanaryArtifactPaths(extensionId);
@@ -947,7 +953,7 @@ async function runCanaryCheck(extensionIds) {
     }),
   );
   return {
-    canaryElapsedMs: Date.now() - startedAt,
+    canaryElapsedMs: elapsedMs(),
   };
 }
 
@@ -955,7 +961,7 @@ async function runCanaryCheck(extensionIds) {
  * Runs the extension package TypeScript boundary check.
  */
 export async function main(argv = process.argv.slice(2)) {
-  const startedAt = Date.now();
+  const elapsedMs = startElapsedTimer();
   const mode = parseMode(argv);
   const optInExtensionIds = collectOptInExtensionIds();
   const canaryExtensionIds = collectCanaryExtensionIds(optInExtensionIds);
@@ -988,7 +994,7 @@ export async function main(argv = process.argv.slice(2)) {
         prepElapsedMs,
         compileElapsedMs,
         canaryElapsedMs,
-        elapsedMs: Date.now() - startedAt,
+        elapsedMs: elapsedMs(),
       }),
     );
     process.stdout.write(

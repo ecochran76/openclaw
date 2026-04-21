@@ -101,7 +101,7 @@ export async function resolveGatewayProbeSurfaceAuth(params: {
     return token.value
       ? withDiagnostics({ diagnostics, result: { token: token.value } })
       : envToken
-        ? { token: envToken }
+        ? withDiagnostics({ diagnostics, result: { token: envToken } })
         : withDiagnostics({ diagnostics, result: {} });
   }
 
@@ -116,7 +116,7 @@ export async function resolveGatewayProbeSurfaceAuth(params: {
     return password.value
       ? withDiagnostics({ diagnostics, result: { password: password.value } })
       : envPassword
-        ? { password: envPassword }
+        ? withDiagnostics({ diagnostics, result: { password: envPassword } })
         : withDiagnostics({ diagnostics, result: {} });
   }
 
@@ -131,7 +131,7 @@ export async function resolveGatewayProbeSurfaceAuth(params: {
     return withDiagnostics({ diagnostics, result: { token: token.value } });
   }
   if (envToken) {
-    return { token: envToken };
+    return withDiagnostics({ diagnostics, result: { token: envToken } });
   }
   if (envPassword) {
     return withDiagnostics({ diagnostics, result: { password: envPassword } });

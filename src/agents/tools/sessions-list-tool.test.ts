@@ -125,11 +125,11 @@ describe("sessions-list-tool", () => {
       channel: "telegram",
       to: "telegram:topic",
       accountId: "acct-2",
-      threadId: 271,
+      threadId: "271",
     });
   });
 
-  it("keeps numeric deliveryContext.threadId in sessions_list results", async () => {
+  it("normalizes numeric deliveryContext.threadId in sessions_list results", async () => {
     mocks.gatewayCall.mockImplementation(async (opts: unknown) => {
       const request = opts as { method?: string };
       if (request.method === "sessions.list") {
@@ -161,7 +161,7 @@ describe("sessions-list-tool", () => {
       channel: "telegram",
       to: "-100123",
       accountId: "acct-1",
-      threadId: 99,
+      threadId: "99",
     });
   });
 

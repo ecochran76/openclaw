@@ -39,3 +39,22 @@ This runbook is a dated log of planning-contract and execution events that shoul
 - Updated auth-profile state tests for the current storage contract: order, last-good, and usage stats live in per-agent `auth-state.json`, while `auth-profiles.json` stores secret-bearing credentials.
 - Validation passed:
   - `pnpm test -- src/gateway/auth.test.ts src/gateway/call.test.ts src/gateway/server-runtime-config.test.ts src/gateway/server.auth.compat-baseline.test.ts src/gateway/server.auth.control-ui.test.ts src/agents/auth-health.test.ts src/agents/auth-profiles.external-cli-sync.test.ts src/agents/auth-profiles/external-oauth.test.ts src/agents/auth-profiles/oauth.openai-codex-refresh-fallback.test.ts src/agents/auth-profiles/profiles.test.ts src/agents/auth-profiles.runtime-snapshot-order.test.ts src/agents/auth-profiles.runtime-snapshot-external-update.test.ts src/agents/auth-profiles.ensureauthprofilestore.test.ts`
+
+## Turn 5 | 2026-04-21
+
+- Stabilized the next full-suite failure clusters after the auth environment slice.
+- Fixed gateway probe diagnostics so unresolved configured SecretRefs stay visible even when live gateway env credentials provide the usable fallback.
+- Changed doctor legacy-config migration validation to raw plugin-aware validation and tightened raw plugin validation so default-enabled plugin schemas do not invalidate unrelated migrated config.
+- Regenerated config schema artifacts after adding labels for `auth.usagePolicy`.
+- Updated stale command/docs coverage for `/profile`, `/profiles`, `/reauth`, legacy auth aliases, generic provider fixtures, and cron delivery logger mocking.
+- Hardened timing-sensitive tests and behavior:
+  - Extension package boundary timing now uses monotonic elapsed timers.
+  - Git exploit regression helpers have bounded subprocess waits.
+  - Provider usage auth opens the auth profile store lazily so plugin-owned usage auth does not touch local stores.
+  - WebSocket send failures fall back to HTTP immediately in auto mode, while mid-request disconnects surface as stream errors.
+  - Session label resolution now applies the deleted-agent guard.
+- Validation passed:
+  - `pnpm test -- src/agents/openai-ws-stream.test.ts src/commands/auth-choice.preferred-provider.test.ts src/agents/tools/sessions-list-tool.test.ts src/agents/tools/sessions-spawn-tool.test.ts src/gateway/sessions-resolve.test.ts src/gateway/sessions-resolve-store.test.ts src/gateway/server.sessions.gateway-server-sessions-a.test.ts src/gateway/server.chat.gateway-server-chat.test.ts test/scripts/check-extension-package-tsc-boundary.test.ts src/infra/host-env-security.test.ts src/infra/provider-usage.auth.plugin.test.ts src/infra/run-node.test.ts src/commands/auth-choice-legacy.test.ts src/commands/gateway-status/helpers.test.ts src/commands/doctor/shared/legacy-web-search-migrate.test.ts src/docs/slash-commands-doc.test.ts src/config/schema.help.quality.test.ts src/config/schema.base.generated.test.ts src/plugins/contracts/core-extension-facade-boundary.test.ts src/cron/delivery.failure-notify.test.ts`
+  - `pnpm check`
+- Full-suite note:
+  - A full `OPENCLAW_VITEST_MAX_WORKERS=1 pnpm test` probe was run far enough to expose and fix these clusters through the agent/gateway lanes, but was not rerun to final completion after the last WebSocket patch due runtime cost. Treat the focused set plus `pnpm check` as the evidence for this stabilization turn.

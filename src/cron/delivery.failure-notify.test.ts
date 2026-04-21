@@ -31,7 +31,7 @@ vi.mock("../cli/outbound-send-deps.js", () => ({
   createOutboundSendDeps: mocks.createOutboundSendDeps,
 }));
 
-vi.mock("../logging.js", () => ({
+vi.mock("../logging/logger.js", () => ({
   getChildLogger: vi.fn(() => ({
     warn: mocks.warn,
   })),

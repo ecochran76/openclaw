@@ -2076,7 +2076,7 @@ function validateConfigObjectWithPluginsBase(
     }
 
     const shouldReplacePluginConfig = entryHasConfig || (opts.applyDefaults && enabled);
-    const shouldValidate = enabled || entryHasConfig;
+    const shouldValidate = entryHasConfig || (opts.applyDefaults && enabled);
     if (shouldValidate) {
       if (record.configSchema) {
         const res = validateJsonSchemaValue({

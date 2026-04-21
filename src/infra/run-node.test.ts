@@ -439,6 +439,8 @@ describe("run-node script", () => {
       await writeRuntimePostBuildScaffold(tmp);
       await writeProjectFiles(tmp, {
         [EXTENSION_MANIFEST]: '{"id":"demo","configSchema":{"type":"object"}}\n',
+        [bundledDistPluginFile("demo", "src/index.js")]: "export {};\n",
+        [bundledDistPluginFile("demo", "nested/entry.js")]: "export {};\n",
         [EXTENSION_PACKAGE]:
           JSON.stringify(
             {

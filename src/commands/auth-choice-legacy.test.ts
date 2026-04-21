@@ -82,8 +82,8 @@ describe("auth choice legacy aliases", () => {
     );
   });
 
-  it("sources deprecated cli aliases from plugin manifests", () => {
-    expect(resolveLegacyAuthChoiceAliasesForCli({ env: authChoiceManifestEnv() })).toEqual([
+  it("sources deprecated cli aliases from built-ins and plugin manifests", () => {
+    expect(resolveLegacyAuthChoiceAliasesForCli()).toEqual([
       "setup-token",
       "oauth",
       "claude-cli",

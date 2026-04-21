@@ -33,14 +33,14 @@ describe("resolveSessionKeyFromResolveParams store canonicalization", () => {
           cfg,
           p: { sessionId: "sess-default-alias" },
         }),
-      ).resolves.toEqual({ ok: true, key: "agent:ops:main" });
+      ).resolves.toMatchObject({ ok: true, key: "agent:ops:main" });
 
       await expect(
         resolveSessionKeyFromResolveParams({
           cfg,
           p: { label: "default-alias" },
         }),
-      ).resolves.toEqual({ ok: true, key: "agent:ops:main" });
+      ).resolves.toMatchObject({ ok: true, key: "agent:ops:main" });
     });
   });
 

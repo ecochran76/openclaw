@@ -39,17 +39,14 @@ type AuthStore = ReturnType<typeof ensureAuthProfileStore>;
 
 type UsageAuthState = {
   cfg: OpenClawConfig;
+  getStore: () => AuthStore;
   env: NodeJS.ProcessEnv;
   agentDir?: string;
   allowAuthProfileStore: boolean;
-  store?: AuthStore;
 };
 
 function resolveUsageAuthStore(state: UsageAuthState): AuthStore {
-  state.store ??= ensureAuthProfileStore(state.agentDir, {
-    allowKeychainPrompt: false,
-  });
-  return state.store;
+  return state.getStore();
 }
 
 function parseGoogleUsageToken(apiKey: string): string {
@@ -129,11 +126,10 @@ function resolveProviderApiKeyFromConfigAndStore(params: {
       params.providerIds.map((providerId) => normalizeProviderId(providerId)),
     ),
   );
+  const store = params.state.getStore();
   const cred = [...normalizedProviderIds]
-    .flatMap((providerId) =>
-      listProfilesForProvider(resolveUsageAuthStore(params.state), providerId),
-    )
-    .map((id) => resolveUsageAuthStore(params.state).profiles[id])
+    .flatMap((providerId) => listProfilesForProvider(store, providerId))
+    .map((id) => store.profiles[id])
     .find(
       (
         profile,
@@ -411,8 +407,15 @@ export async function resolveProviderAuths(params: {
     return params.auth;
   }
 
+  let store: AuthStore | undefined;
   const stateBase = {
     cfg: params.config ?? getRuntimeConfig(),
+    getStore: () => {
+      store ??= ensureAuthProfileStore(params.agentDir, {
+        allowKeychainPrompt: false,
+      });
+      return store;
+    },
     env: params.env ?? process.env,
     agentDir: params.agentDir,
   };
