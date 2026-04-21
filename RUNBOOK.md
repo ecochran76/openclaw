@@ -91,3 +91,14 @@ This runbook is a dated log of planning-contract and execution events that shoul
   - `pnpm exec vitest run --config test/vitest/vitest.full-core-support-boundary.config.ts`
   - `OPENCLAW_VITEST_MAX_WORKERS=1 pnpm test`
   - `pnpm check`
+
+## Turn 8 | 2026-04-21
+
+- Started Phase 3 of the plugin-survivability roadmap: automation command/status seams.
+- Moved automation slash-command surface helpers out of auto-reply and into `src/automation/command-surface.ts`.
+- Kept `src/auto-reply/reply/commands-automation-shared.ts` as a compatibility re-export while updating the live automation command handler to import from the automation-owned surface directly.
+- Added helper-level coverage for automation usage text, natural-language command suggestion generation, run-bound parsing, accepted-run acknowledgement formatting, command-tail slicing, and tool-result text extraction.
+- Validation passed:
+  - `pnpm test -- src/automation/command-surface.test.ts src/auto-reply/reply/commands-automation.test.ts src/auto-reply/reply/commands-automation-status.test.ts src/agents/tools/automation-tool.test.ts src/automation/status.test.ts src/automation/config.test.ts`
+  - `pnpm check`
+  - `pnpm build`

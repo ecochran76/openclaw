@@ -1,7 +1,4 @@
 import { createAutomationTool } from "../../agents/tools/automation-tool.js";
-import { resolveAutomationStopSpec } from "../../automation/config.js";
-import { logVerbose } from "../../globals.js";
-import { resolveGatewayMessageChannel } from "../../utils/message-channel.js";
 import {
   buildAcceptedAutomationRunReply,
   buildAutomationCommandSuggestionReply,
@@ -10,7 +7,10 @@ import {
   extractAutomationToolText,
   parseAutomationRunArgs,
   sliceAutomationCommandTail,
-} from "./commands-automation-shared.js";
+} from "../../automation/command-surface.js";
+import { resolveAutomationStopSpec } from "../../automation/config.js";
+import { logVerbose } from "../../globals.js";
+import { resolveGatewayMessageChannel } from "../../utils/message-channel.js";
 import type { CommandHandler, CommandHandlerResult } from "./commands-types.js";
 
 const ACTIONS = new Set(["run", "list", "status", "steer", "stop", "help"]);
