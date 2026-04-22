@@ -71,6 +71,78 @@ describe("OpenAI provider Codex transport hooks", () => {
     });
   });
 
+  async function runRemoteDeviceCodeAuthFlow(env: NodeJS.ProcessEnv = process.env) {
+    const provider = buildOpenAIProvider();
+    const deviceCodeMethod = provider.auth?.find((method) => method.id === "device-code");
+    const note = vi.fn(async () => {});
+    const progress = { update: vi.fn(), stop: vi.fn() };
+    const runtime = { log: vi.fn(), error: vi.fn() };
+    loginOpenAICodexDeviceCodeMock.mockImplementationOnce(async ({ onVerification }) => {
+      await onVerification({
+        verificationUrl: "https://auth.openai.com/codex/device",
+        userCode: "CODE-12345",
+        expiresInMs: 900_000,
+      });
+      return {
+        access: "access-token",
+        refresh: "refresh-token",
+        expires: Date.now() + 60_000,
+      };
+    });
+
+    const result = await deviceCodeMethod?.run({
+      config: {},
+      env,
+      prompter: {
+        note,
+        progress: vi.fn(() => progress),
+      },
+      runtime,
+      isRemote: true,
+      openUrl: async () => {},
+      oauth: {},
+    } as never);
+
+    expect(result?.profiles?.map((profile) => profile.profileId)).toContain("openai:default");
+    return { note, runtime };
+  }
+
+  it("hides the device pairing code by default in remote mode", async () => {
+    const { note } = await runRemoteDeviceCodeAuthFlow();
+
+    expect(note).toHaveBeenCalledWith(
+      expect.stringContaining("Code: [shown on the local device only]"),
+      "OpenAI Codex device code",
+    );
+    expect(note).not.toHaveBeenCalledWith(
+      expect.stringContaining("Code: CODE-12345"),
+      "OpenAI Codex device code",
+    );
+  });
+
+  it("does not write the device pairing code to the runtime log in remote mode", async () => {
+    const { runtime } = await runRemoteDeviceCodeAuthFlow();
+
+    const logOutput = runtime.log.mock.calls.flat().join("\n");
+    expect(logOutput).toContain("https://auth.openai.com/codex/device");
+    expect(logOutput).not.toContain("CODE-12345");
+  });
+
+  it("shows the device pairing code in remote mode with an explicit operator override", async () => {
+    const { note, runtime } = await runRemoteDeviceCodeAuthFlow({
+      ...process.env,
+      OPENCLAW_SHOW_REMOTE_DEVICE_CODE: "1",
+    });
+
+    const logOutput = runtime.log.mock.calls.flat().join("\n");
+    expect(logOutput).toContain("https://auth.openai.com/codex/device");
+    expect(logOutput).not.toContain("CODE-12345");
+    expect(note).toHaveBeenCalledWith(
+      expect.stringContaining("Code: CODE-12345"),
+      "OpenAI Codex device code",
+    );
+  });
+
   it("routes Codex-backed OpenAI models through the Codex Responses transport", () => {
     const provider = buildOpenAIProvider();
 

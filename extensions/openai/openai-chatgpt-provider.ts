@@ -50,6 +50,7 @@ const PROVIDER_ID = "openai";
 const OPENAI_CODEX_BASE_URL = OPENAI_CODEX_RESPONSES_BASE_URL;
 const OPENAI_CODEX_LOGIN_ASSISTANT_PRIORITY = -30;
 const OPENAI_CODEX_DEVICE_PAIRING_ASSISTANT_PRIORITY = -10;
+const OPENAI_CODEX_SHOW_REMOTE_DEVICE_CODE_ENV = "OPENCLAW_SHOW_REMOTE_DEVICE_CODE";
 const OPENAI_CODEX_GPT_55_MODEL_ID = "gpt-5.5";
 const OPENAI_CODEX_GPT_55_PRO_MODEL_ID = "gpt-5.5-pro";
 const OPENAI_CODEX_GPT_54_MODEL_ID = "gpt-5.4";
@@ -477,15 +478,18 @@ async function runOpenAICodexDeviceCode(ctx: ProviderAuthContext) {
       onProgress: (message) => spin.update(message),
       onVerification: async ({ verificationUrl, userCode, expiresInMs }) => {
         const expiresInMinutes = Math.max(1, Math.round(expiresInMs / 60_000));
-        // The prompter note is the user-facing TTY surface, so remote/headless
-        // users need the code there; keep the persistent runtime log URL-only.
+        const showRemoteDeviceCode = shouldShowRemoteDeviceCode(ctx);
+        const hideDeviceCode = ctx.isRemote && !showRemoteDeviceCode;
+        const codeLine = hideDeviceCode
+          ? "Code: [shown on the local device only]"
+          : `Code: ${userCode}`;
         await ctx.prompter.note(
           [
             ctx.isRemote
               ? "Open this URL in your LOCAL browser and enter the code below."
               : "Open this URL in your browser and enter the code below.",
             `URL: ${verificationUrl}`,
-            `Code: ${userCode}`,
+            codeLine,
             `Code expires in ${expiresInMinutes} minutes. Never share it.`,
           ].join("\n"),
           "OpenAI Codex device code",
@@ -528,6 +532,16 @@ async function runOpenAICodexDeviceCode(ctx: ProviderAuthContext) {
     );
     throw error;
   }
+}
+
+function shouldShowRemoteDeviceCode(ctx: ProviderAuthContext): boolean {
+  if (!ctx.isRemote) {
+    return true;
+  }
+  const value = normalizeLowercaseStringOrEmpty(
+    (ctx.env ?? process.env)[OPENAI_CODEX_SHOW_REMOTE_DEVICE_CODE_ENV],
+  );
+  return value === "1" || value === "true" || value === "yes";
 }
 
 function buildOpenAICodexAuthDoctorHint(ctx: { profileId?: string }) {
