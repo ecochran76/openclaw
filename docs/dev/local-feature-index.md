@@ -100,16 +100,23 @@ This file is the durable map for:
   - automation command wiring in auto-reply flows
 - Current status:
   - landed on `ec-main` as a coherent series during the `2026.3.23` forward-port
-  - depends on the newer runtime-loaded command registration shape
-  - should be replayed after Slack responsiveness work during large rebases
+  - Phase 3 plugin-survivability seams landed across Turns 8-10 on `2026-04-21`
+  - command parsing/help/status text, progress reporting, worker result mapping, and worker job construction now live in automation-owned helpers
+  - bounds, turn accounting, and session lifecycle remain core invariants
 - Common validation:
-  - `pnpm test -- src/agents/openclaw-tools.automation.test.ts`
+  - `pnpm test -- src/automation/command-surface.test.ts`
+  - `pnpm test -- src/automation/worker-job.test.ts`
+  - `pnpm test -- src/automation/worker-result.test.ts`
+  - `pnpm test -- src/automation/progress-reporting.test.ts`
+  - `pnpm test -- src/automation/runner.test.ts`
+  - `pnpm test -- src/automation/status.test.ts`
+  - `pnpm test -- src/agents/tools/automation-tool.test.ts`
   - `pnpm test -- src/auto-reply/reply/commands-automation.test.ts`
   - `pnpm test -- src/auto-reply/reply/commands-automation-status.test.ts`
-  - `pnpm test -- src/config/config.automation-defaults.test.ts`
+  - `pnpm test -- src/automation/config.test.ts`
   - `pnpm build`
 - Rebase note:
-  - keep automation commits grouped after Slack responsiveness commits when finishing a large `ec-main` rebase so tracked-turn changes settle before automation command/status wiring lands.
+  - keep automation command/status UX changes in automation-owned helpers when possible; avoid reintroducing command parsing or worker protocol text into upstream-hot auto-reply/tool orchestration files.
 
 ### 5. Upgrade / branch discipline
 
@@ -131,24 +138,29 @@ This file is the durable map for:
   - shared `tools.media.audio` autodetect that voice-call inherits
   - local GPU transcription readiness that affects telephony backend choice
 - Common validation:
+  - `pnpm test -- extensions/voice-call/index.test.ts`
+  - `pnpm test -- extensions/voice-call/src/config.test.ts`
+  - `pnpm test -- extensions/voice-call/src/config-compat.test.ts`
   - `pnpm test -- extensions/voice-call/src/media-stream.test.ts`
   - `pnpm test -- extensions/voice-call/src/webhook.test.ts`
+  - `pnpm test -- extensions/voice-call/src/providers/stt-provider-config.test.ts`
   - `pnpm test -- extensions/voice-call/src/providers/stt-openai-realtime.test.ts`
+  - `pnpm test -- extensions/voice-call/src/providers/stt-buffered-media-transcriber.test.ts`
   - `pnpm test -- extensions/voice-call/src/providers/stt-buffered-media.test.ts`
   - `pnpm test -- extensions/voice-call/src/providers/stt-factory.test.ts`
   - `pnpm test -- src/media-understanding/apply.test.ts`
   - `pnpm build`
 
-## Current repair plan (2026-03-21)
+## Current repair plan (2026-04-21)
 
-Active rebase completion order:
+Active roadmap completion order:
 
-1. finish the current conflict and any remaining **Slack responsiveness** commits as one coherent tracked-turn series,
-2. finish the remaining **automation** commits,
+1. keep the **automation** and **voice/telephony** focused validation lists current after Phase 3 and Phase 4 seam moves,
+2. consolidate the rebase/live-patch gate around feature-family validation plus `pnpm check` / `pnpm build` when touched surfaces require it,
 3. run focused validation by local feature area,
-4. only then update/trim feature branches or promotion targets.
+4. only then run broad landing gates or live-patch flows.
 
-This order is intentional. The remaining queue is not random churn; it is mostly a Slack responsiveness series followed by automation. Treating it as a coherent plan avoids semantic drift while resolving conflicts.
+This order is intentional. The goal is to avoid rediscovering local feature preservation requirements during every upstream rebase while still keeping the normal local loop narrower than a full release gate.
 
 ## Recent lessons worth remembering
 

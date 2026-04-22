@@ -19,6 +19,7 @@ Related design note:
 - Slice 0 landed locally on `ec-main`: `voice-call` media-stream handling now depends on a provider-neutral streaming STT contract instead of the OpenAI class directly.
 - Slice 1 landed locally on `ec-main`: `media-audio` buffered STT can now route telephony segments through the shared `tools.media.audio` runtime.
 - Slice 2 landed locally on `ec-main`: shared audio auto-detect now recognizes `faster-whisper` skill wrappers from standard skill roots or `OPENCLAW_FASTER_WHISPER_COMMAND`, so `voice-call` can inherit a local GPU STT backend without a second resolver stack.
+- Phase 4 plugin-survivability hardening landed across Turns 11-13 on `2026-04-21`: STT provider config normalization, buffered media transcription staging, and voice-call plugin metadata now stay extension-owned.
 - OpenAI Realtime and buffered `media-audio` are the shipped streaming backends today.
 - Local GPU transcription feasibility was validated on `2026-03-26` from WSL against an RTX 5080:
   - `small.en`: `3.12x` realtime on an 88s speech sample
@@ -32,13 +33,19 @@ Related design note:
 - `extensions/voice-call/src/providers/stt-*.ts`
 - `extensions/voice-call/src/config.ts`
 - `extensions/voice-call/index.ts`
+- `extensions/voice-call/openclaw.plugin.json`
 - `src/media-understanding/runner.ts`
 
 ## Validation
 
+- `pnpm test -- extensions/voice-call/index.test.ts`
+- `pnpm test -- extensions/voice-call/src/config.test.ts`
+- `pnpm test -- extensions/voice-call/src/config-compat.test.ts`
 - `pnpm test -- extensions/voice-call/src/media-stream.test.ts`
 - `pnpm test -- extensions/voice-call/src/webhook.test.ts`
+- `pnpm test -- extensions/voice-call/src/providers/stt-provider-config.test.ts`
 - `pnpm test -- extensions/voice-call/src/providers/stt-openai-realtime.test.ts`
+- `pnpm test -- extensions/voice-call/src/providers/stt-buffered-media-transcriber.test.ts`
 - `pnpm test -- extensions/voice-call/src/providers/stt-buffered-media.test.ts`
 - `pnpm test -- extensions/voice-call/src/providers/stt-factory.test.ts`
 - `pnpm test -- src/media-understanding/apply.test.ts`
@@ -47,6 +54,9 @@ Related design note:
 ## Rebase notes
 
 - Keep the provider-neutral STT seam separate from any later faster-whisper or buffered-segment backend work.
+- Keep streaming STT provider option normalization in `extensions/voice-call/src/providers/stt-provider-config.ts`.
+- Keep temporary WAV staging and shared media transcription invocation in `extensions/voice-call/src/providers/stt-buffered-media-transcriber.ts`.
 - The buffered `media-audio` backend depends on the existing `tools.media.audio` resolution path. Keep telephony STT changes aligned with that shared runtime instead of forking a second audio-model selection stack.
 - Prefer shared media-runtime autodetect and explicit command env overrides over adding another voice-call-only local-STT path.
+- Keep `extensions/voice-call/index.ts` and `extensions/voice-call/openclaw.plugin.json` on canonical `streaming.provider` / `streaming.providers.openai.*` metadata keys; legacy `streaming.sttProvider`, `streaming.openaiApiKey`, and `streaming.sttModel` remain doctor/runtime compatibility inputs only.
 - If a future local backend changes runtime prerequisites, document them here instead of burying them only in chat or ad-hoc setup notes.

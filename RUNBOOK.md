@@ -159,3 +159,14 @@ This runbook is a dated log of planning-contract and execution events that shoul
   - `pnpm test -- extensions/voice-call/index.test.ts extensions/voice-call/src/config-compat.test.ts extensions/voice-call/src/config.test.ts extensions/voice-call/src/providers/stt-provider-config.test.ts extensions/voice-call/src/providers/stt-factory.test.ts extensions/voice-call/src/providers/stt-buffered-media-transcriber.test.ts extensions/voice-call/src/providers/stt-buffered-media.test.ts extensions/voice-call/src/media-stream.test.ts extensions/voice-call/src/webhook.test.ts src/media-understanding/apply.test.ts`
   - `pnpm check`
   - `pnpm build`
+
+## Turn 14 | 2026-04-21
+
+- Started Phase 5 rebase gate consolidation by updating feature-family validation references.
+- Updated `docs/dev/local-feature-index.md` so automation validation points at the Phase 3 seam tests and voice/telephony validation points at the Phase 4 config/transcriber/UI-hint preservation tests.
+- Updated `docs/dev/local-features/automation.md` with the new automation seam ownership map and focused validation runbook.
+- Updated `docs/dev/local-features/voice-telephony.md` with Phase 4 ownership notes, new conflict hotspots, and the expanded focused validation set.
+- Replaced the stale March repair plan in the local feature index with the current Phase 5 gate-consolidation sequence.
+- Validation passed:
+  - `pnpm test -- src/automation/command-surface.test.ts src/automation/worker-job.test.ts src/automation/worker-result.test.ts src/automation/progress-reporting.test.ts src/automation/runner.test.ts src/automation/status.test.ts src/agents/tools/automation-tool.test.ts src/auto-reply/reply/commands-automation.test.ts src/auto-reply/reply/commands-automation-status.test.ts src/automation/config.test.ts extensions/voice-call/index.test.ts extensions/voice-call/src/config.test.ts extensions/voice-call/src/config-compat.test.ts extensions/voice-call/src/media-stream.test.ts extensions/voice-call/src/webhook.test.ts extensions/voice-call/src/providers/stt-provider-config.test.ts extensions/voice-call/src/providers/stt-openai-realtime.test.ts extensions/voice-call/src/providers/stt-buffered-media-transcriber.test.ts extensions/voice-call/src/providers/stt-buffered-media.test.ts extensions/voice-call/src/providers/stt-factory.test.ts src/media-understanding/apply.test.ts`
+  - `pnpm check`
