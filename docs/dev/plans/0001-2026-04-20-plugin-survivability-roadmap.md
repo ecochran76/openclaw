@@ -21,7 +21,9 @@ Phase 2 is implemented on `ec-main`: core A2A approval payloads now carry generi
 
 Phase 3 is implemented on `ec-main`: automation command, status, progress reporting, worker result mapping, and worker job construction now live in automation-owned helpers while core bounds, accounting, and lifecycle remain in core.
 
-The next implementation slice is Phase 4: voice and local STT plugin hardening.
+Phase 4 is implemented on `ec-main`: voice-call streaming STT config normalization, provider selection, buffered media staging, and plugin metadata stay extension-owned while shared media runtime autodetect remains generic.
+
+The next implementation slice is Phase 5: rebase gate consolidation.
 
 ## Goal
 
@@ -154,6 +156,8 @@ Exit criteria:
 
 ## Phase 4: Voice And Local STT Plugin Hardening
 
+Status: implemented across Turns 11-13 on 2026-04-21.
+
 Purpose: keep voice-call and local STT behavior extension-owned while using shared media/runtime detection where appropriate.
 
 Scope:
@@ -224,12 +228,12 @@ Exit criteria:
 | Automation command/status UX          | feature-owned helpers, then possible plugin surface | implemented Phase 3                             |
 | Automation bounds/session lifecycle   | core                                                | preserve as global invariant                    |
 | Slack turn lifecycle                  | core turn tracking plus channel presentation seams  | avoid Slack-specific policy in generic dispatch |
-| Voice-call telephony runtime          | extension/plugin                                    | harden existing plugin-owned seams              |
-| Local STT backend selection           | shared media/runtime seam plus extension consumers  | keep autodetect generic                         |
+| Voice-call telephony runtime          | extension/plugin                                    | implemented Phase 4                             |
+| Local STT backend selection           | shared media/runtime seam plus extension consumers  | implemented Phase 4                             |
 | Live patch and upgrade routines       | operator scripts and policies                       | do not pluginize                                |
 
 ## Current Next Action
 
-Start Phase 4: voice and local STT plugin hardening.
+Start Phase 5: rebase gate consolidation.
 
-That slice should keep voice-call provider choices extension-owned, preserve the streaming STT contract, and prefer shared media/runtime autodetect for local STT integration without moving telephony runtime behavior into core.
+That slice should update feature validation references, preserve focused rebase gates for the local feature set, and make the rebase/live-patch closeout repeatable without expanding normal local checks unnecessarily.

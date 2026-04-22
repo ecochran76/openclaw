@@ -148,3 +148,14 @@ This runbook is a dated log of planning-contract and execution events that shoul
   - `pnpm test -- extensions/voice-call/src/providers/stt-buffered-media-transcriber.test.ts extensions/voice-call/src/providers/stt-buffered-media.test.ts extensions/voice-call/src/providers/stt-provider-config.test.ts extensions/voice-call/src/providers/stt-factory.test.ts extensions/voice-call/src/media-stream.test.ts extensions/voice-call/src/webhook.test.ts src/media-understanding/apply.test.ts`
   - `pnpm check`
   - `pnpm build`
+
+## Turn 13 | 2026-04-21
+
+- Completed the Phase 4 closeout review for voice/local STT plugin hardening.
+- Updated voice-call plugin UI hints in both `extensions/voice-call/index.ts` and `extensions/voice-call/openclaw.plugin.json` from legacy `streaming.sttProvider`, `streaming.openaiApiKey`, and `streaming.sttModel` keys to canonical `streaming.provider` and `streaming.providers.openai.*` keys.
+- Added preservation coverage in `extensions/voice-call/index.test.ts` so legacy streaming UI hint keys do not reappear.
+- Marked Phase 4 complete in `docs/dev/plans/0001-2026-04-20-plugin-survivability-roadmap.md` and advanced the current next action to Phase 5 rebase gate consolidation.
+- Validation passed:
+  - `pnpm test -- extensions/voice-call/index.test.ts extensions/voice-call/src/config-compat.test.ts extensions/voice-call/src/config.test.ts extensions/voice-call/src/providers/stt-provider-config.test.ts extensions/voice-call/src/providers/stt-factory.test.ts extensions/voice-call/src/providers/stt-buffered-media-transcriber.test.ts extensions/voice-call/src/providers/stt-buffered-media.test.ts extensions/voice-call/src/media-stream.test.ts extensions/voice-call/src/webhook.test.ts src/media-understanding/apply.test.ts`
+  - `pnpm check`
+  - `pnpm build`

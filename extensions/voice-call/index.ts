@@ -82,11 +82,25 @@ const voiceCallConfigSchema = {
     "streaming.enabled": { label: "Enable Streaming", advanced: true },
     "streaming.provider": {
       label: "Streaming Provider",
-      help: "Uses the first registered realtime transcription provider when unset.",
+      help: "Optional realtime transcription provider id. Leave unset to auto-select the first registered provider, or use media-audio to route buffered segments through tools.media.audio.",
       advanced: true,
     },
     "streaming.providers": {
       label: "Streaming Provider Config",
+      advanced: true,
+    },
+    "streaming.providers.openai.apiKey": {
+      label: "OpenAI Realtime API Key",
+      sensitive: true,
+      advanced: true,
+    },
+    "streaming.providers.openai.model": { label: "Realtime STT Model", advanced: true },
+    "streaming.providers.openai.silenceDurationMs": {
+      label: "Realtime STT Silence Duration (ms)",
+      advanced: true,
+    },
+    "streaming.providers.openai.vadThreshold": {
+      label: "Realtime STT VAD Threshold",
       advanced: true,
     },
     "streaming.streamPath": { label: "Media Stream Path", advanced: true },

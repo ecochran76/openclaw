@@ -197,6 +197,7 @@ async function registerVoiceCallCli(
     logger: noopLogger,
     registerGatewayMethod: () => {},
     registerTool: () => {},
+    registerRealtimeTranscriptionProvider: () => {},
     registerCli: (fn: (ctx: RegisterCliContext) => void) =>
       fn({
         program,
@@ -267,10 +268,12 @@ describe("voice-call plugin", () => {
     if (!service) {
       throw new Error("expected voice-call service");
     }
-    expect(service.start(createServiceContext())).toBeUndefined();
+    const startResult = service.start(createServiceContext());
+    expect(startResult).toBeInstanceOf(Promise);
     expect(createVoiceCallRuntime).toHaveBeenCalledTimes(1);
 
     resolveRuntime?.(runtimeStub);
+    await startResult;
     const handler = methods.get("voicecall.initiate") as
       | ((ctx: {
           params: Record<string, unknown>;
@@ -382,6 +385,28 @@ describe("voice-call plugin", () => {
     expect(ok).toBe(false);
     expect(payload).toBeUndefined();
     expect(String(error?.message)).toContain("TWILIO_ACCOUNT_SID");
+  });
+
+  it("advertises canonical streaming config ui hints", () => {
+    const hints = (plugin as unknown as { configSchema?: { uiHints?: Record<string, unknown> } })
+      .configSchema?.uiHints;
+
+    expect(hints).toMatchObject({
+      "streaming.provider": expect.objectContaining({ label: "Streaming Provider" }),
+      "streaming.providers.openai.apiKey": expect.objectContaining({ sensitive: true }),
+      "streaming.providers.openai.model": expect.objectContaining({
+        label: "Realtime STT Model",
+      }),
+      "streaming.providers.openai.silenceDurationMs": expect.objectContaining({
+        label: "Realtime STT Silence Duration (ms)",
+      }),
+      "streaming.providers.openai.vadThreshold": expect.objectContaining({
+        label: "Realtime STT VAD Threshold",
+      }),
+    });
+    expect(hints).not.toHaveProperty("streaming.sttProvider");
+    expect(hints).not.toHaveProperty("streaming.openaiApiKey");
+    expect(hints).not.toHaveProperty("streaming.sttModel");
   });
 
   it("initiates a call via voicecall.initiate", async () => {
