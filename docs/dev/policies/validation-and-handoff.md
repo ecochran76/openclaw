@@ -7,6 +7,7 @@ Use evidence-backed closeout for `ec-main` work, especially after rebases, live 
 Run the narrowest meaningful validation first, then widen when impact is cross-cutting.
 
 - Feature behavior: run the focused tests listed in `docs/dev/local-feature-index.md`.
+- Automation and voice/telephony feature gates: prefer `scripts/ec-main-rebase-gate.sh --family <automation|voice|all>` so the maintained command bundle stays centralized.
 - Type/lint/import boundaries: run `pnpm check`.
 - Build output, packaging, plugin loading, lazy imports, generated surfaces, or published/runtime output: run `pnpm build`.
 - Live patch: run `scripts/patch-live-openclaw.sh --expect-branch ec-main --require-expected-branch` and independently verify the gateway.

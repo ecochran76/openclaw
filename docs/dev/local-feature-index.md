@@ -29,6 +29,18 @@ This file is the durable map for:
 - When a rebase repeatedly hurts, update the relevant feature doc with conflict hotspots and recovery notes.
 - Before unattended upgrade work, confirm automation targets `ec-main` only.
 
+## Gate Wrapper
+
+Use `scripts/ec-main-rebase-gate.sh` for repeatable focused validation after rebases or local feature repairs:
+
+```bash
+scripts/ec-main-rebase-gate.sh --family automation
+scripts/ec-main-rebase-gate.sh --family voice
+scripts/ec-main-rebase-gate.sh --family all --check --build
+```
+
+Use `--list` to print the command bundle without running it. Use `--live-patch` only after the tree is clean, committed, pushed, and the normal validation gates have passed.
+
 ## Local feature map
 
 ### 1. Profiles
@@ -156,8 +168,8 @@ This file is the durable map for:
 Active roadmap completion order:
 
 1. keep the **automation** and **voice/telephony** focused validation lists current after Phase 3 and Phase 4 seam moves,
-2. consolidate the rebase/live-patch gate around feature-family validation plus `pnpm check` / `pnpm build` when touched surfaces require it,
-3. run focused validation by local feature area,
+2. use `scripts/ec-main-rebase-gate.sh` for automation and voice/telephony validation during rebase repair,
+3. consolidate the rebase/live-patch gate around feature-family validation plus `pnpm check` / `pnpm build` when touched surfaces require it,
 4. only then run broad landing gates or live-patch flows.
 
 This order is intentional. The goal is to avoid rediscovering local feature preservation requirements during every upstream rebase while still keeping the normal local loop narrower than a full release gate.

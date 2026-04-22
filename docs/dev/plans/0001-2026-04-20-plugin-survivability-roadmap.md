@@ -234,6 +234,6 @@ Exit criteria:
 
 ## Current Next Action
 
-Start Phase 5: rebase gate consolidation.
+Continue Phase 5: rebase gate consolidation.
 
-That slice should update feature validation references, preserve focused rebase gates for the local feature set, and make the rebase/live-patch closeout repeatable without expanding normal local checks unnecessarily.
+The automation and voice/telephony feature-family gates now have a command wrapper. The remaining Phase 5 work is to decide whether profiles, Slack/A2A, and Slack responsiveness need similar wrappers or whether their existing feature-doc validation lists are enough.

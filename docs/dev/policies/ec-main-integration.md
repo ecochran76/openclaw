@@ -59,7 +59,7 @@ The normal post-rebase deploy path is:
 
 1. fetch upstream remotes
 2. rebase `ec-main` onto `origin/main`
-3. run focused preservation tests for touched feature families
+3. run focused preservation tests for touched feature families; use `scripts/ec-main-rebase-gate.sh --family <automation|voice|all>` for the bundled local automation and voice/telephony gates
 4. run `pnpm check`
 5. run `pnpm build` when build output, packaging, runtime loading, plugin boundaries, or published surfaces changed
 6. commit with `scripts/committer`
