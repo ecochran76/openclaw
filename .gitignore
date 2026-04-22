@@ -116,6 +116,7 @@ USER.md
 .tmp-*.mts
 openclaw-*.tgz
 .tgz
+**/.openclaw-runtime-deps.json
 .idea
 .vscode/
 

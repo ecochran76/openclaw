@@ -242,6 +242,7 @@ describe("sendMessageSlack chunking", () => {
     await expect(
       sendMessageSlack("oc-gpod", "hi", {
         token: "xoxb-test",
+        cfg: SLACK_TEST_CFG,
         client,
       }),
     ).rejects.toThrow(/bare channel names like "oc-gpod" are not supported/i);

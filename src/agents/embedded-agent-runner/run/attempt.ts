@@ -2312,7 +2312,7 @@ export async function runEmbeddedAttempt(
       // Get hook runner early so it's available when creating tools
       const hookRunner = getGlobalHookRunner();
 
-      const { customTools } = splitSdkTools({
+      const { builtInTools, customTools } = splitSdkTools({
         tools: effectiveTools,
         sandboxEnabled: Boolean(sandbox?.enabled),
         toolHookContext: catalogToolHookContext,
@@ -2480,7 +2480,7 @@ export async function runEmbeddedAttempt(
           modelRegistry: params.modelRegistry,
           model: params.model,
           thinkingLevel: mapThinkingLevel(params.thinkLevel),
-          tools: sessionToolAllowlist,
+          tools: builtInTools,
           customTools: allCustomTools,
           sessionManager,
           settingsManager,

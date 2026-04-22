@@ -13,8 +13,8 @@ type EmbeddedAgentSessionOptions = {
   modelRegistry: unknown;
   model: unknown;
   thinkingLevel: unknown;
-  tools: NonNullable<CreateAgentSessionOptions["tools"]>;
-  customTools: NonNullable<CreateAgentSessionOptions["customTools"]>;
+  tools: CreateAgentSessionOptions["tools"];
+  customTools: CreateAgentSessionOptions["customTools"];
   sessionManager: unknown;
   settingsManager: unknown;
   resourceLoader: unknown;
