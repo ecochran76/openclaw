@@ -545,7 +545,10 @@ function hasActiveGatewayAuthSecretRef(config: OpenClawConfig): boolean {
   });
   return GATEWAY_AUTH_SURFACE_PATHS.some((path) => {
     const state = states[path];
-    return state.hasSecretRef && state.active;
+    return (
+      state.hasSecretRef &&
+      (state.active || path === "gateway.auth.token" || path === "gateway.auth.password")
+    );
   });
 }
 

@@ -7,10 +7,10 @@ import { AGENT_LANE_NESTED } from "../lanes.js";
 import { runAgentStep } from "../tools/agent-step.js";
 import {
   buildAgentToAgentAnnounceContext,
-  isAnnounceSkip,
   type AnnounceTarget,
   type RelayPolicy,
 } from "../tools/sessions-send-helpers.js";
+import { isAnnounceSkip } from "../tools/sessions-send-tokens.js";
 
 export type AnnounceDeliveryStatus =
   | "suppressed"

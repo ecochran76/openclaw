@@ -13,7 +13,10 @@ import { resolveAuthProfileDisplayLabel } from "../agents/auth-profiles/display.
 import { resolveAuthProfileOrder } from "../agents/auth-profiles/order.js";
 import { resolveMainAgentDir } from "../agents/auth-profiles/paths.js";
 import { loadPersistedAuthProfileState } from "../agents/auth-profiles/state.js";
-import { ensureAuthProfileStore } from "../agents/auth-profiles/store.js";
+import {
+  ensureAuthProfileStore,
+  loadAuthProfileStoreWithoutExternalProfiles,
+} from "../agents/auth-profiles/store.js";
 import { resolveContextTokensForModel } from "../agents/context.js";
 import { resolveFastModeState } from "../agents/fast-mode.js";
 import { resolveModelAuthLabel } from "../agents/model-auth-label.js";
@@ -327,17 +330,21 @@ function resolveSelectedAuthProfileId(params: {
   cfg?: OpenClawConfig;
   sessionEntry?: Partial<Pick<SessionEntry, "authProfileOverride">>;
   agentDir?: string;
+  includeExternalProfiles?: boolean;
 }): string | undefined {
   const provider = params.provider?.trim();
   if (!provider) {
     return undefined;
   }
-  const store = ensureAuthProfileStore(params.agentDir, {
-    allowKeychainPrompt: false,
-    config: params.cfg,
-    readOnly: true,
-    syncExternalCli: false,
-  });
+  const store =
+    params.includeExternalProfiles === false
+      ? loadAuthProfileStoreWithoutExternalProfiles(params.agentDir)
+      : ensureAuthProfileStore(params.agentDir, {
+          allowKeychainPrompt: false,
+          config: params.cfg,
+          readOnly: true,
+          syncExternalCli: false,
+        });
   const profileOverride = params.sessionEntry?.authProfileOverride?.trim();
   const providers =
     params.acceptedProviderIds && params.acceptedProviderIds.length > 0
@@ -391,12 +398,15 @@ export function resolveStatusModelAuthLabel(params: {
     return base;
   }
 
-  const store = ensureAuthProfileStore(params.agentDir, {
-    allowKeychainPrompt: false,
-    config: params.cfg,
-    readOnly: true,
-    syncExternalCli: false,
-  });
+  const store =
+    params.includeExternalProfiles === false
+      ? loadAuthProfileStoreWithoutExternalProfiles(params.agentDir)
+      : ensureAuthProfileStore(params.agentDir, {
+          allowKeychainPrompt: false,
+          config: params.cfg,
+          readOnly: true,
+          syncExternalCli: false,
+        });
   const selectedProfileId = resolveSelectedAuthProfileId(params);
   if (!selectedProfileId) {
     return base;

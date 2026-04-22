@@ -144,7 +144,9 @@ function hasA2AApprovalButtons(payload: ReplyPayload, approvalId: string): boole
     buildA2APermissionApprovalCustomId(approvalId, "deny"),
   ]);
   return (payload.interactive?.blocks ?? []).some(
-    (block) => block.type === "buttons" && block.buttons.some((button) => values.has(button.value)),
+    (block) =>
+      block.type === "buttons" &&
+      block.buttons.some((button) => typeof button.value === "string" && values.has(button.value)),
   );
 }
 

@@ -3,10 +3,10 @@ import type { GatewayMessageChannel } from "../../utils/message-channel.js";
 import { runAgentStep } from "../tools/agent-step.js";
 import {
   buildAgentToAgentReplyContext,
-  isReplySkip,
   type AnnounceTarget,
   type RelayPolicy,
 } from "../tools/sessions-send-helpers.js";
+import { isReplySkip } from "../tools/sessions-send-tokens.js";
 import { relayTurn } from "./relay-delivery.js";
 import type { RelayTargetResult } from "./types.js";
 

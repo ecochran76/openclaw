@@ -1110,7 +1110,7 @@ export function createSessionsSendTool(opts?: {
         });
       }
       const reply = result.replyText;
-      const a2aResult = await startA2AFlow(reply ?? undefined);
+      const a2aResult = (await startA2AFlow(reply ?? undefined)) ?? {};
       const relay = a2aResult.relay ?? effectiveDefaultRelay;
       if (relayPolicy.enabled && (relay.status === "blocked" || relay.status === "failed")) {
         return jsonResult({

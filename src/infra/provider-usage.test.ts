@@ -1,10 +1,6 @@
 // Tests provider usage aggregation and formatting.
-import { beforeEach, describe, expect, it } from "vitest";
+import { beforeEach, describe, expect, it, vi } from "vitest";
 import { createProviderUsageFetch } from "../test-utils/provider-usage-fetch.js";
-import {
-  getProviderUsageSnapshotWithPluginMock,
-  resetProviderUsageSnapshotWithPluginMock,
-} from "./provider-usage-plugin-runtime.test-mocks.js";
 import {
   formatUsageReportLines,
   formatUsageSummaryLine,
@@ -14,7 +10,26 @@ import {
 import { loadUsageWithAuth } from "./provider-usage.test-support.js";
 import type { ProviderUsageSnapshot } from "./provider-usage.types.js";
 
-const resolveProviderUsageSnapshotWithPluginMock = getProviderUsageSnapshotWithPluginMock();
+const resolveProviderUsageSnapshotWithPluginMock = vi.hoisted(() =>
+  vi.fn<typeof import("../plugins/provider-runtime.js").resolveProviderUsageSnapshotWithPlugin>(
+    async () => null,
+  ),
+);
+
+vi.mock("../plugins/provider-runtime.js", async () => {
+  const actual = await vi.importActual<typeof import("../plugins/provider-runtime.js")>(
+    "../plugins/provider-runtime.js",
+  );
+  return {
+    ...actual,
+    resolveProviderUsageSnapshotWithPlugin: resolveProviderUsageSnapshotWithPluginMock,
+  };
+});
+
+function resetProviderUsageSnapshotWithPluginMock() {
+  resolveProviderUsageSnapshotWithPluginMock.mockReset();
+  resolveProviderUsageSnapshotWithPluginMock.mockResolvedValue(null);
+}
 
 describe("provider usage formatting", () => {
   beforeEach(() => {
