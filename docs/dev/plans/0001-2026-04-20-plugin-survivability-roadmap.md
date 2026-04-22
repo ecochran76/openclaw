@@ -1,6 +1,6 @@
 # Plugin Survivability Roadmap
 
-State: OPEN
+State: CLOSED
 Roadmap: P01
 Created: 2026-04-20
 
@@ -23,7 +23,9 @@ Phase 3 is implemented on `ec-main`: automation command, status, progress report
 
 Phase 4 is implemented on `ec-main`: voice-call streaming STT config normalization, provider selection, buffered media staging, and plugin metadata stay extension-owned while shared media runtime autodetect remains generic.
 
-Phase 5 is in progress on `ec-main`: local feature preservation tests now have a shared `scripts/ec-main-rebase-gate.sh` wrapper for profiles, Slack/A2A, Slack responsiveness, automation, and voice/telephony.
+Phase 5 is implemented on `ec-main`: local feature preservation tests now have a shared `scripts/ec-main-rebase-gate.sh` wrapper for profiles, Slack/A2A, Slack responsiveness, automation, and voice/telephony.
+
+This roadmap closed on 2026-04-21. Future work should open a new serialized plan if it materially changes the feature survivability strategy instead of extending this plan indefinitely.
 
 ## Goal
 
@@ -194,6 +196,8 @@ Exit criteria:
 
 ## Phase 5: Rebase Gate Consolidation
 
+Status: implemented on 2026-04-21.
+
 Purpose: turn the roadmap into a repeatable rebase/live-patch gate.
 
 Scope:
@@ -234,6 +238,6 @@ Exit criteria:
 
 ## Current Next Action
 
-Continue Phase 5: rebase gate consolidation.
+Roadmap closed.
 
-The local feature-family gates now have a command wrapper. The remaining Phase 5 work is to validate the expanded wrapper, then decide whether to close this roadmap slice or add a documented live-patch wrapper preflight around `--live-patch`.
+The local feature-family gates now have a command wrapper and have been validated. If the next rebase/live-patch cycle exposes repeated operator mistakes around `--live-patch`, open a new focused plan for stricter live-patch preflight behavior rather than reopening this roadmap.

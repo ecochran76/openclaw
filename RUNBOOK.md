@@ -193,3 +193,10 @@ This runbook is a dated log of planning-contract and execution events that shoul
   - `scripts/ec-main-rebase-gate.sh --family all --list`
   - `scripts/ec-main-rebase-gate.sh --family all`
   - `pnpm check`
+
+## Turn 17 | 2026-04-21
+
+- Closed `docs/dev/plans/0001-2026-04-20-plugin-survivability-roadmap.md` after Phase 5 met its exit criteria.
+- Kept possible stricter live-patch preflight as future work for a new serialized plan only if the next rebase/live-patch cycle shows repeated operator mistakes around `--live-patch`.
+- Validation checked:
+  - `rg -n "Phase 5 is in progress|Continue Phase 5|remaining Phase 5|The next implementation slice is Phase 5" docs/dev/plans/0001-2026-04-20-plugin-survivability-roadmap.md RUNBOOK.md docs/dev/local-feature-index.md` returned only historical Turn 15 context in `RUNBOOK.md`.
