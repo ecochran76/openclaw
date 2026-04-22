@@ -10,7 +10,8 @@ Usage: scripts/ec-main-rebase-gate.sh [options]
 Run focused ec-main local-feature preservation gates.
 
 Options:
-  --family <name>       Feature family to validate: automation, voice, all (default: all)
+  --family <name>       Feature family to validate: profiles, slack-a2a,
+                        slack-responsiveness, automation, voice, all (default: all)
   --check               Also run pnpm check
   --build               Also run pnpm build
   --live-patch          Run scripts/patch-live-openclaw.sh after gates/check/build
@@ -20,6 +21,9 @@ Options:
 Examples:
   scripts/ec-main-rebase-gate.sh --family automation
   scripts/ec-main-rebase-gate.sh --family voice --check --build
+  scripts/ec-main-rebase-gate.sh --family profiles
+  scripts/ec-main-rebase-gate.sh --family slack-a2a
+  scripts/ec-main-rebase-gate.sh --family slack-responsiveness
   scripts/ec-main-rebase-gate.sh --family all --check --build --live-patch
 EOF
 }
@@ -69,6 +73,30 @@ while [[ $# -gt 0 ]]; do
   esac
 done
 
+profiles_tests=(
+  src/commands/models/auth.test.ts
+  src/commands/models/auth.login-profiles.test.ts
+  src/cli/models-cli.test.ts
+  src/infra/provider-usage.auth.normalizes-keys.test.ts
+)
+
+slack_a2a_tests=(
+  src/agents/openclaw-tools.sessions.test.ts
+  src/gateway/server.sessions.gateway-server-sessions-a.test.ts
+  src/agents/a2a/permission-approval-action.test.ts
+  src/agents/pi-embedded-subscribe.handlers.tools.test.ts
+  src/auto-reply/reply/dispatch-stream-delivery.test.ts
+  extensions/slack/src/monitor/events/interactions.test.ts
+  src/commands/models/auth.test.ts
+  src/infra/provider-usage.auth.normalizes-keys.test.ts
+)
+
+slack_responsiveness_tests=(
+  src/auto-reply/reply/dispatch-from-config.test.ts
+  src/auto-reply/reply/commands-turn-status.test.ts
+  src/auto-reply/turn-tracker.test.ts
+)
+
 automation_tests=(
   src/automation/command-surface.test.ts
   src/automation/worker-job.test.ts
@@ -114,9 +142,9 @@ run_tests() {
 }
 
 case "$family" in
-  automation | voice | all) ;;
+  profiles | slack-a2a | slack-responsiveness | automation | voice | all) ;;
   *)
-    echo "error: unsupported --family '$family' (expected automation, voice, or all)" >&2
+    echo "error: unsupported --family '$family' (expected profiles, slack-a2a, slack-responsiveness, automation, voice, or all)" >&2
     exit 2
     ;;
 esac
@@ -125,6 +153,15 @@ cd "$ROOT_DIR"
 
 if [[ "$list_only" -eq 1 ]]; then
   case "$family" in
+    profiles)
+      print_family profiles "${profiles_tests[@]}"
+      ;;
+    slack-a2a)
+      print_family slack-a2a "${slack_a2a_tests[@]}"
+      ;;
+    slack-responsiveness)
+      print_family slack-responsiveness "${slack_responsiveness_tests[@]}"
+      ;;
     automation)
       print_family automation "${automation_tests[@]}"
       ;;
@@ -132,6 +169,9 @@ if [[ "$list_only" -eq 1 ]]; then
       print_family voice "${voice_tests[@]}"
       ;;
     all)
+      print_family profiles "${profiles_tests[@]}"
+      print_family slack-a2a "${slack_a2a_tests[@]}"
+      print_family slack-responsiveness "${slack_responsiveness_tests[@]}"
       print_family automation "${automation_tests[@]}"
       print_family voice "${voice_tests[@]}"
       ;;
@@ -144,6 +184,15 @@ if [[ "$list_only" -eq 1 ]]; then
 fi
 
 case "$family" in
+  profiles)
+    run_tests profiles "${profiles_tests[@]}"
+    ;;
+  slack-a2a)
+    run_tests slack-a2a "${slack_a2a_tests[@]}"
+    ;;
+  slack-responsiveness)
+    run_tests slack-responsiveness "${slack_responsiveness_tests[@]}"
+    ;;
   automation)
     run_tests automation "${automation_tests[@]}"
     ;;
@@ -151,6 +200,9 @@ case "$family" in
     run_tests voice "${voice_tests[@]}"
     ;;
   all)
+    run_tests profiles "${profiles_tests[@]}"
+    run_tests slack-a2a "${slack_a2a_tests[@]}"
+    run_tests slack-responsiveness "${slack_responsiveness_tests[@]}"
     run_tests automation "${automation_tests[@]}"
     run_tests voice "${voice_tests[@]}"
     ;;

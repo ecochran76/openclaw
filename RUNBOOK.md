@@ -183,3 +183,13 @@ This runbook is a dated log of planning-contract and execution events that shoul
   - `scripts/ec-main-rebase-gate.sh --family all --check --build --live-patch --list`
   - `scripts/ec-main-rebase-gate.sh --family all`
   - `pnpm check`
+
+## Turn 16 | 2026-04-21
+
+- Expanded `scripts/ec-main-rebase-gate.sh` beyond automation and voice/telephony to cover every local feature family tracked in `docs/dev/local-feature-index.md`: profiles, Slack/A2A, Slack responsiveness, automation, and voice/telephony.
+- Updated `docs/dev/local-feature-index.md`, `docs/dev/policies/ec-main-integration.md`, `docs/dev/policies/validation-and-handoff.md`, and `docs/dev/plans/0001-2026-04-20-plugin-survivability-roadmap.md` so rebase repair has one canonical feature-gate entry point.
+- Validation passed:
+  - `scripts/ec-main-rebase-gate.sh --help`
+  - `scripts/ec-main-rebase-gate.sh --family all --list`
+  - `scripts/ec-main-rebase-gate.sh --family all`
+  - `pnpm check`

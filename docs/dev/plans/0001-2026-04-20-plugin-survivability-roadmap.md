@@ -23,7 +23,7 @@ Phase 3 is implemented on `ec-main`: automation command, status, progress report
 
 Phase 4 is implemented on `ec-main`: voice-call streaming STT config normalization, provider selection, buffered media staging, and plugin metadata stay extension-owned while shared media runtime autodetect remains generic.
 
-The next implementation slice is Phase 5: rebase gate consolidation.
+Phase 5 is in progress on `ec-main`: local feature preservation tests now have a shared `scripts/ec-main-rebase-gate.sh` wrapper for profiles, Slack/A2A, Slack responsiveness, automation, and voice/telephony.
 
 ## Goal
 
@@ -236,4 +236,4 @@ Exit criteria:
 
 Continue Phase 5: rebase gate consolidation.
 
-The automation and voice/telephony feature-family gates now have a command wrapper. The remaining Phase 5 work is to decide whether profiles, Slack/A2A, and Slack responsiveness need similar wrappers or whether their existing feature-doc validation lists are enough.
+The local feature-family gates now have a command wrapper. The remaining Phase 5 work is to validate the expanded wrapper, then decide whether to close this roadmap slice or add a documented live-patch wrapper preflight around `--live-patch`.

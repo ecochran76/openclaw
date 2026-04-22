@@ -34,6 +34,9 @@ This file is the durable map for:
 Use `scripts/ec-main-rebase-gate.sh` for repeatable focused validation after rebases or local feature repairs:
 
 ```bash
+scripts/ec-main-rebase-gate.sh --family profiles
+scripts/ec-main-rebase-gate.sh --family slack-a2a
+scripts/ec-main-rebase-gate.sh --family slack-responsiveness
 scripts/ec-main-rebase-gate.sh --family automation
 scripts/ec-main-rebase-gate.sh --family voice
 scripts/ec-main-rebase-gate.sh --family all --check --build
@@ -167,8 +170,8 @@ Use `--list` to print the command bundle without running it. Use `--live-patch` 
 
 Active roadmap completion order:
 
-1. keep the **automation** and **voice/telephony** focused validation lists current after Phase 3 and Phase 4 seam moves,
-2. use `scripts/ec-main-rebase-gate.sh` for automation and voice/telephony validation during rebase repair,
+1. keep the focused validation lists current after seam moves in profiles, Slack/A2A, Slack responsiveness, automation, and voice/telephony,
+2. use `scripts/ec-main-rebase-gate.sh` for local feature-family validation during rebase repair,
 3. consolidate the rebase/live-patch gate around feature-family validation plus `pnpm check` / `pnpm build` when touched surfaces require it,
 4. only then run broad landing gates or live-patch flows.
 
