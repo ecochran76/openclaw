@@ -493,9 +493,10 @@ export function createSessionsSendTool(opts?: {
       const hasNaturalSelector = Boolean(
         naturalSessionSelector && !hasSelectorParams && !labelParam,
       );
+      const hasExplicitSessionKey = Boolean(sessionKeyParam && !hasNaturalSelector);
       const targetModeCount = [
-        Boolean(sessionKeyParam && !hasNaturalSelector),
-        Boolean(labelParam),
+        hasExplicitSessionKey,
+        Boolean(labelParam && !hasExplicitSessionKey),
         hasSelectorParams || hasNaturalSelector,
       ].filter(Boolean).length;
       if (targetModeCount > 1) {
@@ -734,11 +735,19 @@ export function createSessionsSendTool(opts?: {
         });
       }
       // Normalize sessionKey/sessionId input into a canonical session key.
-      const resolvedKey = visibleSession.key;
+      let resolvedKey = visibleSession.key;
       const displayKey = visibleSession.displayKey;
       const resolvedTargetDisplay = resolvedTarget
         ? { ...resolvedTarget, sessionKey: displayKey }
         : undefined;
+      const resolvedThreadInfo = parseSessionThreadInfoFast(resolvedKey);
+      if (
+        resolvedThreadInfo.threadId &&
+        resolvedTarget?.deliveryContext &&
+        resolvedThreadInfo.baseSessionKey
+      ) {
+        resolvedKey = resolvedThreadInfo.baseSessionKey;
+      }
       const timeoutSeconds = readNonNegativeIntegerParam(params, "timeoutSeconds") ?? 30;
       const timeoutMs =
         finiteSecondsToTimerSafeMilliseconds(timeoutSeconds, {
@@ -774,33 +783,38 @@ export function createSessionsSendTool(opts?: {
       });
       const access = visibilityGuard.check(resolvedKey);
       if (!access.allowed) {
+        const accessDeniedDisplayKey = resolvedSession.resolvedViaSessionId
+          ? unresolvedDisplayKey
+          : displayKey;
         return jsonResult({
           runId: crypto.randomUUID(),
           status: access.status,
           error: access.error,
-          sessionKey: displayKey,
+          sessionKey: accessDeniedDisplayKey,
           resolvedTarget: resolvedTargetDisplay,
-        });
-      }
-
-      const ensuredSession = await ensureConfiguredAgentMainSession({
-        cfg,
-        callGateway: gatewayCall,
-        sessionKey: resolvedKey,
-        mainKey,
-      });
-      if (!ensuredSession.ok) {
-        return jsonResult({
-          runId: crypto.randomUUID(),
-          status: "error",
-          error: ensuredSession.error,
-          sessionKey: displayKey,
         });
       }
 
       const requesterSessionKey = opts?.agentSessionKey;
       const requesterChannel = opts?.agentChannel;
       const sameSessionA2A = requesterSessionKey === resolvedKey;
+
+      if (!sameSessionA2A) {
+        const ensuredSession = await ensureConfiguredAgentMainSession({
+          cfg,
+          callGateway: gatewayCall,
+          sessionKey: resolvedKey,
+          mainKey,
+        });
+        if (!ensuredSession.ok) {
+          return jsonResult({
+            runId: crypto.randomUUID(),
+            status: "error",
+            error: ensuredSession.error,
+            sessionKey: displayKey,
+          });
+        }
+      }
 
       // Capture the pre-run assistant snapshot before starting the nested run.
       // Fast in-process test doubles and short-circuit agent paths can finish

@@ -36,12 +36,7 @@ import {
 } from "../agents/tools/sessions-helpers.js";
 import { normalizeGroupActivation } from "../auto-reply/group-activation.js";
 import { resolveSelectedAndActiveModel } from "../auto-reply/model-runtime.js";
-import type {
-  ElevatedLevel,
-  ReasoningLevel,
-  ThinkLevel,
-  VerboseLevel,
-} from "../auto-reply/thinking.js";
+import type { ThinkLevel } from "../auto-reply/thinking.js";
 import { getLatestAutomationRunForRequester } from "../automation/registry.js";
 import { buildAutomationCompactStatusLine } from "../automation/status.js";
 import { toAgentModelListLike } from "../config/model-input.js";

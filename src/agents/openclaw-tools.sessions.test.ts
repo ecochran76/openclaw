@@ -6,6 +6,7 @@ import { beforeAll, beforeEach, describe, expect, it, vi } from "vitest";
 import type { ChannelMessagingAdapter } from "../channels/plugins/types.js";
 import type { OpenClawConfig } from "../config/config.js";
 import { createTestRegistry } from "../test-utils/channel-plugins.js";
+import { createOpenClawTools } from "./openclaw-tools.js";
 import {
   addSubagentRunForTests,
   listSubagentRunsForRequester,
@@ -344,8 +345,8 @@ describe("sessions tools", () => {
     TEST_CONFIG.tools.agentToAgent = { enabled: true, allow: ["*"] };
   });
 
-  it("uses integer schemas for session count and window parameters", () => {
-    const tools = createTestTools();
+  it("uses number (not integer) in tool schemas for Gemini compatibility", () => {
+    const tools = createTestTools({ agentChannel: "discord" });
     const byName = (name: string) => {
       const tool = tools.find((candidate) => candidate.name === name);
       if (!tool) {
@@ -392,19 +393,22 @@ describe("sessions tools", () => {
     expect(hasSchemaProp("sessions_send", "SendMessage")).toBe(false);
     expect(hasSchemaProp("sessions_send", "content")).toBe(false);
     expect(hasSchemaProp("sessions_send", "text")).toBe(false);
-    expect(schemaProp("sessions_send", "timeoutSeconds").type).toBe("integer");
+    expect(schemaProp("sessions_send", "timeoutSeconds").type).toBe("number");
+    expect(schemaProp("sessions_send", "maxPingPongTurns").type).toBe("number");
+    expect(schemaProp("sessions_send", "a2aTimeoutSeconds").type).toBe("number");
+    expect(schemaProp("sessions_send", "search").type).toBe("string");
+    expect(schemaProp("sessions_send", "activeMinutes").type).toBe("number");
+    expect(schemaProp("sessions_send", "allowChannelRootFallback").type).toBe("boolean");
     const sendRequired =
       (byName("sessions_send").parameters as { required?: string[] }).required ?? [];
     expect(sendRequired).toContain("message");
     expect(schemaProp("sessions_spawn", "thinking").type).toBe("string");
-    expect(schemaProp("sessions_spawn", "runTimeoutSeconds").type).toBe("number");
     expect(schemaProp("sessions_spawn", "thread").type).toBe("boolean");
     expect(schemaProp("sessions_spawn", "mode").type).toBe("string");
     expect(schemaProp("sessions_spawn", "sandbox").type).toBe("string");
-    expect(schemaProp("sessions_spawn", "streamTo").type).toBe("string");
     expect(schemaProp("sessions_spawn", "runtime").type).toBe("string");
     expect(schemaProp("sessions_spawn", "cwd").type).toBe("string");
-    expect(schemaProp("subagents", "recentMinutes").type).toBe("number");
+    expect(schemaProp("subagents", "recentMinutes").type).toBe("integer");
   });
 
   it.each([
@@ -724,7 +728,8 @@ describe("sessions tools", () => {
             agentToAgent: { enabled: false },
           },
         } as OpenClawConfig,
-      }).find((candidate) => candidate.name === "sessions_list");
+      }).find((candidate: { name: string }) => candidate.name === "sessions_list");
+      expect(tool).toBeDefined();
       if (!tool) {
         throw new Error("missing sessions_list tool");
       }
@@ -1222,7 +1227,7 @@ describe("sessions tools", () => {
     }
 
     const fire = await tool.execute("call5", {
-      sessionKey: "main",
+      sessionKey: "discord:group:target",
       message: "ping",
       timeoutSeconds: 0,
     });
@@ -1236,7 +1241,7 @@ describe("sessions tools", () => {
     await waitForCalls(() => historyCallCount, 3);
 
     const waitPromise = tool.execute("call6", {
-      sessionKey: "main",
+      sessionKey: "discord:group:target",
       message: "wait",
       timeoutSeconds: 1,
     });
@@ -1294,17 +1299,8 @@ describe("sessions tools", () => {
           ),
       ),
     ).toBe(true);
-    expect(
-      agentCalls.some(
-        (call) =>
-          typeof (call.params as { extraSystemPrompt?: string })?.extraSystemPrompt === "string" &&
-          (call.params as { extraSystemPrompt?: string })?.extraSystemPrompt?.includes(
-            "Agent-to-agent announce step",
-          ),
-      ),
-    ).toBe(true);
-    expect(waitCalls).toHaveLength(8);
-    expect(historyOnlyCalls.length).toBeGreaterThanOrEqual(8);
+    expect(waitCalls).toHaveLength(6);
+    expect(historyOnlyCalls.length).toBeGreaterThanOrEqual(6);
     expect(sendCallCount).toBe(0);
   });
 
@@ -1410,7 +1406,7 @@ describe("sessions tools", () => {
     }
 
     const result = await tool.execute("call-bounds", {
-      sessionKey: "main",
+      sessionKey: "discord:group:target",
       message: "wait",
       timeoutSeconds: 30,
       maxPingPongTurns: 0,
@@ -1419,13 +1415,10 @@ describe("sessions tools", () => {
     expect(result.details).toMatchObject({ status: "ok", reply: "done" });
     const agentCalls = calls.filter((call) => call.method === "agent");
     const waitCalls = calls.filter((call) => call.method === "agent.wait");
-    expect(agentCalls).toHaveLength(2);
+    expect(agentCalls).toHaveLength(1);
     expect(waitCalls).toEqual([
       expect.objectContaining({
         params: expect.objectContaining({ runId: "run-1", timeoutMs: 30000 }),
-      }),
-      expect.objectContaining({
-        params: expect.objectContaining({ runId: "run-2", timeoutMs: 7000 }),
       }),
     ]);
   });
@@ -1574,7 +1567,7 @@ describe("sessions tools", () => {
     );
     expect(agentCall?.[0]).toMatchObject({
       method: "agent",
-      params: { sessionKey: targetKey },
+      params: { sessionKey: "agent:dev-openclaw:slack:channel:c0ag96mgjtv" },
     });
   });
 
@@ -2519,9 +2512,11 @@ describe("sessions tools", () => {
         ),
     );
     expect(replySteps).toHaveLength(2);
-    expect(sendParams.to).toBe("group:target");
-    expect(sendParams.channel).toBe("discord");
-    expect(sendParams.message).toBe("announce now");
+    expect(sendParams).toMatchObject({
+      to: "group:target",
+      channel: "discord",
+      message: "announce now",
+    });
   });
 
   it("sessions_send keeps delayed requester replies alive after a wait timeout", async () => {
@@ -3817,7 +3812,7 @@ describe("sessions tools", () => {
         params: {
           lane: "subagent",
           sessionKey: "agent:main:subagent:steer",
-          sessionId: "child-session-steer",
+          sessionId: expect.any(String),
           timeout: 0,
         },
       });

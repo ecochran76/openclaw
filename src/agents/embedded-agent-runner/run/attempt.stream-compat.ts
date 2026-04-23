@@ -33,7 +33,7 @@ import { createYieldAbortedResponse } from "./attempt.sessions-yield.js";
 import { wrapStreamFnHandleSensitiveStopReason } from "./attempt.stop-reason-recovery.js";
 import { shouldUseOpenAIWebSocketTransportForAttempt } from "./attempt.thread-helpers.js";
 import {
-  shouldRepairMalformedAnthropicToolCallArguments,
+  shouldRepairMalformedToolCallArguments,
   wrapStreamFnDecodeXaiToolCallArguments,
   wrapStreamFnRepairMalformedToolCallArguments,
 } from "./attempt.tool-call-argument-repair.js";
@@ -341,7 +341,10 @@ export async function configureEmbeddedAttemptStreamCompatibility(
 
   if (
     params.params.model.api === "anthropic-messages" &&
-    shouldRepairMalformedAnthropicToolCallArguments(params.params.provider)
+    shouldRepairMalformedToolCallArguments({
+      provider: params.params.provider,
+      modelApi: params.params.model.api,
+    })
   ) {
     activeSession.agent.streamFn = wrapStreamFnRepairMalformedToolCallArguments(
       activeSession.agent.streamFn,

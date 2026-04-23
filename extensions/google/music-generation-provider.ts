@@ -14,7 +14,7 @@ import {
   GOOGLE_MAX_INPUT_IMAGES,
   GOOGLE_PRO_MUSIC_MODEL,
 } from "./generation-provider-metadata.js";
-import { createGoogleGenAI } from "./google-genai-runtime.js";
+import { createGoogleGenAI, type GoogleGenAIOptions } from "./google-genai-runtime.js";
 
 const DEFAULT_TIMEOUT_MS = 180_000;
 
@@ -34,6 +34,16 @@ type GoogleGenerateMusicResponse = {
       }>;
     };
   }>;
+};
+
+type GoogleMusicClient = {
+  models: {
+    generateContent: (request: never) => Promise<unknown>;
+  };
+};
+
+type GoogleMusicGenerationProviderDeps = {
+  createClient?: (options: GoogleGenAIOptions) => GoogleMusicClient;
 };
 
 function resolveConfiguredGoogleMusicBaseUrl(req: MusicGenerationRequest): string | undefined {
@@ -100,7 +110,9 @@ function extractTracks(params: { payload: GoogleGenerateMusicResponse; model: st
   return { tracks, lyrics };
 }
 
-export function buildGoogleMusicGenerationProvider(): MusicGenerationProvider {
+export function buildGoogleMusicGenerationProvider(
+  deps: GoogleMusicGenerationProviderDeps = {},
+): MusicGenerationProvider {
   return {
     ...createGoogleMusicGenerationProviderMetadata(),
     async generateMusic(req) {
@@ -129,7 +141,7 @@ export function buildGoogleMusicGenerationProvider(): MusicGenerationProvider {
         }
       }
 
-      const client = createGoogleGenAI({
+      const client = (deps.createClient ?? createGoogleGenAI)({
         apiKey: auth.apiKey,
         httpOptions: {
           ...(resolveConfiguredGoogleMusicBaseUrl(req)
@@ -152,7 +164,7 @@ export function buildGoogleMusicGenerationProvider(): MusicGenerationProvider {
         config: {
           responseModalities: ["AUDIO", "TEXT"],
         },
-      })) as GoogleGenerateMusicResponse;
+      } as never)) as GoogleGenerateMusicResponse;
 
       const { tracks, lyrics } = extractTracks({
         payload: response,

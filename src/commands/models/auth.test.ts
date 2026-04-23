@@ -837,11 +837,68 @@ describe("modelsAuthLoginCommand", () => {
         profileId: "openai-codex:work",
       }),
     );
-    expect(mocks.upsertAuthProfile).toHaveBeenCalledWith(
+    expect(mocks.upsertAuthProfileWithLock).toHaveBeenCalledWith(
       expect.objectContaining({
         profileId: "openai-codex:work",
       }),
     );
+  });
+
+  it("applies openai-codex default model when --set-default is used", async () => {
+    const runtime = createRuntime();
+
+    await modelsAuthLoginCommand({ provider: "openai-codex", setDefault: true }, runtime);
+
+    expect(lastUpdatedConfig?.agents?.defaults?.model).toEqual({
+      primary: "openai/gpt-5.5",
+    });
+    expect(runtime.log).toHaveBeenCalledWith("Default model set to openai/gpt-5.5");
+  });
+
+  it("supports provider-owned Claude CLI migration without writing auth profiles", async () => {
+    const runtime = createRuntime();
+    const runClaudeCliMigration = vi.fn().mockResolvedValue({
+      profiles: [],
+      defaultModel: "claude-cli/claude-sonnet-4-6",
+      configPatch: {
+        agents: {
+          defaults: {
+            models: {
+              "claude-cli/claude-sonnet-4-6": {},
+            },
+          },
+        },
+      },
+    });
+    mocks.resolvePluginProviders.mockReturnValue([
+      {
+        id: "anthropic",
+        label: "Anthropic",
+        auth: [
+          {
+            id: "cli",
+            label: "Claude CLI",
+            kind: "custom",
+            run: runClaudeCliMigration,
+          },
+        ],
+      },
+    ]);
+
+    await modelsAuthLoginCommand(
+      { provider: "anthropic", method: "cli", setDefault: true },
+      runtime,
+    );
+
+    expect(runClaudeCliMigration).toHaveBeenCalledOnce();
+    expect(mocks.upsertAuthProfile).not.toHaveBeenCalled();
+    expect(lastUpdatedConfig?.agents?.defaults?.model).toEqual({
+      primary: "claude-cli/claude-sonnet-4-6",
+    });
+    expect(lastUpdatedConfig?.agents?.defaults?.models).toEqual({
+      "claude-cli/claude-sonnet-4-6": {},
+    });
+    expect(runtime.log).toHaveBeenCalledWith("Default model set to claude-cli/claude-sonnet-4-6");
   });
 
   it("loads the owning plugin for an explicit provider even in a clean config", async () => {

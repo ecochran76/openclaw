@@ -22,7 +22,7 @@ import {
   GOOGLE_VIDEO_MAX_DURATION_SECONDS,
   GOOGLE_VIDEO_MIN_DURATION_SECONDS,
 } from "./generation-provider-metadata.js";
-import { createGoogleGenAI, type GoogleGenAIClient } from "./google-genai-runtime.js";
+import { createGoogleGenAI, type GoogleGenAIOptions } from "./google-genai-runtime.js";
 
 const DEFAULT_TIMEOUT_MS = 180_000;
 const POLL_INTERVAL_MS = 10_000;
@@ -31,6 +31,36 @@ const DEFAULT_GENERATED_VIDEO_MAX_BYTES = 16 * 1024 * 1024;
 const GOOGLE_VIDEO_OPERATION_RESPONSE_MAX_BYTES = 16 * 1024 * 1024;
 const GOOGLE_VIDEO_EMPTY_RESULT_MESSAGE =
   "Google video generation response missing generated videos";
+
+type GoogleVideoClient = {
+  models: {
+    generateVideos: (request: never) => Promise<GoogleVideoOperation>;
+  };
+  operations: {
+    getVideosOperation: (request: never) => Promise<GoogleVideoOperation>;
+  };
+  files: {
+    download: (request: never) => Promise<unknown>;
+  };
+};
+
+type GoogleVideoOperation = {
+  done?: boolean;
+  error?: unknown;
+  name?: string;
+  response?: {
+    generatedVideos?: Array<{
+      video?: {
+        videoBytes?: string;
+        mimeType?: string;
+      };
+    }>;
+  };
+};
+
+type GoogleVideoGenerationProviderDeps = {
+  createClient?: (options: GoogleGenAIOptions) => GoogleVideoClient;
+};
 
 function resolveConfiguredGoogleVideoBaseUrl(req: VideoGenerationRequest): string | undefined {
   const configured = normalizeOptionalString(req.cfg?.models?.providers?.google?.baseUrl);
@@ -437,7 +467,9 @@ async function generateGoogleVideoViaRest(params: {
   return operation;
 }
 
-export function buildGoogleVideoGenerationProvider(): VideoGenerationProvider {
+export function buildGoogleVideoGenerationProvider(
+  deps: GoogleVideoGenerationProviderDeps = {},
+): VideoGenerationProvider {
   return {
     ...createGoogleVideoGenerationProviderMetadata(),
     async generateVideo(req) {
@@ -476,7 +508,7 @@ export function buildGoogleVideoGenerationProvider(): VideoGenerationProvider {
         timeoutMs: req.timeoutMs,
         label: "Google video generation",
       });
-      const client = createGoogleGenAI({
+      const client = (deps.createClient ?? createGoogleGenAI)({
         apiKey,
         httpOptions: {
           ...(configuredBaseUrl ? { baseUrl: configuredBaseUrl } : {}),
@@ -518,9 +550,7 @@ export function buildGoogleVideoGenerationProvider(): VideoGenerationProvider {
       }
 
       if (!usedRestFallback) {
-        let sdkOperation = operation as Awaited<
-          ReturnType<GoogleGenAIClient["models"]["generateVideos"]>
-        >;
+        let sdkOperation = operation as GoogleVideoOperation;
         for (let attempt = 0; !(sdkOperation.done ?? false); attempt += 1) {
           if (attempt >= MAX_POLL_ATTEMPTS) {
             throw new Error("Google video generation did not finish in time");

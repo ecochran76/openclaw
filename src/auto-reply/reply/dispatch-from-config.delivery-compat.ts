@@ -24,6 +24,7 @@ async function routeReplyToOriginatingChannel(params: {
   routeReplyRuntime?: Awaited<ReturnType<typeof loadRouteReplyRuntime>>;
   originatingChannel?: string;
   originatingTo?: string;
+  originatingAccountId?: string;
   routeThreadId?: string | number;
   cfg: OpenClawConfig;
   ctx: FinalizedMsgContext;
@@ -51,7 +52,7 @@ async function routeReplyToOriginatingChannel(params: {
     sessionKey: params.ctx.SessionKey,
     policySessionKey: resolveCommandTurnTargetSessionKey(params.ctx) ?? params.ctx.SessionKey,
     policyConversationType: params.policyConversationType,
-    accountId: params.accountId ?? params.ctx.AccountId,
+    accountId: params.accountId ?? params.originatingAccountId ?? params.ctx.AccountId,
     requesterSenderId: params.ctx.SenderId,
     requesterSenderName: params.ctx.SenderName,
     requesterSenderUsername: params.ctx.SenderUsername,
@@ -68,6 +69,7 @@ async function routeReplyToOriginatingChannel(params: {
 export type DispatchFromConfigDeliveryCompat = {
   currentSurface?: string;
   deliveryTarget: "originating_channel" | "same_channel";
+  originatingAccountId?: string;
   originatingChannel?: string;
   originatingTo?: string;
   sendBindingNotice: (payload: ReplyPayload, mode: "additive" | "terminal") => Promise<boolean>;
@@ -92,6 +94,12 @@ export async function createDispatchFromConfigDeliveryCompat(params: {
   dispatcher: ReplyDispatcher;
   groupId?: string;
   isGroup: boolean;
+  replyRoute?: {
+    channel?: string;
+    to?: string;
+    accountId?: string;
+    inheritedExternalRoute?: boolean;
+  };
   originatingChannel?: string;
   originatingTo?: string;
   routeThreadId?: string | number;
@@ -100,17 +108,22 @@ export async function createDispatchFromConfigDeliveryCompat(params: {
   policyConversationType?: "direct" | "group";
   markReplayUnsafe?: () => void;
 }): Promise<DispatchFromConfigDeliveryCompat> {
-  const routeOriginatingChannel = params.originatingChannel ?? params.ctx.OriginatingChannel;
-  const routeOriginatingTo = params.originatingTo ?? params.ctx.OriginatingTo;
+  const routeOriginatingChannel =
+    params.replyRoute?.channel ?? params.originatingChannel ?? params.ctx.OriginatingChannel;
+  const routeOriginatingTo =
+    params.replyRoute?.to ?? params.originatingTo ?? params.ctx.OriginatingTo;
+  const originatingAccountId = params.replyRoute?.accountId ?? params.ctx.AccountId;
   const normalizedOriginatingChannel = normalizeMessageChannel(routeOriginatingChannel);
   const normalizedProviderChannel = normalizeMessageChannel(params.ctx.Provider);
   const normalizedSurfaceChannel = normalizeMessageChannel(params.ctx.Surface);
   const normalizedCurrentSurface = normalizedProviderChannel ?? normalizedSurfaceChannel;
   const originatingTo = routeOriginatingTo;
+  const effectiveExplicitDeliverRoute =
+    params.ctx.ExplicitDeliverRoute === true || params.replyRoute?.inheritedExternalRoute === true;
   const isInternalWebchatTurn =
     normalizedCurrentSurface === INTERNAL_MESSAGE_CHANNEL &&
     (normalizedSurfaceChannel === INTERNAL_MESSAGE_CHANNEL || !normalizedSurfaceChannel) &&
-    params.ctx.ExplicitDeliverRoute !== true;
+    !effectiveExplicitDeliverRoute;
   const hasRouteReplyCandidate = Boolean(
     !params.suppressDirectUserDelivery &&
     !isInternalWebchatTurn &&
@@ -123,7 +136,7 @@ export async function createDispatchFromConfigDeliveryCompat(params: {
     resolveReplyRoutingDecision({
       provider: params.ctx.Provider,
       surface: params.ctx.Surface,
-      explicitDeliverRoute: params.ctx.ExplicitDeliverRoute,
+      explicitDeliverRoute: effectiveExplicitDeliverRoute,
       originatingChannel: routeOriginatingChannel,
       originatingTo: routeOriginatingTo,
       suppressDirectUserDelivery: params.suppressDirectUserDelivery,
@@ -143,6 +156,7 @@ export async function createDispatchFromConfigDeliveryCompat(params: {
       routeReplyRuntime,
       originatingChannel,
       originatingTo,
+      originatingAccountId,
       routeThreadId: params.routeThreadId,
       cfg: params.cfg,
       ctx: params.ctx,
@@ -195,6 +209,7 @@ export async function createDispatchFromConfigDeliveryCompat(params: {
   return {
     currentSurface,
     deliveryTarget,
+    originatingAccountId,
     originatingChannel,
     originatingTo,
     sendBindingNotice,

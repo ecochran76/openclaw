@@ -278,6 +278,7 @@
     }
   ],
   "contracts": {
+    "externalAuthProviders": ["openai-codex"],
     "speechProviders": ["openai"],
     "realtimeTranscriptionProviders": ["openai"],
     "realtimeVoiceProviders": ["openai"],

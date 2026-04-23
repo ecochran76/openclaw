@@ -98,7 +98,9 @@ describe("config io paths", () => {
               entries: {
                 "google-antigravity-auth": {
                   enabled: false,
-                  config: { stale: true },
+                },
+                "sherpa-local-tts": {
+                  enabled: false,
                 },
               },
             },

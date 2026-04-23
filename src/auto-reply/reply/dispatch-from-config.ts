@@ -141,6 +141,7 @@ import {
   type CommandSessionMetadataChange,
 } from "./command-session-metadata.js";
 import { resolveConversationBindingContextFromMessage } from "./conversation-binding-input.js";
+import { createDispatchFromConfigDeliveryCompat } from "./dispatch-from-config.delivery-compat.js";
 import {
   createInternalHookEvent,
   loadSessionStore,
@@ -181,7 +182,6 @@ import {
 import { isReplyProfilerEnabled } from "./reply-timing-tracker.js";
 import { admitReplyTurn, resolveReplyTurnKind } from "./reply-turn-admission.js";
 import { resolveRoutedDeliveryThreadId } from "./routed-delivery-thread.js";
-import { resolveReplyRoutingDecision } from "./routing-policy.js";
 import {
   isExplicitSourceReplyCommand,
   isUnauthorizedTextSlashCommand,
@@ -1633,14 +1633,19 @@ export async function dispatchReplyFromConfig(
     currentSurface,
     shouldRouteToOriginating,
     shouldSuppressTyping,
-  } = resolveReplyRoutingDecision({
-    provider: ctx.Provider,
-    surface: ctx.Surface,
-    explicitDeliverRoute: effectiveExplicitDeliverRoute,
-    originatingChannel: replyRoute.channel,
-    originatingTo: replyRoute.to,
+    ttsChannel,
+    visibleChannel,
+  } = await createDispatchFromConfigDeliveryCompat({
+    cfg,
+    ctx,
+    dispatcher,
+    groupId,
+    isGroup,
+    replyRoute,
+    routeThreadId,
     suppressDirectUserDelivery: suppressAcpChildUserDelivery,
-    isRoutableChannel: routeReplyRuntime?.isRoutableChannel ?? (() => false),
+    policyConversationType: resolveRoutedPolicyConversationType(ctx),
+    markReplayUnsafe: markInboundDedupeReplayUnsafe,
   });
   const routeReplyTo = replyRoute.to;
   const deliveryChannel = shouldRouteToOriginating ? routeReplyChannel : currentSurface;
@@ -1655,7 +1660,6 @@ export async function dispatchReplyFromConfig(
         replyRoute.chatType,
       )
     : undefined;
-  const visibleChannel = deliveryChannel;
   const deliveryTarget = shouldRouteToOriginating ? "originating_channel" : "same_channel";
   let normalizeReplyMediaPaths:
     | ReturnType<

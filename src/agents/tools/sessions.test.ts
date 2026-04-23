@@ -846,6 +846,13 @@ describe("sessions_send gating", () => {
   });
 
   it("prefers sessionKey over a redundant label", async () => {
+    callGatewayMock.mockImplementation(async (opts: unknown) => {
+      const request = opts as { method?: string };
+      if (request.method === "agent") {
+        return { runId: "run-session-key-label" };
+      }
+      return {};
+    });
     const tool = createMainSessionsSendTool();
 
     const result = await tool.execute("call-session-key-label", {
