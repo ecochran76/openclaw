@@ -182,6 +182,7 @@ Slack:
 - `progress` uses status preview text, then final answer.
 - Top-level DMs without a reply thread use draft preview posts and edits instead of Slack native streaming.
 - Native and draft preview streaming suppress block replies for that turn, so a Slack reply is streamed by one delivery path only.
+- `progress` uses compact status preview text, then final answer. Tool-progress summaries are coalesced into one draft preview, duplicate lines are skipped, and long command or output labels are truncated before editing Slack.
 - Final media/error payloads and progress finals do not create throwaway draft messages; only text/block finals that can edit the preview flush pending draft text.
 
 Mattermost:

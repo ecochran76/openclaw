@@ -625,6 +625,9 @@ let getActiveTrackedTurn: typeof import("../turn-tracker.js").getActiveTrackedTu
 let getRecentTrackedTurn: typeof import("../turn-tracker.js").getRecentTrackedTurn;
 let resetTrackedTurnsForTests: typeof import("../turn-tracker.js").resetTrackedTurnsForTests;
 let updateTrackedTurn: typeof import("../turn-tracker.js").updateTrackedTurn;
+let clearApprovalNativeRouteStateForTest: typeof import("../../infra/approval-native-route-coordinator.js").clearApprovalNativeRouteStateForTest;
+let createApprovalNativeRouteReporter: typeof import("../../infra/approval-native-route-coordinator.js").createApprovalNativeRouteReporter;
+let setReplyPayloadMetadata: typeof import("../types.js").setReplyPayloadMetadata;
 type DispatchReplyArgs = Parameters<
   typeof import("./dispatch-from-config.js").dispatchReplyFromConfig
 >[0];
@@ -941,6 +944,11 @@ describe("dispatchReplyFromConfig", () => {
     await import("./dispatch-acp-command-bypass.js");
     await import("./dispatch-acp-tts.runtime.js");
     await import("./dispatch-acp-session.runtime.js");
+    ({
+      clearApprovalNativeRouteStateForTest,
+      createApprovalNativeRouteReporter,
+    } = await import("../../infra/approval-native-route-coordinator.js"));
+    ({ setReplyPayloadMetadata } = await import("../types.js"));
     ({ resetInboundDedupe } = await import("./inbound-dedupe.js"));
     ({ tryDispatchAcpReplyHook } = await import("../../plugin-sdk/acp-runtime.js"));
     ({
@@ -4739,6 +4747,33 @@ describe("dispatchReplyFromConfig", () => {
     expect(recent?.deliveryState).toBe("reply_stranded");
   });
 
+  it("does not emit a stranded notice after a visible final reply is delivered", async () => {
+    setNoAbort();
+    const cfg = emptyConfig;
+    const dispatcher = createDispatcher();
+    const ctx = buildTestCtx({
+      Provider: "slack",
+      Surface: "slack",
+      SessionKey: "agent:main:main",
+    });
+
+    await dispatchReplyFromConfig({
+      ctx,
+      cfg,
+      dispatcher,
+      replyResolver: vi.fn(async (_ctx: MsgContext, opts?: GetReplyOptions) => {
+        await Promise.resolve(opts?.onAgentRunStart?.("run-visible-final"));
+        return { text: "visible final reply" };
+      }),
+    });
+
+    const finalCalls = (dispatcher.sendFinalReply as ReturnType<typeof vi.fn>).mock.calls;
+    expect(finalCalls).toHaveLength(1);
+    expect((finalCalls[0]?.[0] as ReplyPayload | undefined)?.text).toBe("visible final reply");
+    const recent = getRecentTrackedTurn(ctx.SessionKey ?? "agent:main:main");
+    expect(recent?.deliveryState).toBe("final_sent");
+  });
+
   it("emits one stalled-turn notice after the stall threshold", async () => {
     vi.useFakeTimers();
     try {
@@ -8534,9 +8569,11 @@ describe("sendPolicy deny — suppress delivery, not processing (#53328)", () =>
     });
 
     expect(replyResolver).toHaveBeenCalledTimes(1);
-    expect(dispatcher.sendFinalReply).toHaveBeenCalledWith({
-      text: PROVIDER_CONVERSATION_STATE_ERROR_USER_MESSAGE,
-    });
+    expect(dispatcher.sendFinalReply).toHaveBeenCalledWith(
+      expect.objectContaining({
+        text: PROVIDER_CONVERSATION_STATE_ERROR_USER_MESSAGE,
+      }),
+    );
   });
 
   it("delivers replies normally when sendPolicy is unset (defaults to allow)", async () => {
@@ -9556,7 +9593,11 @@ describe("sendPolicy deny — suppress delivery, not processing (#53328)", () =>
     expect(replyResolver).toHaveBeenCalledTimes(1);
     expect(result.queuedFinal).toBe(true);
     expect(result.sourceReplyDeliveryMode).toBe("message_tool_only");
-    expect(dispatcher.sendFinalReply).toHaveBeenCalledWith(failureNotice);
+    expect(dispatcher.sendFinalReply).toHaveBeenCalledWith(
+      expect.objectContaining({
+        text: failureNotice.text,
+      }),
+    );
     expect(dispatcher.sendBlockReply).not.toHaveBeenCalled();
     expect(dispatcher.sendToolResult).not.toHaveBeenCalled();
   });
@@ -9705,7 +9746,11 @@ describe("sendPolicy deny — suppress delivery, not processing (#53328)", () =>
     });
 
     expect(result.queuedFinal).toBe(true);
-    expect(dispatcher.sendFinalReply).toHaveBeenCalledWith(sourceReply);
+    expect(dispatcher.sendFinalReply).toHaveBeenCalledWith(
+      expect.objectContaining({
+        text: sourceReply.text,
+      }),
+    );
     expect(transcriptMocks.appendAssistantMessageToSessionTranscript).toHaveBeenCalledWith({
       sessionKey: "agent:main",
       agentId: "main",

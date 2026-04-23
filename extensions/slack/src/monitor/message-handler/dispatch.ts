@@ -127,6 +127,31 @@ const SLACK_REASONING_TAG_RE =
 const SLACK_REASONING_LABEL_PREFIX_RE = /^\s*(?:>\s*)?Reasoning:\s*/iu;
 const SLACK_THINKING_LABEL_PREFIX_RE = /^\s*(?:>\s*)?Thinking\.{0,3}(?=\s*(?:\n|_))/iu;
 
+const SLACK_PREVIEW_TOOL_PROGRESS_MAX_LINES = 4;
+const SLACK_PREVIEW_TOOL_PROGRESS_MAX_CHARS = 120;
+
+export function normalizeSlackPreviewToolProgressLine(line?: string): string | undefined {
+  const normalized = line?.replace(/\s+/g, " ").trim();
+  if (!normalized) {
+    return undefined;
+  }
+  if (normalized.length <= SLACK_PREVIEW_TOOL_PROGRESS_MAX_CHARS) {
+    return normalized;
+  }
+  return `${normalized.slice(0, SLACK_PREVIEW_TOOL_PROGRESS_MAX_CHARS - 3).trimEnd()}...`;
+}
+
+export function buildSlackPreviewToolProgressText(lines: string[]): string {
+  return ["Working…", ...lines.map((entry) => `• ${entry}`)].join("\n");
+}
+
+export function shouldStartNewSlackDraftMessageOnBoundary(params: {
+  hasStreamedMessage: boolean;
+  streamMode: "replace" | "status_final" | "append";
+}): boolean {
+  return params.hasStreamedMessage && params.streamMode !== "status_final";
+}
+
 function resolveSlackMessageTimestampMs(message: SlackMessageEvent): number | undefined {
   const ts = message.event_ts ?? message.ts;
   return resolveSlackTimestampMs(ts);
@@ -1822,14 +1847,13 @@ export async function dispatchPreparedSlackMessage(prepared: PreparedSlackMessag
   const onDraftBoundary = !shouldUseDraftStream
     ? undefined
     : async () => {
-        // Progress drafts are one rolling message that's finalized in place.
-        // Keep boundary cleanup, but don't clear messageId or the next update
-        // posts a new draft instead of editing the existing preview.
-        if (hasStreamedMessage && streamMode !== "status_final") {
+        if (shouldStartNewSlackDraftMessageOnBoundary({ hasStreamedMessage, streamMode })) {
           draftStream?.forceNewMessage();
           hasStreamedMessage = false;
           appendRenderedText = "";
           appendSourceText = "";
+          statusUpdateCount = 0;
+        } else if (hasStreamedMessage) {
           statusUpdateCount = 0;
         }
         reasoningProgressRawText = "";

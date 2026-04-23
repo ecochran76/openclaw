@@ -100,13 +100,13 @@ export async function createDispatchFromConfigDeliveryCompat(params: {
   policyConversationType?: "direct" | "group";
   markReplayUnsafe?: () => void;
 }): Promise<DispatchFromConfigDeliveryCompat> {
-  const normalizedOriginatingChannel = normalizeMessageChannel(
-    params.originatingChannel ?? params.ctx.OriginatingChannel,
-  );
+  const routeOriginatingChannel = params.originatingChannel ?? params.ctx.OriginatingChannel;
+  const routeOriginatingTo = params.originatingTo ?? params.ctx.OriginatingTo;
+  const normalizedOriginatingChannel = normalizeMessageChannel(routeOriginatingChannel);
   const normalizedProviderChannel = normalizeMessageChannel(params.ctx.Provider);
   const normalizedSurfaceChannel = normalizeMessageChannel(params.ctx.Surface);
   const normalizedCurrentSurface = normalizedProviderChannel ?? normalizedSurfaceChannel;
-  const originatingTo = params.originatingTo ?? params.ctx.OriginatingTo;
+  const originatingTo = routeOriginatingTo;
   const isInternalWebchatTurn =
     normalizedCurrentSurface === INTERNAL_MESSAGE_CHANNEL &&
     (normalizedSurfaceChannel === INTERNAL_MESSAGE_CHANNEL || !normalizedSurfaceChannel) &&
@@ -124,8 +124,8 @@ export async function createDispatchFromConfigDeliveryCompat(params: {
       provider: params.ctx.Provider,
       surface: params.ctx.Surface,
       explicitDeliverRoute: params.ctx.ExplicitDeliverRoute,
-      originatingChannel: normalizedOriginatingChannel,
-      originatingTo,
+      originatingChannel: routeOriginatingChannel,
+      originatingTo: routeOriginatingTo,
       suppressDirectUserDelivery: params.suppressDirectUserDelivery,
       isRoutableChannel: routeReplyRuntime?.isRoutableChannel ?? (() => false),
     });

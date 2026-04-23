@@ -112,4 +112,44 @@ describe("delivery-observer", () => {
       vi.useRealTimers();
     }
   });
+
+  it("emits active-tool progress instead of a stalled notice while a tool is still running", async () => {
+    vi.useFakeTimers();
+    try {
+      const sessionKey = "agent:main:main";
+      let observer!: DeliveryObserver;
+      const sendWatcherPayload = vi.fn(
+        async (_payload: ReplyPayload, _failureText: string) => true,
+      );
+      observer = createDeliveryObserver({
+        sessionKey,
+        visibleChannel: "slack",
+        trackedSessionId: "session-1",
+        deliveryTarget: "same_channel",
+        didMemoryFlushDuringTurn: () => false,
+        onSendWatcherPayload: sendWatcherPayload,
+      });
+
+      observer.startRun("run-active-tool");
+      observer.updateActiveTurn({
+        phase: "tool_wait",
+        activeTool: "exec",
+        markProgress: true,
+        at: Date.now(),
+      });
+
+      await vi.advanceTimersByTimeAsync(20_000);
+      await vi.advanceTimersByTimeAsync(100_000);
+
+      const texts = sendWatcherPayload.mock.calls.map(
+        (call) => (call[0] as ReplyPayload | undefined)?.text ?? "",
+      );
+      expect(texts).toContain("working: tool still running (exec)");
+      expect(texts.some((text) => text.includes("status: turn appears stalled"))).toBe(false);
+
+      observer.finishRun({ status: "done", phase: "done" });
+    } finally {
+      vi.useRealTimers();
+    }
+  });
 });

@@ -2480,7 +2480,7 @@ export async function runEmbeddedAttempt(
           modelRegistry: params.modelRegistry,
           model: params.model,
           thinkingLevel: mapThinkingLevel(params.thinkLevel),
-          tools: builtInTools,
+          tools: sdkToolAllowlist,
           customTools: allCustomTools,
           sessionManager,
           settingsManager,

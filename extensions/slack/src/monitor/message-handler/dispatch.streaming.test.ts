@@ -1,12 +1,16 @@
 // Slack tests cover dispatch.streaming plugin behavior.
 import { afterEach, describe, expect, it, vi } from "vitest";
 import {
+  buildSlackPreviewToolProgressText,
   createSlackEventDeliveryTracker,
+  createSlackTurnDeliveryTracker,
   isSlackStreamingEnabled,
+  normalizeSlackPreviewToolProgressLine,
   resetSlackStreamRecipientTeamCacheForTests,
   resolveSlackDisableBlockStreaming,
   resolveSlackStreamRecipientTeamId,
   resolveSlackStreamingThreadHint,
+  shouldStartNewSlackDraftMessageOnBoundary,
   shouldEnableSlackPreviewStreaming,
   shouldInitializeSlackDraftStream,
 } from "./dispatch.js";
@@ -342,5 +346,37 @@ describe("slack block streaming suppression", () => {
         blockStreamingEnabled: undefined,
       }),
     ).toBeUndefined();
+  });
+});
+
+describe("slack progress preview summaries", () => {
+  it("normalizes and truncates noisy progress lines before Slack preview edits", () => {
+    const longLine = `exec ${"pnpm test ".repeat(30)}`;
+
+    expect(normalizeSlackPreviewToolProgressLine("  reading\n\nfiles\t")).toBe("reading files");
+    const normalized = normalizeSlackPreviewToolProgressLine(longLine);
+    expect(normalized?.length).toBeLessThanOrEqual(120);
+    expect(normalized).toMatch(/\.\.\.$/);
+  });
+
+  it("renders a compact progress message from retained summary lines", () => {
+    expect(buildSlackPreviewToolProgressText(["reading files", "tests ✓"])).toBe(
+      "Working…\n• reading files\n• tests ✓",
+    );
+  });
+
+  it("keeps progress-mode boundaries in one draft message", () => {
+    expect(
+      shouldStartNewSlackDraftMessageOnBoundary({
+        hasStreamedMessage: true,
+        streamMode: "status_final",
+      }),
+    ).toBe(false);
+    expect(
+      shouldStartNewSlackDraftMessageOnBoundary({
+        hasStreamedMessage: true,
+        streamMode: "append",
+      }),
+    ).toBe(true);
   });
 });

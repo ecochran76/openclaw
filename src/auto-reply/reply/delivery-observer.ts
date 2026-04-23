@@ -245,6 +245,15 @@ export function createDeliveryObserver(params: {
               ? Number.POSITIVE_INFINITY
               : TRACKED_TURN_STALL_THRESHOLD_MS - (now - active.lastProgressAt);
             if (!stalledNoticeSent && active.phase === "stalled") {
+              if (active.activeTool) {
+                await params.onSendWatcherPayload(
+                  { text: `working: tool still running (${active.activeTool})` },
+                  "dispatcher rejected active-tool progress notice",
+                );
+                firstTurnNudgeSent = true;
+                schedule(90_000);
+                return;
+              }
               updateActiveTurn({
                 phase: "stalled",
                 deliveryTarget: params.deliveryTarget,

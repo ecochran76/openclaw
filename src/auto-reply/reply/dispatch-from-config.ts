@@ -393,6 +393,21 @@ const resolveRoutedPolicyConversationType = (
   return undefined;
 };
 
+function hasRestrictiveMessageToolConfig(cfg: OpenClawConfig): boolean {
+  const policies: Array<unknown> = [
+    cfg.tools,
+    cfg.agents?.defaults?.tools,
+    ...(cfg.agents?.list ?? []).map((agent) => agent.tools),
+  ];
+  return policies.some((policy) => {
+    if (!policy || typeof policy !== "object") {
+      return false;
+    }
+    const record = policy as { allow?: unknown; deny?: unknown; profile?: unknown };
+    return Array.isArray(record.allow) || Array.isArray(record.deny) || record.profile !== undefined;
+  });
+}
+
 const resolveSessionStoreLookup = (
   ctx: FinalizedMsgContext,
   cfg: OpenClawConfig,
@@ -1917,6 +1932,11 @@ export async function dispatchReplyFromConfig(
     subagentPolicy,
     inheritedToolPolicy,
   ]);
+  const effectiveMessageToolAvailable =
+    params.replyOptions?.sourceReplyDeliveryMode === "message_tool_only" &&
+    !hasRestrictiveMessageToolConfig(cfg)
+      ? true
+      : messageToolAvailable;
   const sourceReplyPolicy = resolveSourceReplyVisibilityPolicy({
     cfg,
     ctx,
@@ -1926,7 +1946,7 @@ export async function dispatchReplyFromConfig(
     suppressAcpChildUserDelivery,
     explicitSuppressTyping: params.replyOptions?.suppressTyping === true,
     shouldSuppressTyping,
-    messageToolAvailable,
+    messageToolAvailable: effectiveMessageToolAvailable,
     defaultVisibleReplies: harnessDefaultVisibleReplies,
   });
   const {
@@ -2369,6 +2389,17 @@ export async function dispatchReplyFromConfig(
               ? Number.POSITIVE_INFINITY
               : TRACKED_TURN_STALL_THRESHOLD_MS - (now - active.lastProgressAt);
             if (!stalledNoticeSent && active.phase === "stalled") {
+              if (active.activeTool) {
+                await sendWatcherPayload(
+                  { text: `working: tool still running (${active.activeTool})` },
+                  shouldRouteToOriginating
+                    ? "route-reply failed"
+                    : "dispatcher rejected active-tool progress notice",
+                );
+                firstTurnNudgeSent = true;
+                schedule(90_000);
+                return;
+              }
               if (trackedTurnId) {
                 updateTrackedTurn(trackedTurnId, {
                   phase: "stalled",
@@ -2510,7 +2541,7 @@ export async function dispatchReplyFromConfig(
     if (derived === "reply_stranded") {
       return "status: turn finished but no visible reply was sent";
     }
-    return "status: turn finished but no visible reply was sent";
+    return undefined;
   };
   const sendUndeliveredReplyNotice = async (text: string) => {
     const payload = { text } satisfies ReplyPayload;

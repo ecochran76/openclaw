@@ -5,8 +5,8 @@ import { toToolDefinitions } from "../agent-tool-definition-adapter.js";
 import type { HookContext } from "../agent-tools.before-tool-call.js";
 import type { AgentTool } from "../runtime/index.js";
 
-// We always pass tools via `customTools` so our policy filtering, sandbox integration,
-// and extended toolset remain consistent across providers.
+// Keep Pi's built-in `tools` allowlist aligned with the same OpenClaw-managed
+// custom tool definitions we pass through `customTools`.
 type AnyAgentTool = AgentTool;
 
 export function splitSdkTools(options: {
@@ -14,10 +14,13 @@ export function splitSdkTools(options: {
   sandboxEnabled: boolean;
   toolHookContext?: HookContext;
 }): {
+  builtInTools: string[];
   customTools: ReturnType<typeof toToolDefinitions>;
 } {
   const { tools, toolHookContext } = options;
+  const customTools = toToolDefinitions(tools, toolHookContext);
   return {
-    customTools: toToolDefinitions(tools, toolHookContext),
+    builtInTools: customTools.map((tool) => tool.name).filter(Boolean),
+    customTools,
   };
 }

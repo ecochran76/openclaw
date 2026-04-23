@@ -16,11 +16,12 @@ describe("splitSdkTools", () => {
     createStubTool("browser"),
   ];
 
-  it("routes all tools to customTools when sandboxed", () => {
-    const { customTools } = splitSdkTools({
+  it("routes all tools to customTools and the SDK allowlist when sandboxed", () => {
+    const { builtInTools, customTools } = splitSdkTools({
       tools,
       sandboxEnabled: true,
     });
+    expect(builtInTools).toEqual(["read", "exec", "edit", "write", "browser"]);
     expect(customTools.map((tool) => tool.name)).toEqual([
       "read",
       "exec",
@@ -30,11 +31,12 @@ describe("splitSdkTools", () => {
     ]);
   });
 
-  it("routes all tools to customTools even when not sandboxed", () => {
-    const { customTools } = splitSdkTools({
+  it("routes all tools to customTools and the SDK allowlist even when not sandboxed", () => {
+    const { builtInTools, customTools } = splitSdkTools({
       tools,
       sandboxEnabled: false,
     });
+    expect(builtInTools).toEqual(["read", "exec", "edit", "write", "browser"]);
     expect(customTools.map((tool) => tool.name)).toEqual([
       "read",
       "exec",
