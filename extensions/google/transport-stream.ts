@@ -1,8 +1,6 @@
 // Google plugin module implements transport stream behavior.
 import type { StreamFn } from "openclaw/plugin-sdk/agent-core";
 import {
-  calculateCost,
-  getEnvApiKey,
   type Context,
   type Model,
   type SimpleStreamOptions,
@@ -116,6 +114,33 @@ type MutableAssistantOutput = {
 };
 
 const GOOGLE_VERTEX_DEFAULT_API_VERSION = "v1";
+
+type GoogleTransportUsage = MutableAssistantOutput["usage"];
+
+function calculateGoogleTransportCost(
+  model: GoogleTransportModel,
+  usage: GoogleTransportUsage,
+): GoogleTransportUsage["cost"] {
+  usage.cost.input = (model.cost.input / 1_000_000) * usage.input;
+  usage.cost.output = (model.cost.output / 1_000_000) * usage.output;
+  usage.cost.cacheRead = (model.cost.cacheRead / 1_000_000) * usage.cacheRead;
+  usage.cost.cacheWrite = (model.cost.cacheWrite / 1_000_000) * usage.cacheWrite;
+  usage.cost.total =
+    usage.cost.input + usage.cost.output + usage.cost.cacheRead + usage.cost.cacheWrite;
+  return usage.cost;
+}
+
+function resolveGoogleTransportEnvApiKey(provider: string): string | undefined {
+  if (provider === "google-vertex") {
+    return (
+      process.env.GOOGLE_CLOUD_API_KEY ?? process.env.GEMINI_API_KEY ?? process.env.GOOGLE_API_KEY
+    );
+  }
+  if (provider === "google" || provider === "google-antigravity") {
+    return process.env.GEMINI_API_KEY ?? process.env.GOOGLE_API_KEY;
+  }
+  return undefined;
+}
 
 type GoogleSseChunk = {
   responseId?: string;
@@ -1192,7 +1217,7 @@ function updateUsage(
     totalTokens: usage.totalTokenCount || 0,
     cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, total: 0 },
   };
-  calculateCost(model, output.usage);
+  calculateGoogleTransportCost(model, output.usage);
 }
 
 function pushTextBlockEnd(
@@ -1240,7 +1265,7 @@ function createGoogleTransportStreamFn(kind: CanonicalGoogleTransportApi): Strea
         timestamp: Date.now(),
       };
       try {
-        const apiKey = options?.apiKey ?? getEnvApiKey(model.provider) ?? undefined;
+        const apiKey = options?.apiKey ?? resolveGoogleTransportEnvApiKey(model.provider);
         const guardedFetch = buildGuardedModelFetch(model);
         let params = buildGoogleGenerativeAiParams(model, context, options);
         const nextParams = await options?.onPayload?.(params, model);

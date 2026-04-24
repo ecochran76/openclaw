@@ -1314,6 +1314,28 @@ describe("google transport stream", () => {
     });
   });
 
+  it("falls back to GEMINI_API_KEY for Google provider transport auth", async () => {
+    vi.stubEnv("GEMINI_API_KEY", "env-gemini-key");
+    guardedFetchMock.mockResolvedValueOnce(buildSseResponse([]));
+
+    const streamFn = createGoogleGenerativeAiTransportStreamFn();
+    const stream = await Promise.resolve(
+      streamFn(buildGeminiModel(), {
+        messages: [{ role: "user", content: "hello", timestamp: 0 }],
+      } as Parameters<typeof streamFn>[1]),
+    );
+    await stream.result();
+
+    expect(guardedFetchMock).toHaveBeenCalledWith(
+      expect.any(String),
+      expect.objectContaining({
+        headers: expect.objectContaining({
+          "x-goog-api-key": "env-gemini-key",
+        }),
+      }),
+    );
+  });
+
   it("coerces replayed malformed tool-call args to an object for Google payloads", () => {
     const params = buildGoogleGenerativeAiParams(buildGeminiModel(), {
       messages: [
