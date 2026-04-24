@@ -247,6 +247,95 @@ resolve_npm_bin() {
   command -v npm 2>/dev/null || true
 }
 
+append_unique_npm_bin() {
+  local npm_bin="$1"
+  local resolved existing_resolved
+  if [[ -z "$npm_bin" || ! -x "$npm_bin" ]]; then
+    return 0
+  fi
+  resolved="$(readlink -f "$npm_bin" 2>/dev/null || printf '%s' "$npm_bin")"
+  for existing in "${INSTALL_NPM_BINS[@]:-}"; do
+    existing_resolved="$(readlink -f "$existing" 2>/dev/null || printf '%s' "$existing")"
+    if [[ "$existing_resolved" == "$resolved" ]]; then
+      return 0
+    fi
+  done
+  INSTALL_NPM_BINS+=("$npm_bin")
+}
+
+package_dir_for_npm_bin() {
+  local npm_bin="$1"
+  "$npm_bin" root -g 2>/dev/null | sed 's:/*$::' | awk '{print $0 "/openclaw"}'
+}
+
+append_npm_for_package_dir() {
+  local package_dir="$1"
+  local prefix npm_bin
+  if [[ "$package_dir" != */lib/node_modules/openclaw ]]; then
+    return 0
+  fi
+  prefix="${package_dir%/lib/node_modules/openclaw}"
+  npm_bin="$prefix/bin/npm"
+  append_unique_npm_bin "$npm_bin"
+}
+
+collect_gateway_package_dirs() {
+  if ! command -v systemctl >/dev/null 2>&1; then
+    return 0
+  fi
+  systemctl --user cat openclaw-gateway.service 2>/dev/null |
+    sed -n 's/.* \([^ ]*\/lib\/node_modules\/openclaw\)\/dist\/index\.js.*/\1/p' |
+    sort -u
+}
+
+collect_install_npm_bins() {
+  INSTALL_NPM_BINS=()
+  append_unique_npm_bin "$NPM_BIN"
+  append_unique_npm_bin "$(command -v npm 2>/dev/null || true)"
+  local openclaw_bin
+  openclaw_bin="$(command -v openclaw 2>/dev/null || true)"
+  if [[ -n "$openclaw_bin" ]]; then
+    append_unique_npm_bin "$(dirname "$openclaw_bin")/npm"
+  fi
+  local gateway_package_dir
+  while IFS= read -r gateway_package_dir; do
+    append_npm_for_package_dir "$gateway_package_dir"
+  done < <(collect_gateway_package_dirs)
+}
+
+install_tarball_globally() {
+  local npm_bin="$1"
+  local package_dir backup_label backup_tgz
+  package_dir="$(package_dir_for_npm_bin "$npm_bin")"
+  if [[ -z "$package_dir" ]]; then
+    echo "warning: skipping npm install target with unresolved package dir: $npm_bin"
+    return 0
+  fi
+  if [[ -d "$package_dir" ]]; then
+    backup_label="$(printf '%s' "$package_dir" | sed 's|^/||; s|[^A-Za-z0-9._-]|_|g' | cut -c1-120)"
+    backup_tgz="$BACKUP_DIR/openclaw-global-backup-$backup_label-$TIMESTAMP.tgz"
+    run "tar -czf '$backup_tgz' -C '$(dirname "$package_dir")' '$(basename "$package_dir")'"
+    echo "backup: $backup_tgz"
+  else
+    echo "warning: global openclaw package dir not found at $package_dir"
+  fi
+  echo "info: installing tarball with npm binary: $npm_bin"
+  run "'$npm_bin' i -g '$PKG_TGZ'"
+}
+
+verify_installed_openclaw_bins() {
+  local npm_bin package_dir cli
+  for npm_bin in "${INSTALL_NPM_BINS[@]}"; do
+    package_dir="$(package_dir_for_npm_bin "$npm_bin")"
+    cli="$package_dir/openclaw.mjs"
+    if [[ -x "$cli" || -f "$cli" ]]; then
+      run_bounded_cmd "$PATCH_CLI_TIMEOUT_SEC" node "$cli" --version
+    else
+      echo "warning: installed OpenClaw CLI not found at $cli"
+    fi
+  done
+}
+
 parse_gateway_service_loaded() {
   node -e '
 let raw = "";
@@ -317,9 +406,17 @@ if [[ -z "$NPM_BIN" ]]; then
   exit 1
 fi
 
-echo "info: using npm binary: $NPM_BIN"
-PACKAGE_DIR="$("$NPM_BIN" root -g)/openclaw"
-BACKUP_TGZ="$BACKUP_DIR/openclaw-global-backup-$TIMESTAMP.tgz"
+echo "info: primary npm binary: $NPM_BIN"
+collect_install_npm_bins
+if [[ ${#INSTALL_NPM_BINS[@]} -eq 0 ]]; then
+  echo "error: no npm install targets found" >&2
+  exit 1
+fi
+echo "info: npm install targets:"
+for install_npm_bin in "${INSTALL_NPM_BINS[@]}"; do
+  printf '  - %s\n' "$install_npm_bin"
+done
+PACKAGE_DIR="$(package_dir_for_npm_bin "$NPM_BIN")"
 
 if [[ -L "$PACKAGE_DIR" && "$(readlink -f "$PACKAGE_DIR")" == "$REPO_DIR" ]]; then
   echo "info: global openclaw is linked to this repo; Control UI assets must be rebuilt after each pnpm build"
@@ -327,13 +424,6 @@ fi
 
 run "mkdir -p '$BACKUP_DIR'"
 run "mkdir -p '$PACK_DIR'"
-
-if [[ -d "$PACKAGE_DIR" ]]; then
-  run "tar -czf '$BACKUP_TGZ' -C '$(dirname "$PACKAGE_DIR")' '$(basename "$PACKAGE_DIR")'"
-  echo "backup: $BACKUP_TGZ"
-else
-  echo "warning: global openclaw package dir not found at $PACKAGE_DIR"
-fi
 
 run "pnpm install --frozen-lockfile"
 run "pnpm build"
@@ -368,7 +458,9 @@ fi
 PKG_TGZ="$(pack_tarball)"
 
 if [[ "$DRY_RUN" == "1" ]]; then
-  echo "[dry-run] would install latest $PACK_DIR/openclaw-*.tgz globally"
+  for install_npm_bin in "${INSTALL_NPM_BINS[@]}"; do
+    echo "[dry-run] would install latest $PACK_DIR/openclaw-*.tgz globally with $install_npm_bin"
+  done
   echo "done (dry-run)"
   exit 0
 fi
@@ -383,8 +475,11 @@ if ! tar -tf "$PKG_TGZ" | awk '$0=="package/dist/control-ui/index.html"{found=1}
   exit 1
 fi
 
-run "'$NPM_BIN' i -g '$PKG_TGZ'"
+for install_npm_bin in "${INSTALL_NPM_BINS[@]}"; do
+  install_tarball_globally "$install_npm_bin"
+done
 run_openclaw_cli_bounded "$PATCH_CLI_TIMEOUT_SEC" --version
+verify_installed_openclaw_bins
 
 GATEWAY_STATUS_JSON="$(openclaw_cli gateway status --json 2>/dev/null || true)"
 GATEWAY_SERVICE_LOADED="$(printf '%s' "$GATEWAY_STATUS_JSON" | parse_gateway_service_loaded)"
