@@ -503,6 +503,7 @@ function resolveContainedSkillPath(params: {
   source: string;
   rootDir: string;
   rootRealPath: string;
+  trustedRootRealPaths?: readonly string[];
   candidatePath: string;
   allowedSymlinkTargetRealPaths?: readonly string[];
 }): string | null {
@@ -516,6 +517,12 @@ function resolveContainedSkillPath(params: {
   ) {
     return candidateRealPath;
   }
+  if (
+    params.source !== "openclaw-bundled" &&
+    params.trustedRootRealPaths?.some((trustedRoot) => isPathInside(trustedRoot, candidateRealPath))
+  ) {
+    return candidateRealPath;
+  }
   warnEscapedSkillPath({
     source: params.source,
     rootDir: params.rootDir,
@@ -524,6 +531,38 @@ function resolveContainedSkillPath(params: {
     candidateRealPath,
   });
   return null;
+}
+
+function filterLoadedSkillRecordsInsideRoot(params: {
+  records: LoadedSkillRecord[];
+  source: string;
+  rootDir: string;
+  rootRealPath: string;
+  trustedRootRealPaths?: readonly string[];
+  allowedSymlinkTargetRealPaths?: readonly string[];
+}): LoadedSkillRecord[] {
+  return params.records.filter(({ skill }) => {
+    const baseDirRealPath = resolveContainedSkillPath({
+      source: params.source,
+      rootDir: params.rootDir,
+      rootRealPath: params.rootRealPath,
+      trustedRootRealPaths: params.trustedRootRealPaths,
+      candidatePath: skill.baseDir,
+      allowedSymlinkTargetRealPaths: params.allowedSymlinkTargetRealPaths,
+    });
+    if (!baseDirRealPath) {
+      return false;
+    }
+    const skillFileRealPath = resolveContainedSkillPath({
+      source: params.source,
+      rootDir: params.rootDir,
+      rootRealPath: params.rootRealPath,
+      trustedRootRealPaths: params.trustedRootRealPaths,
+      candidatePath: skill.filePath,
+      allowedSymlinkTargetRealPaths: params.allowedSymlinkTargetRealPaths,
+    });
+    return Boolean(skillFileRealPath);
+  });
 }
 
 export function resolveNestedSkillsRoot(
@@ -610,6 +649,10 @@ function loadContainedSkillRecords(params: {
   source: string;
   maxSkillFileBytes: number;
   canonicalSkillDir?: string;
+  rootDir: string;
+  rootRealPath: string;
+  trustedRootRealPaths?: readonly string[];
+  allowedSymlinkTargetRealPaths?: readonly string[];
 }): LoadedSkillRecord[] {
   const expectedBaseDir = path.resolve(params.skillDir);
   const loaded = loadSkillsFromDirSafe({
@@ -620,10 +663,18 @@ function loadContainedSkillRecords(params: {
   const records = unwrapLoadedSkillRecords(loaded).filter(
     (record) => path.resolve(record.skill.baseDir) === expectedBaseDir,
   );
+  const containedRecords = filterLoadedSkillRecordsInsideRoot({
+    records,
+    source: params.source,
+    rootDir: params.rootDir,
+    rootRealPath: params.rootRealPath,
+    trustedRootRealPaths: params.trustedRootRealPaths,
+    allowedSymlinkTargetRealPaths: params.allowedSymlinkTargetRealPaths,
+  });
   const canonicalSkillDir = params.canonicalSkillDir;
   return canonicalSkillDir
-    ? records.map((record) => canonicalizeLoadedSkillRecord(record, canonicalSkillDir))
-    : records;
+    ? containedRecords.map((record) => canonicalizeLoadedSkillRecord(record, canonicalSkillDir))
+    : containedRecords;
 }
 
 function readSourceInstallSkillKey(skillDir: string): string | undefined {
@@ -737,6 +788,7 @@ function resolveSkillRootCandidatePath(params: {
   source: string;
   rootDir: string;
   rootRealPath: string;
+  trustedRootRealPaths?: readonly string[];
   candidatePath: string;
   allowedSymlinkTargetRealPaths: readonly string[];
 }): string | null {
@@ -747,6 +799,7 @@ function resolveSkillRootCandidatePath(params: {
     source: params.source,
     rootDir: params.rootDir,
     rootRealPath: params.rootRealPath,
+    trustedRootRealPaths: params.trustedRootRealPaths,
     candidatePath: params.candidatePath,
     allowedSymlinkTargetRealPaths: shouldUseConfiguredSymlinkTargets(params.source)
       ? params.allowedSymlinkTargetRealPaths
@@ -760,15 +813,19 @@ function canonicalSkillDirForSource(source: string, skillDirRealPath: string): s
 
 function resolveSkillFilePath(params: {
   source: string;
-  skillDir: string;
-  skillDirRealPath: string;
+  rootDir: string;
+  rootRealPath: string;
+  trustedRootRealPaths?: readonly string[];
   candidatePath: string;
+  allowedSymlinkTargetRealPaths?: readonly string[];
 }): string | null {
   return resolveContainedSkillPath({
     source: params.source,
-    rootDir: params.skillDir,
-    rootRealPath: params.skillDirRealPath,
+    rootDir: params.rootDir,
+    rootRealPath: params.rootRealPath,
+    trustedRootRealPaths: params.trustedRootRealPaths,
     candidatePath: params.candidatePath,
+    allowedSymlinkTargetRealPaths: params.allowedSymlinkTargetRealPaths,
   });
 }
 
@@ -783,11 +840,17 @@ function loadGeneratedPluginSkillRecords(params: {
   pluginSkillDirs: readonly string[];
   source: string;
   limits: ResolvedSkillsLimits;
+  trustedRootRealPaths?: readonly string[];
+  allowedSymlinkTargetRealPaths?: readonly string[];
 }): LoadedSkillRecord[] {
   const allowedRootRealPaths = resolvePluginSkillRootRealPaths(params.pluginSkillDirs);
   if (allowedRootRealPaths.length === 0) {
     return [];
   }
+  const trustedRootRealPaths = [
+    ...allowedRootRealPaths,
+    ...(params.trustedRootRealPaths ?? []),
+  ].filter((dir, index, all) => all.indexOf(dir) === index);
 
   const rootDir = path.resolve(params.pluginSkillsDir);
   if (!fs.existsSync(rootDir)) {
@@ -861,6 +924,10 @@ function loadGeneratedPluginSkillRecords(params: {
       skillDir,
       source: params.source,
       maxSkillFileBytes: params.limits.maxSkillFileBytes,
+      rootDir,
+      rootRealPath,
+      trustedRootRealPaths,
+      allowedSymlinkTargetRealPaths: params.allowedSymlinkTargetRealPaths,
     });
     loadedSkills.push(
       ...loadedRecords.map((record) => setSyncSourceForPluginSkill(record, skillDirRealPath)),
@@ -892,7 +959,11 @@ function loadSkillEntries(
   const limits = resolveSkillsLimits(opts?.config, opts?.agentId);
   const allowedSymlinkTargetRealPaths = resolveAllowedSkillSymlinkTargetRealPaths(opts?.config);
 
-  const loadSkills = (params: { dir: string; source: string }): LoadedSkillRecord[] => {
+  const loadSkills = (params: {
+    dir: string;
+    source: string;
+    trustedRootRealPaths?: readonly string[];
+  }): LoadedSkillRecord[] => {
     const rootDir = path.resolve(params.dir);
     if (!fs.existsSync(rootDir)) {
       return [];
@@ -907,6 +978,7 @@ function loadSkillEntries(
       source: params.source,
       rootDir,
       rootRealPath,
+      trustedRootRealPaths: params.trustedRootRealPaths,
       candidatePath: baseDir,
       allowedSymlinkTargetRealPaths,
     });
@@ -919,8 +991,10 @@ function loadSkillEntries(
     if (fs.existsSync(rootSkillMd)) {
       const rootSkillRealPath = resolveSkillFilePath({
         source: params.source,
-        skillDir: baseDir,
-        skillDirRealPath: baseDirRealPath,
+        rootDir,
+        rootRealPath: baseDirRealPath,
+        trustedRootRealPaths: params.trustedRootRealPaths,
+        allowedSymlinkTargetRealPaths,
         candidatePath: rootSkillMd,
       });
       if (!rootSkillRealPath) {
@@ -946,6 +1020,10 @@ function loadSkillEntries(
         source: params.source,
         maxSkillFileBytes: limits.maxSkillFileBytes,
         canonicalSkillDir: canonicalSkillDirForSource(params.source, baseDirRealPath),
+        rootDir,
+        rootRealPath: baseDirRealPath,
+        trustedRootRealPaths: params.trustedRootRealPaths,
+        allowedSymlinkTargetRealPaths,
       });
     }
 
@@ -1019,6 +1097,10 @@ function loadSkillEntries(
           source: params.source,
           maxSkillFileBytes: limits.maxSkillFileBytes,
           canonicalSkillDir: canonicalSkillDirForSource(params.source, skillDirRealPath),
+          rootDir,
+          rootRealPath: skillDirRealPath,
+          trustedRootRealPaths: params.trustedRootRealPaths,
+          allowedSymlinkTargetRealPaths,
         }),
       );
     };
@@ -1041,6 +1123,7 @@ function loadSkillEntries(
         rootDir,
         rootRealPath: baseDirRealPath,
         candidatePath: candidate.skillDir,
+        trustedRootRealPaths: params.trustedRootRealPaths,
         allowedSymlinkTargetRealPaths,
       });
       if (!skillDirRealPath) {
@@ -1051,8 +1134,10 @@ function loadSkillEntries(
       if (fs.existsSync(skillMd)) {
         const skillMdRealPath = resolveSkillFilePath({
           source: params.source,
-          skillDir: candidate.skillDir,
-          skillDirRealPath,
+          rootDir,
+          rootRealPath: skillDirRealPath,
+          trustedRootRealPaths: params.trustedRootRealPaths,
+          allowedSymlinkTargetRealPaths,
           candidatePath: skillMd,
         });
         if (skillMdRealPath) {
@@ -1163,6 +1248,22 @@ function loadSkillEntries(
         pluginSkillsDir,
       });
   const mergedExtraDirs = [...extraDirs, ...pluginSkillDirs];
+  const osHomeDir = resolveUserHomeDir();
+  const personalAgentsSkillsDir = osHomeDir
+    ? path.resolve(osHomeDir, ".agents", "skills")
+    : path.resolve(".agents", "skills");
+  const projectAgentsSkillsDir = path.resolve(workspaceDir, ".agents", "skills");
+  const trustedSkillRootDirs = [
+    ...mergedExtraDirs.map((dir) => resolveUserPath(dir)),
+    managedSkillsDir,
+    personalAgentsSkillsDir,
+    projectAgentsSkillsDir,
+    workspaceSkillsDir,
+  ];
+  const trustedRootRealPaths = trustedSkillRootDirs
+    .map((dir) => tryRealpath(path.resolve(dir)))
+    .filter((dir): dir is string => !!dir)
+    .filter((dir, index, all) => all.indexOf(dir) === index);
 
   const bundledSkills = bundledSkillsDir
     ? loadSkills({
@@ -1176,6 +1277,7 @@ function loadSkillEntries(
       return loadSkills({
         dir: resolved,
         source: "openclaw-extra",
+        trustedRootRealPaths,
       });
     }),
     ...loadGeneratedPluginSkillRecords({
@@ -1183,6 +1285,8 @@ function loadSkillEntries(
       pluginSkillDirs,
       source: "openclaw-extra",
       limits,
+      trustedRootRealPaths,
+      allowedSymlinkTargetRealPaths,
     }),
   ];
   const managedSkills = workspaceOnly
@@ -1190,27 +1294,26 @@ function loadSkillEntries(
     : loadSkills({
         dir: managedSkillsDir,
         source: "openclaw-managed",
+        trustedRootRealPaths,
       });
-  const osHomeDir = resolveUserHomeDir();
-  const personalAgentsSkillsDir = osHomeDir
-    ? path.resolve(osHomeDir, ".agents", "skills")
-    : path.resolve(".agents", "skills");
   const personalAgentsSkills = workspaceOnly
     ? []
     : loadSkills({
         dir: personalAgentsSkillsDir,
         source: "agents-skills-personal",
+        trustedRootRealPaths,
       });
-  const projectAgentsSkillsDir = path.resolve(workspaceDir, ".agents", "skills");
   const projectAgentsSkills = workspaceOnly
     ? []
     : loadSkills({
         dir: projectAgentsSkillsDir,
         source: "agents-skills-project",
+        trustedRootRealPaths,
       });
   const workspaceSkills = loadSkills({
     dir: workspaceSkillsDir,
     source: "openclaw-workspace",
+    trustedRootRealPaths,
   });
 
   const merged = new Map<string, LoadedSkillRecord>();
