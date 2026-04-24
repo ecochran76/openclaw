@@ -265,7 +265,21 @@ append_unique_npm_bin() {
 
 package_dir_for_npm_bin() {
   local npm_bin="$1"
+  local prefix
+  prefix="$(npm_prefix_for_npm_bin "$npm_bin")"
+  if [[ -n "$prefix" ]]; then
+    printf '%s/lib/node_modules/openclaw\n' "$prefix"
+    return 0
+  fi
   "$npm_bin" root -g 2>/dev/null | sed 's:/*$::' | awk '{print $0 "/openclaw"}'
+}
+
+npm_prefix_for_npm_bin() {
+  local npm_bin="$1"
+  if [[ "$npm_bin" == */bin/npm ]]; then
+    dirname "$(dirname "$npm_bin")"
+  fi
+  return 0
 }
 
 append_npm_for_package_dir() {
@@ -288,6 +302,14 @@ collect_gateway_package_dirs() {
     sort -u
 }
 
+collect_nvm_openclaw_npm_bins() {
+  local candidate
+  for candidate in "$HOME"/.nvm/versions/node/v*/bin/openclaw; do
+    [[ -x "$candidate" ]] || continue
+    printf '%s/npm\n' "$(dirname "$candidate")"
+  done
+}
+
 collect_install_npm_bins() {
   INSTALL_NPM_BINS=()
   append_unique_npm_bin "$NPM_BIN"
@@ -301,16 +323,21 @@ collect_install_npm_bins() {
   while IFS= read -r gateway_package_dir; do
     append_npm_for_package_dir "$gateway_package_dir"
   done < <(collect_gateway_package_dirs)
+  local nvm_npm_bin
+  while IFS= read -r nvm_npm_bin; do
+    append_unique_npm_bin "$nvm_npm_bin"
+  done < <(collect_nvm_openclaw_npm_bins)
 }
 
 install_tarball_globally() {
   local npm_bin="$1"
-  local package_dir backup_label backup_tgz
+  local package_dir backup_label backup_tgz npm_prefix
   package_dir="$(package_dir_for_npm_bin "$npm_bin")"
   if [[ -z "$package_dir" ]]; then
     echo "warning: skipping npm install target with unresolved package dir: $npm_bin"
     return 0
   fi
+  npm_prefix="$(npm_prefix_for_npm_bin "$npm_bin")"
   if [[ -d "$package_dir" ]]; then
     backup_label="$(printf '%s' "$package_dir" | sed 's|^/||; s|[^A-Za-z0-9._-]|_|g' | cut -c1-120)"
     backup_tgz="$BACKUP_DIR/openclaw-global-backup-$backup_label-$TIMESTAMP.tgz"
@@ -320,7 +347,11 @@ install_tarball_globally() {
     echo "warning: global openclaw package dir not found at $package_dir"
   fi
   echo "info: installing tarball with npm binary: $npm_bin"
-  run "'$npm_bin' i -g '$PKG_TGZ'"
+  if [[ -n "$npm_prefix" ]]; then
+    run "NPM_CONFIG_PREFIX='$npm_prefix' '$npm_bin' i -g '$PKG_TGZ'"
+  else
+    run "'$npm_bin' i -g '$PKG_TGZ'"
+  fi
 }
 
 verify_installed_openclaw_bins() {
