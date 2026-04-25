@@ -11,10 +11,16 @@ deliver a final message successfully through the OpenClaw bound message path
 while the background task and cron run are marked `error` because an earlier
 non-final send tool failed.
 
-This was observed during a live Odollo SoyLei daily CRM report validation. The
+This was observed during live Odollo SoyLei daily CRM report validation. The
 Odollo side produced valid daily report artifacts and OpenClaw delivered the
-final report to the bound Slack channel, but OpenClaw run metadata showed the
-wrong model and a misleading failed-task state.
+final report to the bound Slack channel, but early run metadata showed the
+wrong model and one run had a misleading failed-task state.
+
+Follow-up after refreshing runtime instructions produced a later run that did
+use `gpt-5.5` and succeeded. That narrows the model concern: the first two runs
+still need explanation because their summaries claimed the configured model
+while cron run metadata recorded `gpt-5.4-mini`, but the latest run shows model
+override propagation can work in the current runtime state.
 
 ## Bug Report Draft
 
@@ -22,12 +28,15 @@ Bug type: Cron model override / task delivery status accounting
 
 Beta release blocker: No
 
-Summary: A cron job configured with a stronger model override
+Summary: Early runs of a cron job configured with a stronger model override
 `openai-codex/gpt-5.5` and `medium` thinking launched the agent turn with
-`openai-codex/gpt-5.4-mini`, apparently the configured agent default. The run
+`openai-codex/gpt-5.4-mini`, apparently the configured agent default. One run
 also delivered the final Slack message through the OpenClaw bound message tool,
 but `openclaw tasks list`, `openclaw tasks show`, and `openclaw cron runs`
 reported the run as failed because an earlier Slack Mirror send attempt failed.
+After runtime instruction refresh, a later run used `gpt-5.5` and succeeded, so
+the remaining need is to explain and make visible why earlier cron runs ignored
+or failed to reflect the model override.
 
 Steps to reproduce:
 
@@ -54,7 +63,7 @@ Expected behavior:
 - Task and cron status should not require operators to infer this distinction
   from raw trajectory logs.
 
-Actual behavior observed:
+Actual behavior observed in early runs:
 
 - Cron job config contained:
   - `payload.model: openai-codex/gpt-5.5`
@@ -75,6 +84,17 @@ Actual behavior observed:
   while its terminal summary claimed the workflow itself completed and posted
   the final report.
 
+Follow-up behavior after runtime refresh:
+
+- A later manual cron run recorded:
+  - `status: ok`
+  - actual model: `gpt-5.5`
+  - `delivered: true`
+  - `deliveryStatus: delivered`
+  - `fallbackUsed: false`
+- That later run posted another copy of the daily report, showing the need for
+  idempotent daily-report repost guards in the agent workflow or cron runner.
+
 ## Source Areas To Inspect
 
 - Cron job payload to agent-session launch path.
@@ -85,6 +105,8 @@ Actual behavior observed:
 - Distinction between plugin/tool send failures and OpenClaw bound-channel
   final delivery.
 - Cron run history schema for configured model vs actual model.
+- Idempotency or duplicate-post prevention for manually re-run daily report
+  jobs that have already posted a report for the report date.
 
 ## Acceptance Criteria
 
@@ -96,6 +118,8 @@ Actual behavior observed:
   solely because an earlier auxiliary send tool failed.
 - Cron/task output makes mixed outcomes explicit without requiring trajectory
   inspection.
+- Manual re-runs of a daily report can identify an already-posted report and
+  avoid duplicate bound-channel posts unless explicitly instructed to repost.
 - Regression coverage includes a cron-run fixture where:
   - requested model differs from agent default
   - one non-final send tool fails
