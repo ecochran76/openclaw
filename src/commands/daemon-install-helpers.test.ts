@@ -1409,6 +1409,37 @@ describe("buildGatewayInstallPlan — dotenv merge", () => {
     expect(plan.environment.PATH).toBe("/managed/bin:/usr/bin:/custom/go/bin");
   });
 
+  it("does not preserve stale node toolchain PATH segments from an existing service env", async () => {
+    mockNodeGatewayPlanFixture({
+      serviceEnvironment: {
+        HOME: "/from-service",
+        OPENCLAW_PORT: "3000",
+        PATH: "/usr/bin:/home/test/.nvm/current/bin:/home/test/.local/share/pnpm",
+        TMPDIR: "/tmp",
+      },
+    });
+
+    const plan = await buildGatewayInstallPlan({
+      env: { HOME: tmpDir },
+      port: 3000,
+      runtime: "node",
+      existingEnvironment: {
+        PATH: [
+          "/home/test/.nvm/versions/node/v24.13.0/bin",
+          "/home/test/.fnm/aliases/default/bin",
+          "/home/test/.volta/bin",
+          "/home/test/.asdf/shims",
+          "/home/test/.local/share/pnpm",
+          "/custom/go/bin",
+        ].join(path.delimiter),
+      },
+    });
+
+    expect(plan.environment.PATH).toBe(
+      "/usr/bin:/home/test/.nvm/current/bin:/home/test/.local/share/pnpm:/custom/go/bin",
+    );
+  });
+
   it("drops keys that were previously tracked as managed service env", async () => {
     mockNodeGatewayPlanFixture({
       serviceEnvironment: {

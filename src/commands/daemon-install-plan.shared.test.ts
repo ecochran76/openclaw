@@ -39,6 +39,13 @@ describe("resolveDaemonNodeBinDir", () => {
     expect(resolveDaemonNodeBinDir("/custom/node/bin/node")).toEqual(["/custom/node/bin"]);
   });
 
+  it("does not freeze mutable node version-manager bins into service PATH", () => {
+    expect(resolveDaemonNodeBinDir("/home/alice/.nvm/versions/node/v24.14.0/bin/node")).toBe(
+      undefined,
+    );
+    expect(resolveDaemonNodeBinDir("/home/alice/.fnm/current/bin/node")).toBeUndefined();
+  });
+
   it("ignores bare executable names", () => {
     expect(resolveDaemonNodeBinDir("node")).toBeUndefined();
   });

@@ -55,7 +55,21 @@ export function resolveDaemonNodeBinDir(nodePath?: string): string[] | undefined
   if (!trimmed || !path.isAbsolute(trimmed)) {
     return undefined;
   }
-  return [path.dirname(trimmed)];
+  const dir = path.dirname(trimmed);
+  const normalizedDir = dir.replaceAll("\\", "/");
+  if (
+    normalizedDir.includes("/.nvm/versions/") ||
+    normalizedDir.includes("/.fnm/") ||
+    normalizedDir.includes("/.volta/") ||
+    normalizedDir.includes("/.asdf/") ||
+    normalizedDir.includes("/.n/") ||
+    normalizedDir.includes("/.nodenv/") ||
+    normalizedDir.includes("/.nodebrew/") ||
+    normalizedDir.includes("/nvs/")
+  ) {
+    return undefined;
+  }
+  return [dir];
 }
 
 function isOpenClawCommandBasename(basename: string, platform: NodeJS.Platform): boolean {

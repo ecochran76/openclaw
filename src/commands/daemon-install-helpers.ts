@@ -358,6 +358,22 @@ function mergeServicePath(
     candidate === parent || candidate.startsWith(`${parent}${path.sep}`);
   const isUnsafeProcPath = (candidate: string) =>
     candidate === `${path.sep}proc` || candidate.startsWith(`${path.sep}proc${path.sep}`);
+  const isMutableNodeToolchainSegment = (segment: string) => {
+    const normalized = segment.replaceAll("\\", "/");
+    return (
+      normalized.includes("/.nvm/versions/") ||
+      normalized.includes("/.fnm/") ||
+      normalized.includes("/.volta/") ||
+      normalized.includes("/.asdf/") ||
+      normalized.includes("/.n/") ||
+      normalized.includes("/.nodenv/") ||
+      normalized.includes("/.nodebrew/") ||
+      normalized.includes("/nvs/") ||
+      normalized.includes("/.local/share/pnpm/") ||
+      normalized.includes("/pnpm/") ||
+      normalized.endsWith("/pnpm")
+    );
+  };
   const realpathExistingPath = (candidate: string): string | undefined => {
     const parts: string[] = [];
     let current = candidate;
@@ -382,6 +398,9 @@ function mergeServicePath(
     }
     const normalized = path.normalize(segment);
     if (isUnsafeProcPath(normalized)) {
+      return undefined;
+    }
+    if (isMutableNodeToolchainSegment(normalized)) {
       return undefined;
     }
     const cwd = path.resolve(process.cwd());
