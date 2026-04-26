@@ -200,3 +200,12 @@ This runbook is a dated log of planning-contract and execution events that shoul
 - Kept possible stricter live-patch preflight as future work for a new serialized plan only if the next rebase/live-patch cycle shows repeated operator mistakes around `--live-patch`.
 - Validation checked:
   - `rg -n "Phase 5 is in progress|Continue Phase 5|remaining Phase 5|The next implementation slice is Phase 5" docs/dev/plans/0001-2026-04-20-plugin-survivability-roadmap.md RUNBOOK.md docs/dev/local-feature-index.md` returned only historical Turn 15 context in `RUNBOOK.md`.
+
+## Turn 18 | 2026-04-26
+
+- Created `docs/dev/plans/0002-2026-04-26-openclaw-agent-skill-catalog.md` for the OpenClaw-specific Codex agent skill catalog.
+- Added the first skill batch:
+  - `.agents/skills/openclaw-gateway-operator/SKILL.md`
+  - `.agents/skills/openclaw-auth-profile-debugger/SKILL.md`
+  - `.agents/skills/openclaw-feature-preservation/SKILL.md`
+- Updated `ROADMAP.md` with the new skill catalog plan.
