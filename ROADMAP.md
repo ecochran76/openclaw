@@ -15,3 +15,9 @@ The next implementation slice is the automation command/status seam.
 State: OPEN
 
 Current State: `docs/dev/plans/0002-2026-04-26-openclaw-agent-skill-catalog.md` tracks repo-local skills that make Codex agents better at recurring OpenClaw operator workflows. The first implementation slice adds gateway operation, auth profile debugging, and local feature preservation skills.
+
+## P03 | OpenClaw Agent Skill Catalog Batch 2
+
+State: OPEN
+
+Current State: `docs/dev/plans/0003-2026-04-26-openclaw-agent-skill-catalog-batch-2.md` tracks the second skill batch for automation maintenance, Slack runtime debugging, agent bootstrap diagnostics, and plugin survivability decisions.
