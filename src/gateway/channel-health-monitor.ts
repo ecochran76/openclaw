@@ -179,6 +179,7 @@ export function startChannelHealthMonitor(deps: ChannelHealthMonitorDeps): Chann
             if (status.running) {
               await channelManager.stopChannel(channelId as ChannelId, accountId, {
                 manual: false,
+                forceRetireOnTimeout: true,
               });
             }
             channelManager.resetRestartAttempts(channelId as ChannelId, accountId);

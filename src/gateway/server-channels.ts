@@ -233,6 +233,7 @@ type StartChannelOptions = {
 
 type StopChannelOptions = {
   manual?: boolean;
+  forceRetireOnTimeout?: boolean;
 };
 
 async function waitForDeferredAccountStart(
@@ -524,6 +525,14 @@ export function createChannelManager(opts: ChannelManagerOptions): ChannelManage
         } | null = null;
         let channelRuntimeForTask: PluginRuntimeChannel | undefined;
         let stopApprovalBootstrap: () => Promise<void> = async () => {};
+        const isCurrentLifecycle = () => store.aborts.get(id) === abort;
+        const setRuntimeForCurrentLifecycle = (next: ChannelAccountSnapshot) => {
+          if (!isCurrentLifecycle()) {
+            log.debug?.(`[${id}] ignored stale channel status update after lifecycle retired`);
+            return;
+          }
+          setRuntime(channelId, id, next);
+        };
         const stopTaskScopedApprovalRuntime = async () => {
           const scopedRuntime = scopedChannelRuntime;
           scopedChannelRuntime = null;
@@ -628,7 +637,7 @@ export function createChannelManager(opts: ChannelManagerOptions): ChannelManage
             } else if (startupTrace) {
               await waitForChannelStartupHandoff();
             }
-            if (abort.signal.aborted || manuallyStopped.has(rKey)) {
+            if (!isCurrentLifecycle() || abort.signal.aborted || manuallyStopped.has(rKey)) {
               return;
             }
             let startAccountTask: ReturnType<typeof startAccount> | undefined;
@@ -677,7 +686,9 @@ export function createChannelManager(opts: ChannelManagerOptions): ChannelManage
                 return;
               }
               const message = formatErrorMessage(err);
-              setRuntime(channelId, id, { accountId: id, lastError: message });
+              if (isCurrentLifecycle()) {
+                setRuntime(channelId, id, { accountId: id, lastError: message });
+              }
               log.error?.(`[${id}] channel exited: ${message}`);
             })
             .then(async () => {
@@ -881,9 +892,31 @@ export function createChannelManager(opts: ChannelManagerOptions): ChannelManage
           CHANNEL_STOP_ABORT_TIMEOUT_MS,
         );
         if (!stoppedCleanly) {
+          const forceRetireOnTimeout = optsLocal.forceRetireOnTimeout === true;
           log.warn?.(
-            `[${id}] channel stop exceeded ${CHANNEL_STOP_ABORT_TIMEOUT_MS}ms after abort; continuing shutdown`,
+            `[${id}] channel stop exceeded ${CHANNEL_STOP_ABORT_TIMEOUT_MS}ms after abort; ${
+              forceRetireOnTimeout ? "force-retiring stale lifecycle" : "continuing shutdown"
+            }`,
           );
+          if (forceRetireOnTimeout) {
+            if (store.aborts.get(id) === abort) {
+              store.aborts.delete(id);
+            }
+            if (store.tasks.get(id) === task) {
+              store.tasks.delete(id);
+            }
+            setRuntime(channelId, id, {
+              accountId: id,
+              running: false,
+              connected: false,
+              restartPending: false,
+              busy: false,
+              activeRuns: 0,
+              lastStopAt: Date.now(),
+              lastError: `channel stop timed out after ${CHANNEL_STOP_ABORT_TIMEOUT_MS}ms; stale lifecycle force-retired`,
+            });
+            return;
+          }
           const stoppedPatch = {
             restartPending: !manual,
             lastError: `channel stop timed out after ${CHANNEL_STOP_ABORT_TIMEOUT_MS}ms`,
