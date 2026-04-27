@@ -850,9 +850,9 @@ describe("modelsAuthLoginCommand", () => {
     await modelsAuthLoginCommand({ provider: "openai-codex", setDefault: true }, runtime);
 
     expect(lastUpdatedConfig?.agents?.defaults?.model).toEqual({
-      primary: "openai/gpt-5.5",
+      primary: "openai-codex/gpt-5.5",
     });
-    expect(runtime.log).toHaveBeenCalledWith("Default model set to openai/gpt-5.5");
+    expect(runtime.log).toHaveBeenCalledWith("Default model set to openai-codex/gpt-5.5");
   });
 
   it("supports provider-owned Claude CLI migration without writing auth profiles", async () => {

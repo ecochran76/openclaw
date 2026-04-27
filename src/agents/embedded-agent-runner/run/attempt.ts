@@ -3288,6 +3288,10 @@ export async function runEmbeddedAttempt(
             heartbeatFiltered,
             getHistoryLimitFromSessionKey(params.sessionKey, params.config),
           );
+          const isOpenAIResponsesApi =
+            params.model.api === "openai-responses" ||
+            params.model.api === "azure-openai-responses" ||
+            params.model.api === "openai-codex-responses";
           // Re-run tool_use/tool_result pairing repair after truncation, since
           // limitHistoryTurns can orphan tool_result blocks by removing the
           // assistant message that contained the matching tool_use.

@@ -531,7 +531,7 @@ export function buildGoogleVideoGenerationProvider(
             ...(aspectRatio ? { aspectRatio } : {}),
             ...(resolution ? { resolution } : {}),
           },
-        });
+        } as never);
       } catch (error) {
         if (hasReferenceInputs || extractGoogleApiErrorCode(error) !== 404) {
           throw error;
