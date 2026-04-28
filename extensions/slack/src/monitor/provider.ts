@@ -433,28 +433,40 @@ export async function monitorSlackProvider(opts: MonitorSlackOpts = {}) {
     removeAckAfterReply,
   });
 
-  void (async () => {
-    const finishAuthStep = startSlackStartupStepTimer(runtime, "auth.test");
-    try {
-      const auth = await app.client.auth.test({ token: botToken });
-      const apiAppId = (auth as { api_app_id?: string }).api_app_id ?? "";
-      ctx.botUserId = auth.user_id ?? "";
-      ctx.botId = (auth as { bot_id?: string }).bot_id ?? "";
-      ctx.teamId = auth.team_id ?? "";
-      ctx.apiAppId = apiAppId;
-      if (apiAppId && expectedApiAppIdFromAppToken && apiAppId !== expectedApiAppIdFromAppToken) {
-        runtime.error?.(
-          `slack token mismatch: bot token api_app_id=${apiAppId} but app token looks like api_app_id=${expectedApiAppIdFromAppToken}`,
-        );
-      }
-    } catch (err) {
-      // Auth metadata improves self-filtering and routing, but Socket Mode should
-      // not be held hostage by a slow or transient auth.test request.
-      runtime.log?.(`slack auth metadata hydration failed; continuing. ${formatUnknownError(err)}`);
-    } finally {
-      finishAuthStep();
+  let authMetadataHydrationStarted = false;
+  const startAuthMetadataHydration = () => {
+    if (authMetadataHydrationStarted) {
+      return;
     }
-  })();
+    authMetadataHydrationStarted = true;
+    void (async () => {
+      const finishAuthStep = startSlackStartupStepTimer(runtime, "auth.test");
+      try {
+        const auth = await app.client.auth.test({ token: botToken });
+        const apiAppId = (auth as { api_app_id?: string }).api_app_id ?? "";
+        ctx.botUserId = auth.user_id ?? "";
+        ctx.botId = (auth as { bot_id?: string }).bot_id ?? "";
+        ctx.teamId = auth.team_id ?? "";
+        ctx.apiAppId = apiAppId;
+        if (apiAppId && expectedApiAppIdFromAppToken && apiAppId !== expectedApiAppIdFromAppToken) {
+          runtime.error?.(
+            `slack token mismatch: bot token api_app_id=${apiAppId} but app token looks like api_app_id=${expectedApiAppIdFromAppToken}`,
+          );
+        }
+      } catch (err) {
+        // Auth metadata improves self-filtering and routing, but Socket Mode should
+        // not be held hostage by a slow or transient auth.test request.
+        runtime.log?.(
+          `slack auth metadata hydration failed; continuing. ${formatUnknownError(err)}`,
+        );
+      } finally {
+        finishAuthStep();
+      }
+    })();
+  };
+  if (slackMode !== "socket") {
+    startAuthMetadataHydration();
+  }
 
   // Slack's socket-mode client keeps ping/pong health private and closes on
   // missed pongs. App events are useful status activity, but not transport proof.
@@ -500,7 +512,12 @@ export async function monitorSlackProvider(opts: MonitorSlackOpts = {}) {
     });
   }
 
-  if (resolveToken) {
+  let allowlistResolutionStarted = false;
+  const startAllowlistResolution = () => {
+    if (!resolveToken || allowlistResolutionStarted) {
+      return;
+    }
+    allowlistResolutionStarted = true;
     void (async () => {
       if (opts.abortSignal?.aborted) {
         return;
@@ -628,6 +645,9 @@ export async function monitorSlackProvider(opts: MonitorSlackOpts = {}) {
         }
       }
     })();
+  };
+  if (slackMode !== "socket") {
+    startAllowlistResolution();
   }
 
   const stopOnAbort = () => {
@@ -649,6 +669,8 @@ export async function monitorSlackProvider(opts: MonitorSlackOpts = {}) {
             abortSignal: opts.abortSignal,
             onStarted: () => {
               finishSocketStart();
+              startAuthMetadataHydration();
+              startAllowlistResolution();
               reconnectAttempts = 0;
               publishSlackConnectedStatus(opts.setStatus);
               if (!hasLoggedSocketConnected) {
