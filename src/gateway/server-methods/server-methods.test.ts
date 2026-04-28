@@ -12,6 +12,7 @@ import { GATEWAY_CLIENT_IDS } from "../../../packages/gateway-protocol/src/clien
 import { validateExecApprovalRequestParams } from "../../../packages/gateway-protocol/src/index.js";
 import { STREAM_ERROR_FALLBACK_TEXT } from "../../agents/stream-message-shared.js";
 import { HEARTBEAT_PROMPT } from "../../auto-reply/heartbeat.js";
+import type { HealthSummary } from "../../commands/health.types.js";
 import type { OpenClawConfig } from "../../config/types.openclaw.js";
 import { registerLegacyContextEngine } from "../../context-engine/legacy.registration.js";
 import {
@@ -4339,7 +4340,7 @@ describe("gateway healthHandlers.status scope handling", () => {
   });
 });
 
-describe("gateway healthHandlers.health cache freshness", () => {
+describe("gateway healthHandlers.health live channel runtime", () => {
   let healthHandlers: typeof import("./health.js").healthHandlers;
   let pricingState: typeof import("../model-pricing-cache-state.js");
   const contextEngineTestOwner = "plugin:health-test";
@@ -4362,84 +4363,118 @@ describe("gateway healthHandlers.health cache freshness", () => {
     clearContextEngineRuntimeQuarantine();
   });
 
-  it("refreshes cached health when runtime channel lifecycle has changed", async () => {
-    const cached = {
-      ok: true,
-      ts: Date.now(),
-      durationMs: 1,
-      channels: {
-        discord: {
-          configured: true,
-          running: false,
-          connected: false,
-          accounts: {
+  const baseHealth = {
+    ok: true,
+    ts: Date.now(),
+    durationMs: 1,
+    channels: {
+      slack: {
+        accountId: "default",
+        configured: true,
+        running: false,
+        lastStartAt: null,
+        lastStopAt: null,
+        lastError: null,
+        botTokenSource: "none",
+        appTokenSource: "none",
+        accounts: {
+          default: {
+            accountId: "default",
+            configured: true,
+            running: false,
+            lastStartAt: null,
+            lastStopAt: null,
+            lastError: null,
+            botTokenSource: "none",
+            appTokenSource: "none",
+          },
+        },
+      },
+    },
+    channelOrder: ["slack"],
+    channelLabels: { slack: "Slack" },
+    heartbeatSeconds: 0,
+    defaultAgentId: "main",
+    agents: [],
+    sessions: { path: "/tmp/openclaw-sessions.json", count: 0, recent: [] },
+  } satisfies HealthSummary;
+
+  function createHealthContext(overrides?: {
+    cached?: HealthSummary | null;
+    refreshed?: HealthSummary;
+  }) {
+    return {
+      getHealthCache: vi.fn(() => overrides?.cached ?? null),
+      refreshHealthSnapshot: vi.fn(async () => overrides?.refreshed ?? baseHealth),
+      logHealth: { error: vi.fn() },
+      getRuntimeSnapshot: vi.fn(() => ({
+        channels: {
+          slack: {
+            accountId: "default",
+            configured: true,
+            running: true,
+            connected: true,
+            lastStartAt: 1234,
+            lastStopAt: null,
+            lastError: null,
+            botTokenSource: "env",
+            appTokenSource: "env",
+          },
+        },
+        channelAccounts: {
+          slack: {
             default: {
               accountId: "default",
               configured: true,
-              running: false,
-              connected: false,
-            },
-          },
-        },
-      },
-      channelOrder: ["discord"],
-      channelLabels: { discord: "Discord" },
-      heartbeatSeconds: 0,
-      defaultAgentId: "main",
-      agents: [],
-      sessions: { path: "/tmp/sessions.json", count: 0, recent: [] },
-    };
-    const fresh = {
-      ...cached,
-      ts: cached.ts + 1,
-      channels: {
-        discord: {
-          ...cached.channels.discord,
-          running: true,
-          connected: true,
-          accounts: {
-            default: {
-              ...cached.channels.discord.accounts.default,
               running: true,
               connected: true,
+              lastStartAt: 1234,
+              lastStopAt: null,
+              lastError: null,
+              botTokenSource: "env",
+              appTokenSource: "env",
             },
           },
         },
-      },
+      })),
     };
+  }
+
+  it("overlays live channel lifecycle fields on refreshed health snapshots", async () => {
     const respond = vi.fn();
-    const refreshHealthSnapshot = vi.fn().mockResolvedValue(fresh);
+    const context = createHealthContext();
 
     await healthHandlers.health({
       req: {} as never,
       params: {} as never,
       respond: respond as never,
-      context: {
-        getHealthCache: () => cached,
-        refreshHealthSnapshot,
-        getRuntimeSnapshot: () => ({
-          channels: {},
-          channelAccounts: {
-            discord: {
-              default: {
-                accountId: "default",
-                running: true,
-                connected: true,
-              },
-            },
-          },
-        }),
-        logHealth: { error: vi.fn() },
-      } as never,
-      client: { connect: { role: "operator", scopes: ["operator.read"] } } as never,
+      context: context as never,
+      client: null,
       isWebchatConnect: () => false,
     });
 
-    expect(refreshHealthSnapshot).toHaveBeenCalledWith({
-      probe: false,
-      includeSensitive: false,
-    });
-    expect(respond).toHaveBeenCalledWith(true, fresh, undefined);
+    expect(respond).toHaveBeenCalledWith(
+      true,
+      expect.objectContaining({
+        channels: expect.objectContaining({
+          slack: expect.objectContaining({
+            running: true,
+            connected: true,
+            lastStartAt: 1234,
+            botTokenSource: "env",
+            appTokenSource: "env",
+            accounts: expect.objectContaining({
+              default: expect.objectContaining({
+                running: true,
+                connected: true,
+                lastStartAt: 1234,
+              }),
+            }),
+          }),
+        }),
+      }),
+      undefined,
+    );
   });
 
   it("preserves event-loop health sampled by the refresh path", async () => {
@@ -4685,6 +4720,7 @@ describe("gateway healthHandlers.health cache freshness", () => {
         },
       },
     };
+
     const respond = vi.fn();
     const refreshHealthSnapshot = vi.fn().mockResolvedValue(fresh);
 
@@ -4717,8 +4753,24 @@ describe("gateway healthHandlers.health cache freshness", () => {
       probe: false,
       includeSensitive: false,
     });
-    expect(respond).toHaveBeenCalledWith(true, fresh, undefined);
+    expect(respond).toHaveBeenCalledWith(
+      true,
+      expect.objectContaining({
+        channels: expect.objectContaining({
+          discord: expect.objectContaining({
+            accounts: expect.objectContaining({
+              work: expect.objectContaining({
+                running: true,
+                connected: true,
+              }),
+            }),
+          }),
+        }),
+      }),
+      undefined,
+    );
   });
+
 });
 
 describe("logs.tail", () => {

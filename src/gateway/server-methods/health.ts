@@ -87,12 +87,64 @@ function cachedHealthDiffersFromRuntime(
   return false;
 }
 
+function applyLiveChannelRuntime(
+  summary: HealthSummary,
+  runtime: ChannelRuntimeSnapshot,
+): HealthSummary {
+  const channels = { ...summary.channels };
+  const channelIds = new Set([
+    ...Object.keys(runtime.channels),
+    ...Object.keys(runtime.channelAccounts),
+  ]);
+
+  for (const channelId of channelIds) {
+    const runtimeChannel = runtime.channels[channelId];
+    const liveAccounts = runtime.channelAccounts[channelId] ?? {};
+    if (!runtimeChannel && Object.keys(liveAccounts).length === 0) {
+      continue;
+    }
+
+    const current = channels[channelId] ?? {
+      accountId: runtimeChannel?.accountId ?? "default",
+    };
+    const liveAccountId =
+      typeof runtimeChannel?.accountId === "string" && runtimeChannel.accountId.trim()
+        ? runtimeChannel.accountId
+        : current.accountId;
+    const currentAccounts =
+      current.accounts && typeof current.accounts === "object" ? current.accounts : {};
+    const nextAccounts = { ...currentAccounts };
+
+    for (const [accountId, accountRuntime] of Object.entries(liveAccounts)) {
+      if (!accountRuntime) {
+        continue;
+      }
+      nextAccounts[accountId] = {
+        ...(nextAccounts[accountId] ?? { accountId }),
+        ...accountRuntime,
+        accountId,
+      };
+    }
+
+    channels[channelId] = {
+      ...current,
+      ...(runtimeChannel ?? {}),
+      accountId: liveAccountId,
+      accounts: nextAccounts,
+    };
+  }
+
+  return { ...summary, channels };
+}
+
 /** Merges cheap live runtime facts into a cached health summary before responding. */
 function mergeCachedHealthRuntimeState(params: {
   cached: HealthSummary;
+  runtime: ChannelRuntimeSnapshot;
   eventLoop?: HealthSummary["eventLoop"];
 }): HealthSummary {
   const { contextEngines: _cachedContextEngines, ...cached } = params.cached;
+  const liveCached = applyLiveChannelRuntime(cached, params.runtime);
   const quarantinedContextEngines: NonNullable<HealthSummary["contextEngines"]>["quarantined"] = [];
   for (const entry of listContextEngineQuarantines()) {
     const summary: NonNullable<HealthSummary["contextEngines"]>["quarantined"][number] = {
@@ -107,13 +159,13 @@ function mergeCachedHealthRuntimeState(params: {
     quarantinedContextEngines.push(summary);
   }
   return {
-    ...cached,
+    ...liveCached,
     ...(params.eventLoop ? { eventLoop: params.eventLoop } : {}),
     ...(quarantinedContextEngines.length > 0
       ? { contextEngines: { quarantined: quarantinedContextEngines } }
       : {}),
     modelPricing: getGatewayModelPricingHealth({
-      enabled: params.cached.modelPricing?.state !== "disabled",
+      enabled: liveCached.modelPricing?.state !== "disabled",
     }),
   };
 }
@@ -148,6 +200,7 @@ export const healthHandlers: GatewayRequestHandlers = {
         true,
         mergeCachedHealthRuntimeState({
           cached,
+          runtime: context.getRuntimeSnapshot(),
           eventLoop: context.getEventLoopHealth?.(),
         }),
         undefined,
@@ -162,7 +215,7 @@ export const healthHandlers: GatewayRequestHandlers = {
     }
     try {
       const snap = await refreshHealthSnapshot({ probe: wantsProbe, includeSensitive });
-      respond(true, snap, undefined);
+      respond(true, applyLiveChannelRuntime(snap, context.getRuntimeSnapshot()), undefined);
     } catch (err) {
       respond(false, undefined, errorShape(ErrorCodes.UNAVAILABLE, formatForLog(err)));
     }
