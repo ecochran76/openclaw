@@ -74,10 +74,6 @@ import {
 } from "./reconnect-policy.js";
 import { setSlackDefaultSendIdentity } from "./send.runtime.js";
 import { registerSlackMonitorSlashCommands } from "./slash.js";
-import {
-  createSlackSocketRuntimeDiagnostics,
-  formatSlackSocketRuntimeDiagnostics,
-} from "./socket-diagnostics.js";
 import type { MonitorSlackOpts } from "./types.js";
 
 let slackBoltInterop: SlackBoltResolvedExports | undefined;
@@ -225,8 +221,6 @@ export async function monitorSlackProvider(opts: MonitorSlackOpts = {}) {
   const mainKey = normalizeMainKey(sessionCfg?.mainKey);
 
   const slackMode = opts.mode ?? account.config.mode ?? "socket";
-  const socketDiagnostics =
-    slackMode === "socket" ? createSlackSocketRuntimeDiagnostics() : undefined;
   const slackWebhookPath = normalizeSlackWebhookPath(account.config.webhookPath);
   const signingSecret = normalizeResolvedSecretInputString({
     value: account.config.signingSecret,
@@ -666,17 +660,14 @@ export async function monitorSlackProvider(opts: MonitorSlackOpts = {}) {
 
           reconnectAttempts += 1;
           const delayMs = computeBackoff(SLACK_SOCKET_RECONNECT_POLICY, reconnectAttempts);
-          const diagnostics = socketDiagnostics
-            ? `; ${formatSlackSocketRuntimeDiagnostics(socketDiagnostics.sample())}`
-            : "";
           runtime.log?.(
             warn(
-              `${formatSlackSocketReconnectMessage({
+              formatSlackSocketReconnectMessage({
                 event: disconnect.event,
                 attempt: reconnectAttempts,
                 delayMs,
                 error: disconnect.error,
-              })}${diagnostics}`,
+              }),
             ),
           );
           await gracefulStop();
@@ -697,16 +688,13 @@ export async function monitorSlackProvider(opts: MonitorSlackOpts = {}) {
           }
           reconnectAttempts += 1;
           const delayMs = computeBackoff(SLACK_SOCKET_RECONNECT_POLICY, reconnectAttempts);
-          const diagnostics = socketDiagnostics
-            ? `; ${formatSlackSocketRuntimeDiagnostics(socketDiagnostics.sample())}`
-            : "";
           runtime.error?.(
-            `${formatSlackSocketStartRetryMessage({
+            formatSlackSocketStartRetryMessage({
               attempt: reconnectAttempts,
               delayMs,
               error: err,
               sdkContext: socketModeLogger.getLastMessage(),
-            })}${diagnostics}`,
+            }),
           );
           try {
             await sleepWithAbort(delayMs, opts.abortSignal);
@@ -747,7 +735,6 @@ export async function monitorSlackProvider(opts: MonitorSlackOpts = {}) {
     opts.abortSignal?.removeEventListener("abort", stopOnAbort);
     unregisterUnhandledRejectionHandler();
     unregisterHttpHandler?.();
-    socketDiagnostics?.stop();
     await gracefulStop();
   }
 }
