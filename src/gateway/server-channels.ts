@@ -159,6 +159,23 @@ function applyDescribedAccountFields(
   if (described.mode !== undefined) {
     next.mode = described.mode;
   }
+  for (const key of [
+    "tokenSource",
+    "botTokenSource",
+    "appTokenSource",
+    "signingSecretSource",
+    "tokenStatus",
+    "botTokenStatus",
+    "appTokenStatus",
+    "signingSecretStatus",
+    "userTokenStatus",
+    "credentialSource",
+    "secretSource",
+  ] as const) {
+    if (described[key] !== undefined) {
+      next[key] = described[key];
+    }
+  }
   return next;
 }
 

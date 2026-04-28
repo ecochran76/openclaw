@@ -840,6 +840,10 @@ describe("server-channels auto restart", () => {
           enabled: resolved.enabled !== false,
           configured: false,
           mode: "webhook",
+          botTokenSource: "env",
+          appTokenSource: "env",
+          botTokenStatus: "available",
+          appTokenStatus: "available",
         }),
       }),
     );
@@ -848,6 +852,10 @@ describe("server-channels auto restart", () => {
     const account = snapshot.channelAccounts.discord?.[DEFAULT_ACCOUNT_ID];
     expect(account?.configured).toBe(false);
     expect(account?.mode).toBe("webhook");
+    expect(account?.botTokenSource).toBe("env");
+    expect(account?.appTokenSource).toBe("env");
+    expect(account?.botTokenStatus).toBe("available");
+    expect(account?.appTokenStatus).toBe("available");
   });
 
   it("passes channelRuntime through channel gateway context when provided", async () => {
