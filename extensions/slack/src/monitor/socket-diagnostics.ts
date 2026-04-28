@@ -1,7 +1,3 @@
-import { monitorEventLoopDelay } from "node:perf_hooks";
-
-type EventLoopDelayMonitor = ReturnType<typeof monitorEventLoopDelay>;
-
 export type SlackSocketRuntimeDiagnostics = {
   uptimeSeconds: number;
   rssMb: number;
@@ -14,8 +10,8 @@ export type SlackSocketRuntimeDiagnostics = {
   };
 };
 
-const NS_PER_MS = 1_000_000;
 const BYTES_PER_MB = 1024 * 1024;
+const SAMPLE_INTERVAL_MS = 1_000;
 
 function round(value: number, digits = 1): number {
   const scale = 10 ** digits;
@@ -26,18 +22,20 @@ function bytesToMb(value: number): number {
   return round(value / BYTES_PER_MB);
 }
 
-function nanosecondsToMs(value: number): number {
-  return round(value / NS_PER_MS, 2);
-}
-
 export function createSlackSocketRuntimeDiagnostics() {
-  let monitor: EventLoopDelayMonitor | undefined;
-  try {
-    monitor = monitorEventLoopDelay({ resolution: 20 });
-    monitor.enable();
-  } catch {
-    monitor = undefined;
-  }
+  let lastSampleAt = Date.now();
+  let lagSumMs = 0;
+  let lagCount = 0;
+  let lagMaxMs = 0;
+  const interval = setInterval(() => {
+    const now = Date.now();
+    const lagMs = Math.max(0, now - lastSampleAt - SAMPLE_INTERVAL_MS);
+    lastSampleAt = now;
+    lagSumMs += lagMs;
+    lagCount += 1;
+    lagMaxMs = Math.max(lagMaxMs, lagMs);
+  }, SAMPLE_INTERVAL_MS);
+  interval.unref?.();
 
   return {
     sample(): SlackSocketRuntimeDiagnostics {
@@ -48,20 +46,23 @@ export function createSlackSocketRuntimeDiagnostics() {
         heapUsedMb: bytesToMb(memory.heapUsed),
       };
 
-      if (monitor && monitor.max > 0) {
+      if (lagCount > 0) {
+        const meanMs = lagSumMs / lagCount;
         diagnostics.eventLoopLag = {
-          meanMs: nanosecondsToMs(Number.isFinite(monitor.mean) ? monitor.mean : 0),
-          maxMs: nanosecondsToMs(monitor.max),
-          p95Ms: nanosecondsToMs(monitor.percentile(95)),
-          p99Ms: nanosecondsToMs(monitor.percentile(99)),
+          meanMs: round(meanMs, 2),
+          maxMs: round(lagMaxMs, 2),
+          p95Ms: round(lagMaxMs, 2),
+          p99Ms: round(lagMaxMs, 2),
         };
-        monitor.reset();
+        lagSumMs = 0;
+        lagCount = 0;
+        lagMaxMs = 0;
       }
 
       return diagnostics;
     },
     stop() {
-      monitor?.disable();
+      clearInterval(interval);
     },
   };
 }
