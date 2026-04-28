@@ -339,6 +339,26 @@ describe("monitorSlackProvider tool results", () => {
     expect(getSlackHandlers()?.size ?? 0).toBe(0);
   });
 
+  it("does not block monitor startup on slow Slack auth metadata hydration", async () => {
+    const client = getSlackClient();
+    let resolveAuth: (value: Record<string, unknown>) => void = () => {};
+    client.auth.test.mockReturnValue(
+      new Promise((resolve) => {
+        resolveAuth = resolve;
+      }),
+    );
+
+    const { controller, run } = startSlackMonitor(monitorSlackProvider);
+    await getSlackHandlerOrThrow("message");
+
+    expect(client.auth.test).toHaveBeenCalledTimes(1);
+    expect(getSlackHandlers()?.has("message")).toBe(true);
+
+    controller.abort();
+    resolveAuth({ user_id: "bot-user", team_id: "T1" });
+    await run;
+  });
+
   it("skips tool summaries with responsePrefix", async () => {
     await runDefaultMessageAndExpectSentText("PFX final reply");
   });

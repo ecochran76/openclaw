@@ -98,6 +98,7 @@ function loadSlackRelaySource(): Promise<SlackRelaySourceModule> {
 
 const SLACK_WEBHOOK_MAX_BODY_BYTES = 1024 * 1024;
 const SLACK_WEBHOOK_BODY_TIMEOUT_MS = 30_000;
+const SLACK_STARTUP_SLOW_STEP_MS = 5_000;
 
 function resolveStableSlackUserIdEntry(raw: string): string | undefined {
   const trimmed = raw.trim();
@@ -183,6 +184,28 @@ function resolveSlackRelayConfig(params: { relay: unknown; accountId: string }):
     url,
     authToken,
     gatewayId,
+  };
+}
+
+function startSlackStartupStepTimer(runtime: RuntimeEnv, label: string): () => void {
+  const startedAt = Date.now();
+  let finished = false;
+  const timer = setTimeout(() => {
+    runtime.log?.(
+      `slack startup step "${label}" still running after ${Math.round((Date.now() - startedAt) / 1000)}s`,
+    );
+  }, SLACK_STARTUP_SLOW_STEP_MS);
+  timer.unref?.();
+  return () => {
+    if (finished) {
+      return;
+    }
+    finished = true;
+    clearTimeout(timer);
+    const elapsedMs = Date.now() - startedAt;
+    if (elapsedMs >= 1_000) {
+      runtime.log?.(`slack startup step "${label}" completed in ${elapsedMs}ms`);
+    }
   };
 }
 
@@ -370,42 +393,7 @@ export async function monitorSlackProvider(opts: MonitorSlackOpts = {}) {
     return true;
   });
 
-  let botUserId = "";
-  let botId = "";
-  let teamId = "";
-  let apiAppId = "";
-  const expectedApiAppIdFromAppToken =
-    slackMode === "socket" ? parseApiAppIdFromAppToken(appToken) : undefined;
-  let authTestFailed = false;
-  let authTestError: string | undefined;
-  try {
-    const auth = await app.client.auth.test();
-    botUserId = auth.user_id ?? "";
-    botId = (auth as { bot_id?: string }).bot_id ?? "";
-    teamId = auth.team_id ?? "";
-    apiAppId = (auth as { api_app_id?: string }).api_app_id ?? "";
-    if (!botUserId) {
-      authTestFailed = true;
-      authTestError = "auth.test returned no user_id";
-    }
-  } catch (err) {
-    authTestFailed = true;
-    authTestError = err instanceof Error ? err.message : String(err);
-  }
-  if (authTestFailed) {
-    runtime.log?.(
-      warn(
-        `[${account.accountId}] slack auth.test failed at boot (${authTestError ?? "unknown error"}); ` +
-          "explicit bot-mention detection will be disabled until restart with a valid bot token",
-      ),
-    );
-  }
-
-  if (apiAppId && expectedApiAppIdFromAppToken && apiAppId !== expectedApiAppIdFromAppToken) {
-    runtime.error?.(
-      `slack token mismatch: bot token api_app_id=${apiAppId} but app token looks like api_app_id=${expectedApiAppIdFromAppToken}`,
-    );
-  }
+  const expectedApiAppIdFromAppToken = parseApiAppIdFromAppToken(appToken);
 
   const ctx = createSlackMonitorContext({
     cfg,
@@ -413,10 +401,10 @@ export async function monitorSlackProvider(opts: MonitorSlackOpts = {}) {
     botToken,
     app,
     runtime,
-    botUserId,
-    botId,
-    teamId,
-    apiAppId,
+    botUserId: "",
+    botId: "",
+    teamId: "",
+    apiAppId: expectedApiAppIdFromAppToken ?? "",
     historyLimit,
     dmHistoryLimit,
     sessionScope,
@@ -444,6 +432,29 @@ export async function monitorSlackProvider(opts: MonitorSlackOpts = {}) {
     mediaMaxBytes,
     removeAckAfterReply,
   });
+
+  void (async () => {
+    const finishAuthStep = startSlackStartupStepTimer(runtime, "auth.test");
+    try {
+      const auth = await app.client.auth.test({ token: botToken });
+      const apiAppId = (auth as { api_app_id?: string }).api_app_id ?? "";
+      ctx.botUserId = auth.user_id ?? "";
+      ctx.botId = (auth as { bot_id?: string }).bot_id ?? "";
+      ctx.teamId = auth.team_id ?? "";
+      ctx.apiAppId = apiAppId;
+      if (apiAppId && expectedApiAppIdFromAppToken && apiAppId !== expectedApiAppIdFromAppToken) {
+        runtime.error?.(
+          `slack token mismatch: bot token api_app_id=${apiAppId} but app token looks like api_app_id=${expectedApiAppIdFromAppToken}`,
+        );
+      }
+    } catch (err) {
+      // Auth metadata improves self-filtering and routing, but Socket Mode should
+      // not be held hostage by a slow or transient auth.test request.
+      runtime.log?.(`slack auth metadata hydration failed; continuing. ${formatUnknownError(err)}`);
+    } finally {
+      finishAuthStep();
+    }
+  })();
 
   // Slack's socket-mode client keeps ping/pong health private and closes on
   // missed pongs. App events are useful status activity, but not transport proof.
@@ -474,7 +485,12 @@ export async function monitorSlackProvider(opts: MonitorSlackOpts = {}) {
   }
 
   registerSlackMonitorEvents({ ctx, account, handleSlackMessage, trackEvent });
-  await registerSlackMonitorSlashCommands({ ctx, account, trackEvent });
+  const finishSlashRegistration = startSlackStartupStepTimer(runtime, "slash registration");
+  try {
+    await registerSlackMonitorSlashCommands({ ctx, account, trackEvent });
+  } finally {
+    finishSlashRegistration();
+  }
   if (slackMode === "http" && slackHttpHandler) {
     unregisterHttpHandler = registerSlackHttpHandler({
       path: slackWebhookPath,
@@ -627,10 +643,12 @@ export async function monitorSlackProvider(opts: MonitorSlackOpts = {}) {
       let hasLoggedSocketConnected = false;
       while (!opts.abortSignal?.aborted) {
         try {
+          const finishSocketStart = startSlackStartupStepTimer(runtime, "socket start");
           const disconnect = await startSlackSocketAndWaitForDisconnect({
             app,
             abortSignal: opts.abortSignal,
             onStarted: () => {
+              finishSocketStart();
               reconnectAttempts = 0;
               publishSlackConnectedStatus(opts.setStatus);
               if (!hasLoggedSocketConnected) {
@@ -638,7 +656,11 @@ export async function monitorSlackProvider(opts: MonitorSlackOpts = {}) {
                 runtime.log?.("slack socket mode connected");
               }
             },
+          }).catch((err: unknown) => {
+            finishSocketStart();
+            throw err;
           });
+          finishSocketStart();
           if (!disconnect) {
             break;
           }
