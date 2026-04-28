@@ -662,6 +662,12 @@ function schedulePrimaryModelPrewarm(
   if (shouldSkipStartupModelPrewarm()) {
     return;
   }
+  if (!isTruthyEnvValue(process.env.OPENCLAW_GATEWAY_PREWARM_PRIMARY_MODEL)) {
+    return;
+  }
+  if (!params.cfg.agents?.defaults?.model) {
+    return;
+  }
   void measureStartup(params.startupTrace, "sidecars.model-prewarm", () =>
     prewarmConfiguredPrimaryModelWithTimeout(
       {
