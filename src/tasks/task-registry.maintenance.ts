@@ -325,6 +325,10 @@ function isTerminalTask(task: TaskRecord): boolean {
   return !isActiveTask(task);
 }
 
+function isRecoverableCronTask(task: TaskRecord): boolean {
+  return isActiveTask(task) || task.status === "lost";
+}
+
 function hasLostGraceExpired(task: TaskRecord, now: number): boolean {
   const referenceAt = task.lastEventAt ?? task.startedAt ?? task.createdAt;
   const graceMs = isChildlessNativeSubagentTask(task)
@@ -454,7 +458,7 @@ function resolveDurableCronTaskRecovery(
   task: TaskRecord,
   context: CronRecoveryContext,
 ): CronTerminalRecovery | undefined {
-  if (task.runtime !== "cron" || !isActiveTask(task)) {
+  if (task.runtime !== "cron" || !isRecoverableCronTask(task)) {
     return undefined;
   }
   const execution = parseCronExecutionId(task);
@@ -802,13 +806,19 @@ function markTaskLost(
 }
 
 function markTaskRecovered(task: TaskRecord, recovery: CronTerminalRecovery): TaskRecord {
+  const error =
+    recovery.error !== undefined
+      ? recovery.error
+      : recovery.status === "succeeded"
+        ? undefined
+        : task.error;
   const updated =
     taskRegistryMaintenanceRuntime.markTaskTerminalById({
       taskId: task.taskId,
       status: recovery.status,
       endedAt: recovery.endedAt,
       lastEventAt: recovery.lastEventAt,
-      ...(recovery.error !== undefined ? { error: recovery.error } : {}),
+      error,
       ...(recovery.terminalSummary !== undefined
         ? { terminalSummary: recovery.terminalSummary }
         : {}),
@@ -823,7 +833,11 @@ function projectTaskRecovered(task: TaskRecord, recovery: CronTerminalRecovery):
     status: recovery.status,
     endedAt: recovery.endedAt,
     lastEventAt: recovery.lastEventAt,
-    ...(recovery.error !== undefined ? { error: recovery.error } : {}),
+    ...(recovery.error !== undefined
+      ? { error: recovery.error }
+      : recovery.status === "succeeded"
+        ? { error: undefined }
+        : {}),
     ...(recovery.terminalSummary !== undefined
       ? { terminalSummary: recovery.terminalSummary }
       : {}),

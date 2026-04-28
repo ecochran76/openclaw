@@ -3,6 +3,7 @@
 import { describe, expect, it } from "vitest";
 import {
   buildEmptyExplicitToolAllowlistError,
+  buildUnavailableRuntimeToolsAllowError,
   collectExplicitToolAllowlistSources,
 } from "./tool-allowlist-guard.js";
 
@@ -96,5 +97,25 @@ describe("tool allowlist guard", () => {
         enforceWhenToolsDisabled: true,
       },
     ]);
+  });
+
+  it("explains that runtime toolsAllow cannot add tools filtered by profile", () => {
+    const error = buildUnavailableRuntimeToolsAllowError({
+      toolsAllow: [" exec ", "read", "message"],
+      callableToolNames: ["message"],
+      sourceLabel: "cron toolsAllow",
+    });
+
+    expect(error?.message).toContain("cron toolsAllow requested unavailable tool(s): exec, read");
+    expect(error?.message).toContain("final narrowing filter after tools.profile");
+  });
+
+  it("allows runtime toolsAllow when every requested tool remains callable", () => {
+    expect(
+      buildUnavailableRuntimeToolsAllowError({
+        toolsAllow: ["read", "exec"],
+        callableToolNames: ["exec", "read", "message"],
+      }),
+    ).toBeNull();
   });
 });

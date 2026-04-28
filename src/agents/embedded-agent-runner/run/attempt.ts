@@ -226,6 +226,7 @@ import {
 import { resolveAgentTimeoutMs } from "../../timeout.js";
 import {
   buildEmptyExplicitToolAllowlistError,
+  buildUnavailableRuntimeToolsAllowError,
   collectExplicitToolAllowlistSources,
 } from "../../tool-allowlist-guard.js";
 import { collectReplaySafeToolNames, isAgentToolReplaySafe } from "../../tool-replay-safety.js";
@@ -1819,6 +1820,14 @@ export async function runEmbeddedAttempt(
       toolsEnabled,
       disableTools: params.disableTools,
     });
+    const unavailableRuntimeToolsAllowError =
+      params.trigger === "cron"
+        ? buildUnavailableRuntimeToolsAllowError({
+            toolsAllow: params.toolsAllow,
+            callableToolNames: effectiveTools.map((tool) => tool.name),
+            sourceLabel: "cron toolsAllow",
+          })
+        : null;
     logAgentRuntimeToolDiagnostics({
       runtimePlan: params.runtimePlan,
       tools: effectiveTools,
@@ -3924,11 +3933,13 @@ export async function runEmbeddedAttempt(
       };
       try {
         const promptStartedAt = Date.now();
-        if (emptyExplicitToolAllowlistError) {
-          promptError = emptyExplicitToolAllowlistError;
+        const toolPrecheckError =
+          unavailableRuntimeToolsAllowError ?? emptyExplicitToolAllowlistError;
+        if (toolPrecheckError) {
+          promptError = toolPrecheckError;
           promptErrorSource = "precheck";
           skipPromptSubmission = true;
-          log.warn(`[tools] ${emptyExplicitToolAllowlistError.message}`);
+          log.warn(`[tools] ${toolPrecheckError.message}`);
         }
 
         // Run before_prompt_build hooks to allow plugins to inject prompt context.

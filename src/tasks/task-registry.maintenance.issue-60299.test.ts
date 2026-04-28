@@ -147,12 +147,13 @@ function createTaskRegistryMaintenanceHarness(params: {
       if (!current) {
         return null;
       }
+      const shouldPatchError = Object.prototype.hasOwnProperty.call(patch, "error");
       const next = {
         ...current,
         status: patch.status,
         endedAt: patch.endedAt,
         lastEventAt: patch.lastEventAt ?? patch.endedAt,
-        ...(patch.error !== undefined ? { error: patch.error } : {}),
+        ...(shouldPatchError ? { error: patch.error } : {}),
         ...(patch.terminalSummary !== undefined
           ? { terminalSummary: patch.terminalSummary ?? undefined }
           : {}),
@@ -574,6 +575,61 @@ describe("task-registry maintenance issue #60299", () => {
     expect(storedTask.status).toBe("failed");
     expect(storedTask.endedAt).toBe(startedAt + 5000);
     expect(storedTask.error).toBe("cron: job interrupted by gateway restart");
+  });
+
+  it("recovers already-lost cron tasks when durable state later proves successful completion", async () => {
+    const startedAt = Date.now() - GRACE_EXPIRED_MS;
+    const task = makeStaleTask({
+      runtime: "cron",
+      sourceId: "cron-job-state-late-ok",
+      runId: `cron:cron-job-state-late-ok:${startedAt}`,
+      startedAt,
+      endedAt: startedAt + GRACE_EXPIRED_MS,
+      lastEventAt: startedAt + GRACE_EXPIRED_MS,
+      status: "lost",
+      error: "backing session missing",
+    });
+
+    const { currentTasks } = createTaskRegistryMaintenanceHarness({
+      tasks: [task],
+      cronStore: {
+        version: 1,
+        jobs: [
+          {
+            id: "cron-job-state-late-ok",
+            name: "state late ok",
+            enabled: true,
+            createdAtMs: startedAt - 60_000,
+            updatedAtMs: startedAt + 2500,
+            schedule: { kind: "every", everyMs: 60_000, anchorMs: startedAt - 60_000 },
+            sessionTarget: "isolated",
+            wakeMode: "next-heartbeat",
+            payload: { kind: "agentTurn", message: "work" },
+            state: {
+              lastRunAtMs: startedAt,
+              lastRunStatus: "ok",
+              lastDurationMs: 2500,
+            },
+          },
+        ],
+      },
+    });
+
+    expect(reconcileInspectableTasks()).toEqual([
+      expect.objectContaining({
+        taskId: task.taskId,
+        status: "succeeded",
+        endedAt: startedAt + 2500,
+        error: undefined,
+      }),
+    ]);
+    expect(previewTaskRegistryMaintenance()).toMatchObject({ reconciled: 0, recovered: 1 });
+    expect(await runTaskRegistryMaintenance()).toMatchObject({ reconciled: 0, recovered: 1 });
+    expect(currentTasks.get(task.taskId)).toMatchObject({
+      status: "succeeded",
+      endedAt: startedAt + 2500,
+      error: undefined,
+    });
   });
 
   it("marks chat-backed cli tasks lost after the owning run context disappears", async () => {

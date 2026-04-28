@@ -176,6 +176,15 @@ If stdout is non-empty, that text is the delivered result. If stdout is empty an
   Restrict which tools the job can use, for example `--tools exec,read`.
 </ParamField>
 
+`--tools` / `payload.toolsAllow` is a final narrowing filter. It does not add
+tools that the job's effective `tools.profile`, agent tool policy, provider
+policy, sandbox policy, or plugin availability already removed. For example, an
+agent with `tools.profile: "messaging"` cannot gain `exec` or `read` by adding
+`--tools exec,read`; use a coding-profile cron agent or explicitly expose those
+tools in the agent's tool policy first. Cron fails before prompting the model
+when `toolsAllow` names tools that are unavailable after effective policy
+resolution.
+
 `--model` uses the selected allowed model as that job's primary model. It is not the same as a chat-session `/model` override: configured fallback chains still apply when the job primary fails. If the requested model is not allowed or cannot be resolved, cron fails the run with an explicit validation error instead of silently falling back to the job's agent/default model selection.
 
 Cron jobs can also carry payload-level `fallbacks`. When present, that list replaces the configured fallback chain for the job. Use `fallbacks: []` in the job payload/API when you want a strict cron run that tries only the selected model. If a job has `--model` but neither payload nor configured fallbacks, OpenClaw passes an explicit empty fallback override so the agent primary is not appended as a hidden extra retry target.

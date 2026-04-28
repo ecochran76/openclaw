@@ -127,6 +127,18 @@ For CLI-backed providers, the pre-model watchdog stays active until the external
 CLI turn starts, so session lookup, hook, auth, prompt, and CLI setup stalls are
 reported as pre-model cron failures.
 
+Note: `cron add|edit --tools ...` / payload `toolsAllow` only narrows the tools
+left after the job's effective `tools.profile`, agent policy, provider policy,
+sandbox policy, and plugin availability are resolved. It cannot add tools that a
+messaging or minimal profile filtered out. Cron fails before prompting the model
+when `toolsAllow` names tools that are unavailable after effective policy
+resolution.
+
+Note: if an isolated run throws `LiveSessionModelSwitchError`, cron persists the
+switched provider/model (and switched auth profile override when present) for
+the active run before retrying. The outer retry loop is bounded to 2 switch
+retries after the initial attempt, then aborts instead of looping forever.
+
 ## Scheduling
 
 ### One-shot jobs
@@ -232,6 +244,8 @@ Retention and pruning are controlled in config:
 
 <Note>
 If you have cron jobs from before the current delivery and store format, run `openclaw doctor --fix`. Doctor normalizes legacy cron fields (`jobId`, `schedule.cron`, top-level delivery fields including legacy `threadId`, payload `provider` delivery aliases) and migrates `notify: true` webhook fallback jobs from `cron.webhook` to explicit webhook delivery. Jobs that already announce to a chat keep that delivery and get a completion webhook destination. When `cron.webhook` is unset, the inert top-level `notify` marker is removed for jobs with no migration target (the existing delivery is preserved unchanged), so `doctor --fix` no longer keeps re-warning about them.
+
+Doctor also removes persisted cron `payload.model` sentinels such as `"default"`, `"null"`, blank strings, and JSON `null`. Cron runtime still treats any non-empty `payload.model` string as an explicit model override and validates it against `agents.defaults.models`; omit the model key when a job should use the agent/default model selection.
 </Note>
 
 ## Common edits

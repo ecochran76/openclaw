@@ -59,3 +59,23 @@ export function buildEmptyExplicitToolAllowlistError(params: {
     `No callable tools remain after resolving explicit tool allowlist (${requested}); ${reason}. Fix the allowlist or enable the plugin that registers the requested tool.`,
   );
 }
+
+export function buildUnavailableRuntimeToolsAllowError(params: {
+  toolsAllow?: string[];
+  callableToolNames: string[];
+  sourceLabel?: string;
+}): Error | null {
+  const requested = (params.toolsAllow ?? []).map(normalizeToolName).filter(Boolean);
+  if (requested.length === 0) {
+    return null;
+  }
+  const callable = new Set(params.callableToolNames.map(normalizeToolName).filter(Boolean));
+  const unavailable = requested.filter((entry) => !callable.has(entry));
+  if (unavailable.length === 0) {
+    return null;
+  }
+  const label = params.sourceLabel ?? "runtime toolsAllow";
+  return new Error(
+    `${label} requested unavailable tool(s): ${unavailable.join(", ")}. Cron --tools/toolsAllow is a final narrowing filter after tools.profile and other tool policies; it cannot add tools excluded by the agent's effective profile. Use an agent/profile that exposes those tools or remove them from toolsAllow.`,
+  );
+}
