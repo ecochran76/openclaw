@@ -580,6 +580,19 @@ describe("monitorSlackProvider tool results", () => {
     expect(firstReplyCtx().WasMentioned).toBe(true);
   });
 
+  it("keeps text command replies visible in always-on channels", async () => {
+    setOpenChannelDirectMessages({ groupPolicy: "open" });
+    replyMock.mockResolvedValue({ text: "status ok" });
+
+    await runChannelMessageEvent(" /status");
+
+    expect(replyMock).toHaveBeenCalledTimes(1);
+    expect(firstReplyCtx()).toMatchObject({
+      CommandSource: "text",
+    });
+    expect(sendMock).toHaveBeenCalledTimes(1);
+  });
+
   it("threads replies when incoming message is in a thread", async () => {
     replyMock.mockResolvedValue({ text: "thread reply" });
     setOpenChannelDirectMessages({

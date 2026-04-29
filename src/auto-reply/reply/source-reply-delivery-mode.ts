@@ -77,7 +77,11 @@ export function resolveSourceReplyDeliveryMode(params: {
   ) {
     return params.requested;
   }
-  if (isExplicitSourceReplyCommand(params.ctx, params.cfg)) {
+  if (
+    params.ctx.CommandSource === "native" ||
+    params.ctx.CommandSource === "text" ||
+    isExplicitSourceReplyCommand(params.ctx, params.cfg)
+  ) {
     return "automatic";
   }
   const chatType = normalizeChatType(params.ctx.ChatType);

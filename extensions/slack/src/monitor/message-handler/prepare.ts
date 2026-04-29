@@ -1315,6 +1315,14 @@ export async function prepareSlackMessage(params: {
         authorized: commandAuthorized,
       },
     },
+    command:
+      hasControlCommandInMessage && commandAuthorized
+        ? {
+            kind: "text-slash",
+            body: commandBody,
+            authorized: true,
+          }
+        : undefined,
     media: toInboundMediaFacts(effectiveMedia),
     supplemental: {
       thread: {

@@ -204,7 +204,7 @@ describe("resolveSourceReplyDeliveryMode", () => {
     ).toBe("automatic");
   });
 
-  it("treats native and authorized text commands as explicit replies in groups", () => {
+  it("treats native and text commands as explicit replies in groups", () => {
     expect(
       resolveSourceReplyDeliveryMode({
         cfg: emptyConfig,
@@ -258,7 +258,7 @@ describe("resolveSourceReplyDeliveryMode", () => {
           CommandBody: "/status",
         },
       }),
-    ).toBe("message_tool_only");
+    ).toBe("automatic");
   });
 
   it("uses structured command-turn context for cross-channel visible command replies", () => {
@@ -371,6 +371,15 @@ describe("resolveSourceReplyDeliveryMode", () => {
       }),
     ).toBe("message_tool_only");
   });
+
+  it("treats text commands as explicit replies in groups", () => {
+    expect(
+      resolveSourceReplyDeliveryMode({
+        cfg: emptyConfig,
+        ctx: { ChatType: "group", CommandSource: "text" },
+      }),
+    ).toBe("automatic");
+  });
 });
 
 describe("resolveSourceReplyVisibilityPolicy", () => {
@@ -459,6 +468,22 @@ describe("resolveSourceReplyVisibilityPolicy", () => {
         },
       );
     }
+  });
+
+  it("keeps text command replies visible in groups", () => {
+    expect(
+      resolveSourceReplyVisibilityPolicy({
+        cfg: emptyConfig,
+        ctx: { ChatType: "group", CommandSource: "text" },
+        sendPolicy: "allow",
+      }),
+    ).toMatchObject({
+      sourceReplyDeliveryMode: "automatic",
+      suppressAutomaticSourceDelivery: false,
+      suppressDelivery: false,
+      suppressHookReplyLifecycle: false,
+      suppressTyping: false,
+    });
   });
 
   it("keeps configured automatic group delivery visible", () => {
