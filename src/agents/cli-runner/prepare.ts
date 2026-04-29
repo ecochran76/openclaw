@@ -31,6 +31,7 @@ import { resolveEmbeddedRunSkillEntries } from "../../skills/runtime/embedded-ru
 import { resolveUserPath } from "../../utils.js";
 import { normalizeMessageChannel } from "../../utils/message-channel.js";
 import { resolveAgentDir, resolveSessionAgentIds } from "../agent-scope.js";
+import { resolveEffectiveToolPolicy } from "../agent-tools.policy.js";
 import { externalCliDiscoveryForProviderAuth } from "../auth-profiles/external-cli-discovery.js";
 import { resolveApiKeyForProfile } from "../auth-profiles/oauth.js";
 import { resolveAuthProfileOrder } from "../auth-profiles/order.js";
@@ -79,6 +80,7 @@ import { ensureSandboxWorkspaceForSession } from "../sandbox.js";
 import { ensureSystemPromptCacheBoundary } from "../system-prompt-cache-boundary.js";
 import { buildSystemPromptReport } from "../system-prompt-report.js";
 import { appendModelIdentitySystemPrompt, buildModelIdentityPromptLine } from "../system-prompt.js";
+import { normalizeToolName } from "../tool-policy.js";
 import { redactRunIdentifier, resolveRunWorkspaceDir } from "../workspace-run.js";
 import { prepareCliBundleMcpConfig } from "./bundle-mcp.js";
 import { prepareClaudeCliSkillsPlugin } from "./claude-skills-plugin.js";
@@ -215,6 +217,28 @@ export function shouldSkipLocalCliCredentialEpoch(params: {
     params.authProfileId &&
     params.authCredential &&
     params.preparedExecution,
+  );
+}
+
+export function isBundleMcpDeniedForCliRun(params: {
+  config?: RunCliAgentParams["config"];
+  sessionKey?: string;
+  agentId?: string;
+  modelProvider?: string;
+  modelId?: string;
+}): boolean {
+  const { globalPolicy, globalProviderPolicy, agentPolicy, agentProviderPolicy } =
+    resolveEffectiveToolPolicy({
+      config: params.config,
+      sessionKey: params.sessionKey,
+      agentId: params.agentId,
+      modelProvider: params.modelProvider,
+      modelId: params.modelId,
+    });
+  return [globalPolicy, globalProviderPolicy, agentPolicy, agentProviderPolicy].some((policy) =>
+    (policy?.deny ?? [])
+      .map((entry) => normalizeToolName(entry))
+      .some((entry) => entry === "bundle-mcp" || entry === "group:plugins"),
   );
 }
 
@@ -425,10 +449,19 @@ export async function prepareCliRunContext(
     seenSignatures: params.bootstrapPromptWarningSignaturesSeen,
     previousSignature: params.bootstrapPromptWarningSignature,
   });
-  const bundleMcpEnabled =
-    !isSideQuestion && backendResolved.bundleMcp && params.disableTools !== true;
-  let mcpLoopbackRuntime = bundleMcpEnabled ? prepareDeps.getActiveMcpLoopbackRuntime() : undefined;
-  if (bundleMcpEnabled && !mcpLoopbackRuntime) {
+  const bundleMcpAllowed =
+    !isSideQuestion &&
+    backendResolved.bundleMcp &&
+    params.disableTools !== true &&
+    !isBundleMcpDeniedForCliRun({
+      config: params.config,
+      sessionKey: params.sessionKey,
+      agentId: sessionAgentId,
+      modelProvider: params.provider,
+      modelId,
+    });
+  let mcpLoopbackRuntime = bundleMcpAllowed ? prepareDeps.getActiveMcpLoopbackRuntime() : undefined;
+  if (bundleMcpAllowed && !mcpLoopbackRuntime) {
     try {
       await prepareDeps.ensureMcpLoopbackServer();
     } catch (error) {
@@ -436,9 +469,9 @@ export async function prepareCliRunContext(
     }
     mcpLoopbackRuntime = prepareDeps.getActiveMcpLoopbackRuntime();
   }
-  const mcpDeliveryCaptureEnabled = bundleMcpEnabled && Boolean(mcpLoopbackRuntime);
+  const mcpDeliveryCaptureEnabled = bundleMcpAllowed && Boolean(mcpLoopbackRuntime);
   const preparedBackend = await prepareCliBundleMcpConfig({
-    enabled: bundleMcpEnabled,
+    enabled: bundleMcpAllowed,
     mode: backendResolved.bundleMcpMode,
     backend: backendResolved.config,
     workspaceDir,
@@ -568,6 +601,7 @@ export async function prepareCliRunContext(
     ...(preparedBackendEnv ? { env: preparedBackendEnv } : {}),
     ...(preparedCleanup ? { cleanup: preparedCleanup } : {}),
   };
+  const bundleMcpEnabled = preparedBackendFinal.mcpConfigHash !== undefined;
   const promptTools =
     bundleMcpEnabled && mcpLoopbackRuntime
       ? prepareDeps.resolveMcpLoopbackScopedTools({

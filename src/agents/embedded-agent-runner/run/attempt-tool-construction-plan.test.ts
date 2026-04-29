@@ -439,6 +439,26 @@ describe("shouldCreateBundleMcpRuntimeForAttempt", () => {
       }),
     ).toBe(true);
   });
+
+  it("skips bundle MCP startup when effective policy denies bundle MCP", () => {
+    expect(
+      shouldCreateBundleMcpRuntimeForAttempt({
+        toolsEnabled: true,
+        config: {
+          tools: { deny: ["bundle-mcp"] },
+        },
+      }),
+    ).toBe(false);
+    expect(
+      shouldCreateBundleMcpRuntimeForAttempt({
+        toolsEnabled: true,
+        toolsAllow: ["bundle-mcp"],
+        config: {
+          tools: { deny: ["group:plugins"] },
+        },
+      }),
+    ).toBe(false);
+  });
 });
 
 describe("shouldCreateBundleLspRuntimeForAttempt", () => {

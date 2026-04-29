@@ -1536,6 +1536,11 @@ export async function runEmbeddedAttempt(
       toolsEnabled,
       disableTools: params.disableTools || isRawModelRun,
       toolsAllow: params.toolsAllow,
+      config: params.config,
+      sessionKey: sandboxSessionKey ?? params.sessionKey,
+      agentId: sessionAgentId,
+      modelProvider: params.provider,
+      modelId: params.modelId,
     });
     const bundleMcpSessionRuntime = bundleMcpEnabled
       ? await getOrCreateSessionMcpRuntime({

@@ -1,8 +1,10 @@
 /**
  * Plans which core, bundle MCP, and bundle LSP tools an attempt should build.
  */
+import type { OpenClawConfig } from "../../../config/types.openclaw.js";
 import { TOOL_NAME_SEPARATOR } from "../../agent-bundle-mcp-names.js";
 import type { OpenClawCodingToolConstructionPlan } from "../../agent-tools.js";
+import { resolveEffectiveToolPolicy } from "../../agent-tools.policy.js";
 import { isToolAllowedByPolicyName } from "../../tool-policy-match.js";
 import {
   buildPluginToolGroups,
@@ -79,6 +81,28 @@ function isBundleMcpAllowlistName(normalized: string): boolean {
 
 function isPluginGroupAllowlistName(normalized: string): boolean {
   return normalized === "group:plugins";
+}
+
+function isBundleMcpDeniedByEffectivePolicy(params: {
+  config?: OpenClawConfig;
+  sessionKey?: string;
+  agentId?: string;
+  modelProvider?: string;
+  modelId?: string;
+}): boolean {
+  const { globalPolicy, globalProviderPolicy, agentPolicy, agentProviderPolicy } =
+    resolveEffectiveToolPolicy({
+      config: params.config,
+      sessionKey: params.sessionKey,
+      agentId: params.agentId,
+      modelProvider: params.modelProvider,
+      modelId: params.modelId,
+    });
+  return [globalPolicy, globalProviderPolicy, agentPolicy, agentProviderPolicy].some((policy) =>
+    (policy?.deny ?? [])
+      .map((entry) => normalizeToolName(entry))
+      .some((entry) => entry === "bundle-mcp" || entry === "group:plugins"),
+  );
 }
 
 function hasWildcardToolAllowlist(toolsAllow: string[]): boolean {
@@ -261,7 +285,15 @@ export function shouldCreateBundleMcpRuntimeForAttempt(params: {
   toolsEnabled: boolean;
   disableTools?: boolean;
   toolsAllow?: string[];
+  config?: OpenClawConfig;
+  sessionKey?: string;
+  agentId?: string;
+  modelProvider?: string;
+  modelId?: string;
 }): boolean {
+  if (isBundleMcpDeniedByEffectivePolicy(params)) {
+    return false;
+  }
   return shouldCreateBundleRuntimeForAttempt(params, (normalized) => {
     return isBundleMcpAllowlistName(normalized) || isPluginGroupAllowlistName(normalized);
   });
