@@ -566,7 +566,6 @@ export async function buildStatusText(params: BuildStatusTextParams): Promise<st
         cfg,
         sessionEntry,
         agentDir: statusAgentDir,
-        workspaceDir: statusWorkspaceDir,
         includeExternalProfiles: false,
       });
   const activeModelAuth = Object.hasOwn(params, "activeModelAuthOverride")
@@ -578,7 +577,6 @@ export async function buildStatusText(params: BuildStatusTextParams): Promise<st
           cfg,
           sessionEntry,
           agentDir: statusAgentDir,
-          workspaceDir: statusWorkspaceDir,
           includeExternalProfiles: false,
         })
       : selectedModelAuth;

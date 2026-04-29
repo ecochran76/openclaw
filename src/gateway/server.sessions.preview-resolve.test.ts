@@ -269,6 +269,7 @@ test("sessions.resolve by key respects spawnedBy visibility filters", async () =
 
 test("sessions.resolve supports delivery-target, thread-policy, and search selectors", async () => {
   const { dir } = await createSessionStoreDir();
+  testState.agentsConfig = { list: [{ id: "dev-openclaw", default: true }] };
   const now = Date.now();
   const rootKey = "agent:dev-openclaw:slack:channel:c0ag96mgjtv";
   const threadOldKey = "agent:dev-openclaw:slack:channel:c0ag96mgjtv:thread:1773000000.111111";

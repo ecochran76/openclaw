@@ -44,6 +44,7 @@ export type ExternalCliAuthProfileOptions = {
   allowKeychainPrompt?: boolean;
   providerIds?: Iterable<string>;
   profileIds?: Iterable<string>;
+  runtimeOverlayOnly?: boolean;
 };
 
 type ExternalCliSyncProvider = {
@@ -303,7 +304,10 @@ export function resolveExternalCliAuthProfiles(
   const now = Date.now();
   const hasExplicitScope = options?.providerIds !== undefined || options?.profileIds !== undefined;
   for (const providerConfig of EXTERNAL_CLI_SYNC_PROVIDERS) {
-    if (providerConfig.runtimeOverlay === false && !hasExplicitScope) {
+    if (
+      providerConfig.runtimeOverlay === false &&
+      (options?.runtimeOverlayOnly === true || !hasExplicitScope)
+    ) {
       continue;
     }
     if (!isExternalCliProviderInScope({ providerConfig, store, options })) {

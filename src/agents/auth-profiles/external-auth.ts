@@ -76,6 +76,7 @@ function resolveExternalAuthProfileMap(params: {
       allowKeychainPrompt: params.externalCli?.allowKeychainPrompt,
       providerIds: params.externalCli?.externalCliProviderIds,
       profileIds: params.externalCli?.externalCliProfileIds,
+      runtimeOverlayOnly: true,
     }) ?? [];
   for (const profile of cliProfiles) {
     resolved.set(profile.profileId, {
