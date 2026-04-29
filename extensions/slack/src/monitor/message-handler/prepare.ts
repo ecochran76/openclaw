@@ -468,6 +468,34 @@ function buildSlackMentionContextPayload(params: {
   };
 }
 
+function logSlackInboundDrop(params: {
+  ctx: SlackMonitorContext;
+  account: ResolvedSlackAccount;
+  message: SlackMessageEvent;
+  conversation?: SlackConversationContext;
+  reason: string;
+  senderId?: string | null;
+  detail?: Record<string, unknown>;
+}) {
+  const { ctx, account, message, conversation, reason, senderId, detail } = params;
+  ctx.logger.info(
+    {
+      accountId: account.accountId,
+      channel: message.channel,
+      channelName: conversation?.channelName,
+      channelType: conversation?.resolvedChannelType ?? message.channel_type,
+      user: message.user,
+      botId: message.bot_id,
+      senderId: senderId ?? message.user ?? message.bot_id,
+      subtype: message.subtype,
+      ts: message.ts,
+      reason,
+      ...detail,
+    },
+    "slack inbound message dropped",
+  );
+}
+
 async function resolveSlackConversationContext(params: {
   ctx: SlackMonitorContext;
   account: ResolvedSlackAccount;
@@ -541,22 +569,49 @@ async function authorizeSlackInboundMessage(params: {
 
   if (isBotMessage) {
     if (message.user && ctx.botUserId && message.user === ctx.botUserId) {
+      logSlackInboundDrop({
+        ctx,
+        account,
+        message,
+        conversation,
+        reason: "bot-self",
+        senderId: message.user,
+      });
       return null;
     }
     if (allowBotsMode === "off") {
-      logVerbose(`slack: drop bot message ${message.bot_id ?? "unknown"} (allowBots=false)`);
+      logSlackInboundDrop({
+        ctx,
+        account,
+        message,
+        conversation,
+        reason: "bot-message-disabled",
+        senderId: message.bot_id,
+      });
       return null;
     }
   }
 
   if (isDirectMessage && !message.user) {
-    logVerbose("slack: drop dm message (missing user id)");
+    logSlackInboundDrop({
+      ctx,
+      account,
+      message,
+      conversation,
+      reason: "dm-missing-user",
+    });
     return null;
   }
 
   const senderId = message.user ?? (isBotMessage ? message.bot_id : undefined);
   if (!senderId) {
-    logVerbose("slack: drop message (missing sender id)");
+    logSlackInboundDrop({
+      ctx,
+      account,
+      message,
+      conversation,
+      reason: "missing-sender",
+    });
     return null;
   }
 
@@ -567,7 +622,14 @@ async function authorizeSlackInboundMessage(params: {
       channelType: resolvedChannelType,
     })
   ) {
-    logVerbose("slack: drop message (channel not allowed)");
+    logSlackInboundDrop({
+      ctx,
+      account,
+      message,
+      conversation,
+      reason: "channel-not-allowed",
+      senderId,
+    });
     return null;
   }
 
@@ -578,9 +640,17 @@ async function authorizeSlackInboundMessage(params: {
   if (isDirectMessage) {
     const directUserId = message.user;
     if (!directUserId) {
-      logVerbose("slack: drop dm message (missing user id)");
+      logSlackInboundDrop({
+        ctx,
+        account,
+        message,
+        conversation,
+        reason: "dm-missing-user",
+        senderId,
+      });
       return null;
     }
+    let dmDropReason = "dm-denied";
     const allowed = await authorizeSlackDirectMessage({
       ctx,
       accountId: account.accountId,
@@ -596,9 +666,11 @@ async function authorizeSlackInboundMessage(params: {
         });
       },
       onDisabled: () => {
+        dmDropReason = "dm-disabled";
         logVerbose("slack: drop dm (dms disabled)");
       },
       onUnauthorized: ({ allowMatchMeta }) => {
+        dmDropReason = "dm-unauthorized";
         logVerbose(
           `Blocked unauthorized slack sender ${message.user} (dmPolicy=${ctx.dmPolicy}, ${allowMatchMeta})`,
         );
@@ -606,6 +678,15 @@ async function authorizeSlackInboundMessage(params: {
       log: logVerbose,
     });
     if (!allowed) {
+      logSlackInboundDrop({
+        ctx,
+        account,
+        message,
+        conversation,
+        reason: dmDropReason,
+        senderId,
+        detail: { dmPolicy: ctx.dmPolicy },
+      });
       return null;
     }
   }
@@ -928,6 +1009,15 @@ export async function prepareSlackMessage(params: {
   const senderGate = messageIngress.senderAccess.gate;
   if (isRoom && senderGate?.allowed === false) {
     logVerbose(`Blocked unauthorized slack sender ${senderId} (not in channel users)`);
+    logSlackInboundDrop({
+      ctx,
+      account,
+      message,
+      conversation,
+      reason: "channel-user-not-allowed",
+      senderId,
+      detail: { channelUsersConfigured: Boolean(channelConfig?.users?.length) },
+    });
     return null;
   }
   if (
@@ -975,11 +1065,32 @@ export async function prepareSlackMessage(params: {
       reason: "control command (unauthorized)",
       target: senderId,
     });
+    logSlackInboundDrop({
+      ctx,
+      account,
+      message,
+      conversation,
+      reason: "control-command-unauthorized",
+      senderId,
+    });
     return null;
   }
 
   if (isRoom && shouldRequireMention && messageIngress.activationAccess.shouldSkip) {
-    ctx.logger.info({ channel: message.channel, reason: "no-mention" }, "skipping channel message");
+    logSlackInboundDrop({
+      ctx,
+      account,
+      message,
+      conversation,
+      reason: "no-mention",
+      senderId,
+      detail: {
+        hasAnyMention,
+        wasMentioned,
+        effectiveWasMentioned,
+        requireMention: shouldRequireMention,
+      },
+    });
     const pendingText = (message.text ?? "").trim();
     const historyMediaCandidate = buildSlackHistoryMediaCandidateMessage(message);
     const fallbackFile = message.files?.length
@@ -1056,6 +1167,18 @@ export async function prepareSlackMessage(params: {
     resolveUserName: ctx.resolveUserName,
   });
   if (!resolvedMessageContent) {
+    logSlackInboundDrop({
+      ctx,
+      account,
+      message,
+      conversation,
+      reason: "empty-content",
+      senderId,
+      detail: {
+        files: message.files?.length ?? 0,
+        attachments: message.attachments?.length ?? 0,
+      },
+    });
     return null;
   }
   const { rawBody, effectiveDirectMedia } = resolvedMessageContent;

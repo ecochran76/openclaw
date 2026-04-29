@@ -145,6 +145,10 @@ describe("slack prepareSlackMessage inbound contract", () => {
     return { slackCtx, members };
   }
 
+  function spySlackDropLogger(ctx: SlackMonitorContext) {
+    return vi.spyOn(ctx.logger, "info").mockImplementation(() => undefined as any);
+  }
+
   async function prepareMessageWith(
     ctx: SlackMonitorContext,
     account: ResolvedSlackAccount,
@@ -956,7 +960,11 @@ Second paragraph should still reach the agent after Slack's preview cutoff.`;
   });
 
   it("ignores non-forward attachments when no direct text/files are present", async () => {
-    const prepared = await prepareWithDefaultCtx(
+    const slackCtx = createDefaultSlackCtx();
+    const info = spySlackDropLogger(slackCtx);
+    const prepared = await prepareMessageWith(
+      slackCtx,
+      defaultAccount,
       createSlackMessage({
         text: "",
         files: [],
@@ -965,6 +973,16 @@ Second paragraph should still reach the agent after Slack's preview cutoff.`;
     );
 
     expect(prepared).toBeNull();
+    expect(info).toHaveBeenCalledWith(
+      expect.objectContaining({
+        accountId: "default",
+        channel: "D123",
+        channelType: "im",
+        reason: "empty-content",
+        senderId: "U1",
+      }),
+      "slack inbound message dropped",
+    );
   });
 
   it("delivers file-only message with placeholder when media download fails", async () => {
@@ -1356,6 +1374,115 @@ Second paragraph should still reach the agent after Slack's preview cutoff.`;
     );
 
     expect(prepared).toBeNull();
+  });
+
+  it("logs a structured drop when bot messages are disabled", async () => {
+    const slackCtx = createInboundSlackCtx({
+      cfg: {
+        channels: {
+          slack: { enabled: true },
+        },
+      } as OpenClawConfig,
+    });
+    const info = spySlackDropLogger(slackCtx);
+
+    const prepared = await prepareMessageWith(
+      slackCtx,
+      createSlackAccount(),
+      createSlackMessage({
+        user: "UBOT",
+        bot_id: "B0AGV8EQYA3",
+        subtype: "bot_message",
+        text: "probe body should not be logged",
+      }),
+    );
+
+    expect(prepared).toBeNull();
+    expect(info).toHaveBeenCalledWith(
+      expect.objectContaining({
+        accountId: "default",
+        channel: "D123",
+        channelType: "im",
+        botId: "B0AGV8EQYA3",
+        senderId: "B0AGV8EQYA3",
+        subtype: "bot_message",
+        reason: "bot-message-disabled",
+      }),
+      "slack inbound message dropped",
+    );
+    expect(JSON.stringify(info.mock.calls)).not.toContain("probe body should not be logged");
+  });
+
+  it("logs a structured drop when a channel message is missing a required mention", async () => {
+    const slackCtx = createInboundSlackCtx({
+      cfg: {
+        channels: {
+          slack: { enabled: true, groupPolicy: "open" },
+        },
+      } as OpenClawConfig,
+      defaultRequireMention: true,
+    });
+    slackCtx.resolveChannelName = async () => ({ name: "ops", type: "channel" });
+    slackCtx.resolveUserName = async () => ({ name: "Alice" }) as any;
+    const info = spySlackDropLogger(slackCtx);
+
+    const prepared = await prepareMessageWith(
+      slackCtx,
+      createSlackAccount(),
+      createSlackMessage({
+        channel: "C123",
+        channel_type: "channel",
+        text: "cold start smoke body should not be logged",
+      }),
+    );
+
+    expect(prepared).toBeNull();
+    expect(info).toHaveBeenCalledWith(
+      expect.objectContaining({
+        accountId: "default",
+        channel: "C123",
+        channelName: "ops",
+        channelType: "channel",
+        senderId: "U1",
+        reason: "no-mention",
+        requireMention: true,
+      }),
+      "slack inbound message dropped",
+    );
+    expect(JSON.stringify(info.mock.calls)).not.toContain(
+      "cold start smoke body should not be logged",
+    );
+  });
+
+  it("logs a structured drop when a DM sender is not authorized", async () => {
+    const slackCtx = createDefaultSlackCtx();
+    slackCtx.dmPolicy = "allowlist";
+    slackCtx.allowFrom = [];
+    const info = spySlackDropLogger(slackCtx);
+
+    const prepared = await prepareMessageWith(
+      slackCtx,
+      createSlackAccount(),
+      createSlackMessage({
+        text: "unauthorized dm body should not be logged",
+      }),
+    );
+
+    expect(prepared).toBeNull();
+    expect(info).toHaveBeenCalledWith(
+      expect.objectContaining({
+        accountId: "default",
+        channel: "D123",
+        channelType: "im",
+        senderId: "U1",
+        reason: "dm-unauthorized",
+        dmPolicy: "allowlist",
+      }),
+      "slack inbound message dropped",
+    );
+    expect(JSON.stringify(info.mock.calls)).not.toContain(
+      "unauthorized dm body should not be logged",
+    );
   });
 
   it("keeps channel metadata out of GroupSystemPrompt", async () => {
