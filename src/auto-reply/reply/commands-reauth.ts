@@ -96,18 +96,22 @@ function parseReauthCommand(raw: string): ParsedReauthCommand | { error: string 
 }
 
 function extractOAuthCallbackState(input: string): string | undefined {
-  const trimmed = input.trim().replace(/&amp;/g, "&");
+  const trimmed = decodeChatEscapes(input.trim());
   if (!trimmed) {
     return undefined;
   }
   const candidates = [trimmed];
   const slackLink = trimmed.match(/<([^>|]+)(?:\|[^>]+)?>/);
   if (slackLink?.[1]) {
-    candidates.unshift(slackLink[1]);
+    candidates.unshift(trimCallbackCandidate(slackLink[1]));
   }
-  const urlMatch = trimmed.match(/https?:\/\/\S+/i);
+  const urlMatch = trimmed.match(/https?:\/\/[^\s<>]+/i);
   if (urlMatch?.[0]) {
-    candidates.push(urlMatch[0].replace(/[>)\]}.,]+$/, "").split("|")[0] ?? urlMatch[0]);
+    candidates.push(trimCallbackCandidate(urlMatch[0]));
+  }
+  const queryIndex = trimmed.indexOf("?code=");
+  if (queryIndex >= 0) {
+    candidates.push(trimCallbackCandidate(trimmed.slice(queryIndex)));
   }
 
   for (const candidate of candidates) {
@@ -129,6 +133,27 @@ function extractOAuthCallbackState(input: string): string | undefined {
     }
   }
   return undefined;
+}
+
+function decodeChatEscapes(input: string): string {
+  let decoded = input;
+  for (let i = 0; i < 3; i += 1) {
+    const next = decoded.replace(/&amp;/g, "&");
+    if (next === decoded) {
+      break;
+    }
+    decoded = next;
+  }
+  return decoded;
+}
+
+function trimCallbackCandidate(input: string): string {
+  return (
+    decodeChatEscapes(input.trim())
+      .replace(/[>)\]}.,]+$/, "")
+      .split("|")[0]
+      ?.trim() ?? ""
+  );
 }
 
 function findPendingReauthMatch(

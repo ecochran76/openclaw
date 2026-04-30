@@ -109,8 +109,7 @@ function parseManualAuthorizationInput(
   input: string,
   expectedState: string,
 ): { code: string; state: string } {
-  const slackLink = input.trim().match(/^<([^>|]+)(?:\|[^>]+)?>$/);
-  const trimmed = (slackLink?.[1] ?? input).trim().replace(/&amp;/g, "&");
+  const trimmed = normalizeManualAuthorizationInput(input);
   if (!trimmed) {
     throw new Error("Missing OAuth redirect URL.");
   }
@@ -144,6 +143,47 @@ function parseManualAuthorizationInput(
     throw new Error("Invalid OAuth state.");
   }
   return { code, state };
+}
+
+function decodeChatEscapes(input: string): string {
+  let decoded = input;
+  for (let i = 0; i < 3; i += 1) {
+    const next = decoded.replace(/&amp;/g, "&");
+    if (next === decoded) {
+      break;
+    }
+    decoded = next;
+  }
+  return decoded;
+}
+
+function trimCallbackCandidate(input: string): string {
+  return (
+    decodeChatEscapes(input.trim())
+      .replace(/[>)\]}.,]+$/, "")
+      .split("|")[0]
+      ?.trim() ?? ""
+  );
+}
+
+function normalizeManualAuthorizationInput(input: string): string {
+  const trimmed = decodeChatEscapes(input.trim());
+  if (!trimmed) {
+    return "";
+  }
+  const slackLink = trimmed.match(/<([^>|]+)(?:\|[^>]+)?>/);
+  if (slackLink?.[1]) {
+    return trimCallbackCandidate(slackLink[1]);
+  }
+  const urlMatch = trimmed.match(/https?:\/\/[^\s<>]+/i);
+  if (urlMatch?.[0]) {
+    return trimCallbackCandidate(urlMatch[0]);
+  }
+  const queryIndex = trimmed.indexOf("?code=");
+  if (queryIndex >= 0) {
+    return trimCallbackCandidate(trimmed.slice(queryIndex));
+  }
+  return trimmed;
 }
 
 function parseJsonObject(text: string): Record<string, unknown> | null {
@@ -201,7 +241,7 @@ function formatOpenAIDeviceCodeHttpError(params: {
 }
 
 export function looksLikeOpenAICodexCallbackInput(input: string): boolean {
-  const trimmed = input.trim();
+  const trimmed = normalizeManualAuthorizationInput(input);
   if (!trimmed) {
     return false;
   }

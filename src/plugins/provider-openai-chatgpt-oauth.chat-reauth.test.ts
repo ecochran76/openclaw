@@ -19,6 +19,11 @@ describe("provider-openai-chatgpt chat reauth", () => {
       ),
     ).toBe(true);
     expect(looksLikeOpenAICodexCallbackInput("?code=test&state=state-1")).toBe(true);
+    expect(
+      looksLikeOpenAICodexCallbackInput(
+        "/reauth callback <http://localhost:1455/auth/callback?code=test&amp;state=state-1|callback>",
+      ),
+    ).toBe(true);
   });
 
   it("creates a manual authorization URL with the expected redirect target", () => {
@@ -175,6 +180,44 @@ describe("provider-openai-chatgpt chat reauth", () => {
     const result = await completeOpenAICodexManualAuthorization({
       input:
         "<http://localhost:1455/auth/callback?code=test-code&amp;scope=openid+profile+email+offline_access&amp;state=state-1|http://localhost:1455/auth/callback?code=test-code&amp;state=state-1>",
+      state: "state-1",
+      verifier: "verifier-1",
+    });
+
+    expect(fetchMock).toHaveBeenCalledOnce();
+    expect(result).toMatchObject({
+      access: accessToken,
+      refresh: "refresh-token",
+      accountId: "acct_123",
+    });
+  });
+
+  it("exchanges a command-prefixed Slack callback URL for OAuth credentials", async () => {
+    const payload = Buffer.from(
+      JSON.stringify({
+        "https://api.openai.com/auth": {
+          chatgpt_account_id: "acct_123",
+        },
+      }),
+    ).toString("base64url");
+    const accessToken = `header.${payload}.signature`;
+    const fetchMock = vi.spyOn(globalThis, "fetch").mockResolvedValue(
+      new Response(
+        JSON.stringify({
+          access_token: accessToken,
+          refresh_token: "refresh-token",
+          expires_in: 60,
+        }),
+        {
+          status: 200,
+          headers: { "Content-Type": "application/json" },
+        },
+      ),
+    );
+
+    const result = await completeOpenAICodexManualAuthorization({
+      input:
+        "/reauth callback <http://localhost:1455/auth/callback?code=test-code&amp;amp;scope=openid+profile+email+offline_access&amp;amp;state=state-1|http://localhost:1455/auth/callback?code=test-code&amp;amp;state=state-1>",
       state: "state-1",
       verifier: "verifier-1",
     });
