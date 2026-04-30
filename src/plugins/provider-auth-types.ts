@@ -9,9 +9,14 @@ export type ChatReauthCapability = {
   looksLikeCallbackInput: (input: string) => boolean;
   createPendingAuthorization: (params?: {
     originator?: string;
-  }) => Omit<PendingOAuthReauth, "kind" | "provider" | "profileId">;
+  }) =>
+    | Omit<PendingOAuthReauth, "kind" | "provider" | "profileId">
+    | Promise<Omit<PendingOAuthReauth, "kind" | "provider" | "profileId">>;
   completePendingAuthorization: (params: {
     input: string;
     pending: Pick<PendingOAuthReauth, "state" | "verifier" | "redirectUri">;
   }) => Promise<OAuthCredentials>;
+  pollPendingAuthorization?: (params: {
+    pending: Pick<PendingOAuthReauth, "deviceAuthId" | "userCode" | "intervalMs" | "expiresAt">;
+  }) => Promise<OAuthCredentials | null>;
 };

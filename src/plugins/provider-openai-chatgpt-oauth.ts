@@ -15,6 +15,13 @@ const OPENAI_CODEX_OAUTH_METHOD_ID = "oauth";
 const OPENAI_CODEX_CLIENT_ID = "app_EMoamEEZ73f0CkXaXp7hrann";
 const OPENAI_CODEX_AUTHORIZE_URL = "https://auth.openai.com/oauth/authorize";
 const OPENAI_CODEX_TOKEN_URL = "https://auth.openai.com/oauth/token";
+const OPENAI_CODEX_DEVICE_USER_CODE_URL =
+  "https://auth.openai.com/api/accounts/deviceauth/usercode";
+const OPENAI_CODEX_DEVICE_TOKEN_URL = "https://auth.openai.com/api/accounts/deviceauth/token";
+const OPENAI_CODEX_DEVICE_VERIFICATION_URL = "https://auth.openai.com/codex/device";
+const OPENAI_CODEX_DEVICE_CALLBACK_URL = "https://auth.openai.com/deviceauth/callback";
+const OPENAI_CODEX_DEVICE_CODE_TIMEOUT_MS = 15 * 60_000;
+const OPENAI_CODEX_DEVICE_CODE_DEFAULT_INTERVAL_MS = 5_000;
 export const OPENAI_CODEX_REDIRECT_URI = "http://localhost:1455/auth/callback";
 const OPENAI_CODEX_SCOPE = "openid profile email offline_access";
 
@@ -28,6 +35,16 @@ export type OpenAICodexManualAuthorization = {
   verifier: string;
   authorizationUrl: string;
   redirectUri: string;
+  createdAt: number;
+  expiresAt: number;
+};
+
+type OpenAICodexDeviceAuthorization = {
+  flow: "device_code";
+  deviceAuthId: string;
+  userCode: string;
+  verificationUrl: string;
+  intervalMs: number;
   createdAt: number;
   expiresAt: number;
 };
@@ -109,6 +126,60 @@ function parseManualAuthorizationInput(
   return { code, state };
 }
 
+function parseJsonObject(text: string): Record<string, unknown> | null {
+  try {
+    const parsed = JSON.parse(text);
+    return parsed && typeof parsed === "object" ? (parsed as Record<string, unknown>) : null;
+  } catch {
+    return null;
+  }
+}
+
+function readNonEmptyString(value: unknown): string | undefined {
+  return typeof value === "string" && value.trim() ? value.trim() : undefined;
+}
+
+function readPositiveSecondsAsMs(value: unknown): number | undefined {
+  if (typeof value === "number" && Number.isFinite(value) && value > 0) {
+    return Math.trunc(value * 1000);
+  }
+  if (typeof value === "string" && /^\d+$/.test(value.trim())) {
+    const seconds = Number.parseInt(value.trim(), 10);
+    return seconds > 0 ? seconds * 1000 : undefined;
+  }
+  return undefined;
+}
+
+function resolveOpenAICodexHeaders(contentType: string): Record<string, string> {
+  const version = process.env.OPENCLAW_VERSION?.trim();
+  return {
+    "Content-Type": contentType,
+    originator: "openclaw",
+    ...(version ? { version } : {}),
+    "User-Agent": version ? `openclaw/${version}` : "openclaw",
+  };
+}
+
+function formatOpenAIDeviceCodeHttpError(params: {
+  prefix: string;
+  status: number;
+  bodyText: string;
+}): string {
+  const body = parseJsonObject(params.bodyText);
+  const error = readNonEmptyString(body?.error);
+  const description = readNonEmptyString(body?.error_description);
+  if (error && description) {
+    return `${params.prefix}: ${error} (${description})`;
+  }
+  if (error) {
+    return `${params.prefix}: ${error}`;
+  }
+  const bodyText = params.bodyText.replace(/\s+/g, " ").trim();
+  return bodyText
+    ? `${params.prefix}: HTTP ${params.status} ${bodyText.slice(0, 240)}`
+    : `${params.prefix}: HTTP ${params.status}`;
+}
+
 export function looksLikeOpenAICodexCallbackInput(input: string): boolean {
   const trimmed = input.trim();
   if (!trimmed) {
@@ -148,6 +219,130 @@ export function createOpenAICodexManualAuthorization(params?: {
     redirectUri: OPENAI_CODEX_REDIRECT_URI,
     createdAt: now,
     expiresAt: now + (params?.ttlMs ?? 15 * 60 * 1000),
+  };
+}
+
+async function createOpenAICodexDeviceAuthorization(params?: {
+  now?: number;
+}): Promise<OpenAICodexDeviceAuthorization> {
+  const response = await fetch(OPENAI_CODEX_DEVICE_USER_CODE_URL, {
+    method: "POST",
+    headers: resolveOpenAICodexHeaders("application/json"),
+    body: JSON.stringify({
+      client_id: OPENAI_CODEX_CLIENT_ID,
+    }),
+  });
+  const bodyText = await response.text();
+  if (!response.ok) {
+    throw new Error(
+      formatOpenAIDeviceCodeHttpError({
+        prefix: "OpenAI device code request failed",
+        status: response.status,
+        bodyText,
+      }),
+    );
+  }
+  const body = parseJsonObject(bodyText);
+  const deviceAuthId = readNonEmptyString(body?.device_auth_id);
+  const userCode = readNonEmptyString(body?.user_code) ?? readNonEmptyString(body?.usercode);
+  if (!deviceAuthId || !userCode) {
+    throw new Error("OpenAI device code response was missing the device code or user code.");
+  }
+  const now = params?.now ?? Date.now();
+  return {
+    flow: "device_code",
+    deviceAuthId,
+    userCode,
+    verificationUrl: OPENAI_CODEX_DEVICE_VERIFICATION_URL,
+    intervalMs:
+      readPositiveSecondsAsMs(body?.interval) ?? OPENAI_CODEX_DEVICE_CODE_DEFAULT_INTERVAL_MS,
+    createdAt: now,
+    expiresAt: now + OPENAI_CODEX_DEVICE_CODE_TIMEOUT_MS,
+  };
+}
+
+async function pollOpenAICodexDeviceAuthorization(params: {
+  deviceAuthId?: string;
+  userCode?: string;
+  expiresAt?: number;
+}): Promise<{ authorizationCode: string; codeVerifier: string } | null> {
+  if (!params.deviceAuthId || !params.userCode) {
+    throw new Error("OpenAI device code pending state is incomplete.");
+  }
+  if (params.expiresAt && Date.now() > params.expiresAt) {
+    throw new Error("OpenAI device code expired.");
+  }
+  const response = await fetch(OPENAI_CODEX_DEVICE_TOKEN_URL, {
+    method: "POST",
+    headers: resolveOpenAICodexHeaders("application/json"),
+    body: JSON.stringify({
+      device_auth_id: params.deviceAuthId,
+      user_code: params.userCode,
+    }),
+  });
+  const bodyText = await response.text();
+  if (response.status === 403 || response.status === 404) {
+    return null;
+  }
+  if (!response.ok) {
+    throw new Error(
+      formatOpenAIDeviceCodeHttpError({
+        prefix: "OpenAI device authorization failed",
+        status: response.status,
+        bodyText,
+      }),
+    );
+  }
+  const body = parseJsonObject(bodyText);
+  const authorizationCode = readNonEmptyString(body?.authorization_code);
+  const codeVerifier = readNonEmptyString(body?.code_verifier);
+  if (!authorizationCode || !codeVerifier) {
+    throw new Error("OpenAI device authorization response was missing the exchange code.");
+  }
+  return { authorizationCode, codeVerifier };
+}
+
+async function exchangeOpenAICodexDeviceAuthorization(params: {
+  authorizationCode: string;
+  codeVerifier: string;
+}): Promise<OAuthCredentials> {
+  const response = await fetch(OPENAI_CODEX_TOKEN_URL, {
+    method: "POST",
+    headers: resolveOpenAICodexHeaders("application/x-www-form-urlencoded"),
+    body: new URLSearchParams({
+      grant_type: "authorization_code",
+      code: params.authorizationCode,
+      redirect_uri: OPENAI_CODEX_DEVICE_CALLBACK_URL,
+      client_id: OPENAI_CODEX_CLIENT_ID,
+      code_verifier: params.codeVerifier,
+    }),
+  });
+  const bodyText = await response.text();
+  if (!response.ok) {
+    throw new Error(
+      formatOpenAIDeviceCodeHttpError({
+        prefix: "OpenAI device token exchange failed",
+        status: response.status,
+        bodyText,
+      }),
+    );
+  }
+  const json = parseJsonObject(bodyText);
+  const access = readNonEmptyString(json?.access_token);
+  const refresh = readNonEmptyString(json?.refresh_token);
+  const expiresInMs = readPositiveSecondsAsMs(json?.expires_in);
+  if (!access || !refresh) {
+    throw new Error("OpenAI token exchange succeeded but did not return OAuth tokens.");
+  }
+  const accountId = resolveOpenAICodexAccountId(access);
+  if (!accountId) {
+    throw new Error("Failed to extract accountId from token.");
+  }
+  return {
+    access,
+    refresh,
+    expires: Date.now() + (expiresInMs ?? 0),
+    accountId,
   };
 }
 
@@ -202,7 +397,7 @@ export const openAICodexChatReauthCapability: ChatReauthCapability = {
   provider: OPENAI_CODEX_PROVIDER_ID,
   looksLikeCallbackInput: looksLikeOpenAICodexCallbackInput,
   createPendingAuthorization: (params) =>
-    createOpenAICodexManualAuthorization({ originator: params?.originator }),
+    createOpenAICodexDeviceAuthorization(params),
   completePendingAuthorization: async ({ input, pending }) =>
     await completeOpenAICodexManualAuthorization({
       input,
@@ -210,6 +405,10 @@ export const openAICodexChatReauthCapability: ChatReauthCapability = {
       verifier: pending.verifier,
       redirectUri: pending.redirectUri,
     }),
+  pollPendingAuthorization: async ({ pending }) => {
+    const authorization = await pollOpenAICodexDeviceAuthorization(pending);
+    return authorization ? await exchangeOpenAICodexDeviceAuthorization(authorization) : null;
+  },
 };
 
 /** @deprecated OpenAI Codex OAuth is owned by the OpenAI plugin auth hook. */

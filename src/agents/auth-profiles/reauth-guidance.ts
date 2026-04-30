@@ -13,7 +13,7 @@ export function formatAuthRecoveryHint(params: {
 
   if (params.allowChatReauth && supportsChatReauthProvider(provider)) {
     if (profileId) {
-      const chatHint = `Reply /reauth ${profileId} in this thread to refresh it here`;
+      const chatHint = `Reply /reauth ${profileId} in this thread to refresh it here; supported providers will post a device code or chat-safe auth flow`;
       if (params.includeCliAlternative) {
         return `${chatHint}, or run ${formatCliCommand(`openclaw models auth login --provider openai --profile-id ${profileId}`)}.`;
       }

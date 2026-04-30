@@ -38,16 +38,29 @@ describe("provider-openai-chatgpt chat reauth", () => {
   });
 
   it("exposes the provider-owned chat reauth capability", async () => {
-    const auth = openAICodexChatReauthCapability.createPendingAuthorization({
-      originator: "pi",
-    });
+    const fetchMock = vi.spyOn(globalThis, "fetch").mockResolvedValue(
+      new Response(
+        JSON.stringify({
+          device_auth_id: "device-1",
+          user_code: "CODE-123",
+          interval: 5,
+        }),
+        {
+          status: 200,
+          headers: { "Content-Type": "application/json" },
+        },
+      ),
+    );
+    const auth = await openAICodexChatReauthCapability.createPendingAuthorization();
 
     expect(openAICodexChatReauthCapability.provider).toBe("openai");
     expect(openAICodexChatReauthCapability.looksLikeCallbackInput("?code=test&state=state-1")).toBe(
       true,
     );
-    expect(auth.redirectUri).toBe("http://localhost:1455/auth/callback");
-    expect(auth.authorizationUrl).toContain("originator=pi");
+    expect(fetchMock).toHaveBeenCalledOnce();
+    expect(auth.flow).toBe("device_code");
+    expect(auth.verificationUrl).toBe("https://auth.openai.com/codex/device");
+    expect(auth.userCode).toBe("CODE-123");
   });
 
   it("exchanges a callback URL for OAuth credentials", async () => {

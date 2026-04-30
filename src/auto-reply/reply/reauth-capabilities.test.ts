@@ -49,7 +49,7 @@ describe("getChatReauthCapability", () => {
     expect(capability?.looksLikeCallbackInput("http://localhost:1455/auth/callback?code=x")).toBe(
       true,
     );
-    expect(capability?.createPendingAuthorization({ originator: "pi" })).toMatchObject({
+    expect(await capability?.createPendingAuthorization({ originator: "pi" })).toMatchObject({
       state: "state-1",
       verifier: "verifier-1",
     });

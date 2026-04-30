@@ -70,10 +70,22 @@ function clearPendingReauth(params: Parameters<CommandHandler>[0]): void {
 }
 
 function formatPendingReauthMessage(pending: PendingOAuthReauth): string {
+  if (pending.flow === "device_code") {
+    const verificationUrl = pending.verificationUrl ?? pending.authorizationUrl;
+    return [
+      `🔐 Re-auth pending for ${pending.profileId}.`,
+      "Open this URL in a browser and enter the code below:",
+      verificationUrl,
+      `Code: ${pending.userCode ?? "[missing]"}`,
+      "After approving it, reply /reauth status in this thread to finish storing the refreshed profile.",
+    ]
+      .filter(Boolean)
+      .join("\n");
+  }
   return [
     `🔐 Re-auth pending for ${pending.profileId}.`,
     "Open this URL in a local browser, sign in, then paste the full redirect URL back in this thread:",
-    pending.authorizationUrl,
+    pending.authorizationUrl ?? "[authorization URL unavailable]",
   ].join("\n");
 }
 
@@ -82,6 +94,61 @@ function formatThreadReauthUnsupported(profileId: string, provider: string): str
     `⚠️ Thread re-auth is not available for ${profileId} (${provider}).`,
     `Use ${formatCliCommand(`openclaw models auth login --provider ${provider} --profile-id ${profileId}`)} instead.`,
   ].join("\n");
+}
+
+async function persistOAuthCredentials(params: {
+  commandParams: Parameters<CommandHandler>[0];
+  provider: string;
+  profileId: string;
+  creds: Parameters<typeof writeOAuthCredentials>[1];
+}): Promise<string> {
+  const profileId = await writeOAuthCredentials(
+    params.provider,
+    params.creds,
+    params.commandParams.agentDir,
+    {
+      syncSiblingAgents: true,
+      profileId: params.profileId,
+    },
+  );
+  await updateConfig((cfg) =>
+    applyAuthProfileConfig(cfg, {
+      profileId,
+      provider: params.provider,
+      mode: "oauth",
+    }),
+  );
+  return profileId;
+}
+
+async function pollDeviceCodeReauth(params: {
+  commandParams: Parameters<CommandHandler>[0];
+  pending: PendingOAuthReauth;
+  capability: NonNullable<ReturnType<typeof getChatReauthCapability>>;
+}): Promise<string | null> {
+  if (params.pending.flow !== "device_code" || !params.capability.pollPendingAuthorization) {
+    return null;
+  }
+  const creds = await params.capability.pollPendingAuthorization({
+    pending: {
+      deviceAuthId: params.pending.deviceAuthId,
+      userCode: params.pending.userCode,
+      intervalMs: params.pending.intervalMs,
+      expiresAt: params.pending.expiresAt,
+    },
+  });
+  if (!creds) {
+    return null;
+  }
+  const profileId = await persistOAuthCredentials({
+    commandParams: params.commandParams,
+    provider: params.pending.provider,
+    profileId: params.pending.profileId,
+    creds,
+  });
+  clearPendingReauth(params.commandParams);
+  await persistSessionEntry(params.commandParams);
+  return profileId;
 }
 
 export const handlePendingReauthInput: CommandHandler = async (params) => {
@@ -120,6 +187,21 @@ export const handlePendingReauthInput: CommandHandler = async (params) => {
     };
   }
 
+  if (pending.flow === "device_code") {
+    return null;
+  }
+
+  if (!pending.state || !pending.verifier) {
+    clearPendingReauth(params);
+    await persistSessionEntry(params);
+    return {
+      shouldContinue: false,
+      reply: {
+        text: `⚠️ Re-auth request for ${pending.profileId} is incomplete. Reply /reauth ${pending.profileId} to start a new one.`,
+      },
+    };
+  }
+
   try {
     const creds = await capability.completePendingAuthorization({
       input: rawBody,
@@ -129,17 +211,12 @@ export const handlePendingReauthInput: CommandHandler = async (params) => {
         redirectUri: pending.redirectUri,
       },
     });
-    const profileId = await writeOAuthCredentials(pending.provider, creds, params.agentDir, {
-      syncSiblingAgents: true,
+    const profileId = await persistOAuthCredentials({
+      commandParams: params,
+      provider: pending.provider,
       profileId: pending.profileId,
+      creds,
     });
-    await updateConfig((cfg) =>
-      applyAuthProfileConfig(cfg, {
-        profileId,
-        provider: pending.provider,
-        mode: "oauth",
-      }),
-    );
     clearPendingReauth(params);
     await persistSessionEntry(params);
     return {
@@ -184,6 +261,30 @@ export const handleReauthCommand: CommandHandler = async (params, allowTextComma
 
   if (parsed.kind === "status") {
     const pending = params.sessionEntry.pendingOAuthReauth;
+    if (pending) {
+      const capability = getChatReauthCapability(pending.provider);
+      if (capability?.pollPendingAuthorization && Date.now() <= pending.expiresAt) {
+        try {
+          const completedProfileId = await pollDeviceCodeReauth({
+            commandParams: params,
+            pending,
+            capability,
+          });
+          if (completedProfileId) {
+            return {
+              shouldContinue: false,
+              reply: { text: `🔐 Re-auth complete for ${completedProfileId}.` },
+            };
+          }
+        } catch (error) {
+          const message = error instanceof Error ? error.message : String(error);
+          return {
+            shouldContinue: false,
+            reply: { text: `⚠️ Re-auth failed: ${message}` },
+          };
+        }
+      }
+    }
     return {
       shouldContinue: false,
       reply: {
@@ -251,11 +352,12 @@ export const handleReauthCommand: CommandHandler = async (params, allowTextComma
     };
   }
 
+  const authorization = await capability.createPendingAuthorization({ originator: "pi" });
   const pending: PendingOAuthReauth = {
     kind: "oauth",
     provider,
     profileId,
-    ...capability.createPendingAuthorization({ originator: "pi" }),
+    ...authorization,
   };
   params.sessionEntry.pendingOAuthReauth = pending;
   await persistSessionEntry(params);
