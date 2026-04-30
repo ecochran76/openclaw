@@ -404,8 +404,9 @@ model dropdowns. The picker respects `agents.defaults.models`, including
 
 - `/profile` shows or sets the session auth profile override.
 - `/profiles` lists auth profiles for a provider.
-- `/reauth` starts or inspects a chat-native OAuth re-auth flow for the current
-  session.
+- `/reauth` starts or inspects a chat-native OAuth re-auth flow for the current session.
+- `/reauth --oauth <provider:profile-id>` forces a browser/callback OAuth flow instead of device-code sign-in.
+- `/reauth --device-code <provider:profile-id>` requests device-code sign-in when the provider supports it.
 
 ## `/config` — on-disk config writes
 

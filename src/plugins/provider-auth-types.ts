@@ -9,6 +9,7 @@ export type ChatReauthCapability = {
   looksLikeCallbackInput: (input: string) => boolean;
   createPendingAuthorization: (params?: {
     originator?: string;
+    preferredFlow?: "device_code" | "callback";
   }) =>
     | Omit<PendingOAuthReauth, "kind" | "provider" | "profileId">
     | Promise<Omit<PendingOAuthReauth, "kind" | "provider" | "profileId">>;

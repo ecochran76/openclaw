@@ -16,7 +16,11 @@ import {
 } from "./reauth-capabilities.js";
 
 type ParsedReauthCommand =
-  | { kind: "start"; requestedProfileId?: string }
+  | {
+      kind: "start";
+      requestedProfileId?: string;
+      preferredFlow?: "device_code" | "callback";
+    }
   | { kind: "status" }
   | { kind: "cancel" };
 
@@ -49,10 +53,32 @@ function parseReauthCommand(raw: string): ParsedReauthCommand | { error: string 
     return { kind: "cancel" };
   }
   const tokens = argText.split(/\s+/).filter(Boolean);
-  if (tokens.length !== 1) {
-    return { error: "Usage: /reauth [provider:profile-id|profile-id|status|cancel]" };
+  let preferredFlow: "device_code" | "callback" | undefined;
+  const profileTokens: string[] = [];
+  for (const token of tokens) {
+    if (token === "--oauth" || token === "--callback" || token === "--browser") {
+      preferredFlow = "callback";
+      continue;
+    }
+    if (token === "--device-code" || token === "--device") {
+      preferredFlow = "device_code";
+      continue;
+    }
+    profileTokens.push(token);
   }
-  return { kind: "start", requestedProfileId: tokens[0] };
+  if (profileTokens.length > 1) {
+    return {
+      error:
+        "Usage: /reauth [--oauth|--device-code] [provider:profile-id|profile-id|status|cancel]",
+    };
+  }
+  if (profileTokens[0] === "status") {
+    return { kind: "status" };
+  }
+  if (profileTokens[0] === "cancel") {
+    return { kind: "cancel" };
+  }
+  return { kind: "start", requestedProfileId: profileTokens[0], preferredFlow };
 }
 
 async function persistSessionEntry(params: Parameters<CommandHandler>[0]): Promise<boolean> {
@@ -488,13 +514,20 @@ export const handleReauthCommand: CommandHandler = async (params, allowTextComma
     };
   }
 
-  const authorization = await capability.createPendingAuthorization({ originator: "pi" });
+  const authorization = await capability.createPendingAuthorization({
+    originator: "pi",
+    preferredFlow: parsed.preferredFlow,
+  });
   const pending: PendingOAuthReauth = {
     kind: "oauth",
     provider,
     profileId,
     ...authorization,
   };
+  const previousPending = params.sessionEntry.pendingOAuthReauth;
+  if (previousPending) {
+    stopDeviceCodeReauthWatcher(params, previousPending);
+  }
   params.sessionEntry.pendingOAuthReauth = pending;
   await persistSessionEntry(params);
   startDeviceCodeReauthWatcher({

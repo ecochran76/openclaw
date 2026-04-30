@@ -418,6 +418,12 @@ export const openAICodexChatReauthCapability: ChatReauthCapability = {
   provider: OPENAI_CODEX_PROVIDER_ID,
   looksLikeCallbackInput: looksLikeOpenAICodexCallbackInput,
   createPendingAuthorization: async (params) => {
+    if (params?.preferredFlow === "callback") {
+      return {
+        flow: "callback",
+        ...createOpenAICodexManualAuthorization({ originator: params.originator }),
+      };
+    }
     try {
       return await createOpenAICodexDeviceAuthorization(params);
     } catch (error) {
