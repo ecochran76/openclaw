@@ -2818,6 +2818,13 @@ export async function runEmbeddedAttempt(
       const defaultSessionStreamFn = resolveEmbeddedAgentBaseStreamFn({
         session: activeSession,
       });
+      if (params.resolvedApiKey?.trim()) {
+        const previousGetApiKey = activeSession.agent.getApiKey;
+        const runProvider = params.provider;
+        const runApiKey = params.resolvedApiKey;
+        activeSession.agent.getApiKey = async (provider) =>
+          provider === runProvider ? runApiKey : await previousGetApiKey?.(provider);
+      }
       const resolvedTransport = resolveExplicitSettingsTransport({
         settingsManager,
         sessionTransport: activeSession.agent.transport,
@@ -4478,6 +4485,12 @@ export async function runEmbeddedAttempt(
               imagesCount: imageResult.images.length,
               streamStrategy,
               transport: effectiveAgentTransport,
+              authProfileId: params.authProfileId,
+              authProfileIdSource: params.authProfileIdSource,
+              authResolution: {
+                hasResolvedApiKey: Boolean(params.resolvedApiKey?.trim()),
+                hasAuthStorage: Boolean(params.authStorage),
+              },
               transcriptLeafId,
             });
           }

@@ -86,6 +86,7 @@ describe("describeEmbeddedAgentStreamStrategy", () => {
     expect(
       describeEmbeddedAgentStreamStrategy({
         currentStreamFn: undefined,
+        shouldUseWebSocketTransport: false,
         model: {
           api: "openai-chatgpt-responses",
           provider: "openai",
@@ -120,6 +121,21 @@ describe("describeEmbeddedAgentStreamStrategy", () => {
         resolvedApiKey: "runtime-key",
       }),
     ).toBe("boundary-aware:anthropic-messages");
+  });
+
+  it("prefers boundary-aware Codex responses over custom session streams", () => {
+    expect(
+      describeEmbeddedAgentStreamStrategy({
+        currentStreamFn: vi.fn() as never,
+        shouldUseWebSocketTransport: false,
+        model: {
+          api: "openai-chatgpt-responses",
+          provider: "openai",
+          id: "gpt-5.5",
+        } as never,
+        resolvedApiKey: "oauth-bearer-token",
+      }),
+    ).toBe("boundary-aware:openai-chatgpt-responses");
   });
 });
 
@@ -160,6 +176,7 @@ describe("resolveEmbeddedAgentStreamFn", () => {
     testing.setOpenClawNativeCodexResponsesStreamFnForTest(nativeStreamFn as never);
     const streamFn = resolveEmbeddedAgentStreamFn({
       currentStreamFn: undefined,
+      shouldUseWebSocketTransport: false,
       sessionId: "session-1",
       model: {
         api: "openai-chatgpt-responses",
@@ -181,6 +198,29 @@ describe("resolveEmbeddedAgentStreamFn", () => {
     expect(requireRecord(result.context, "codex native context").systemPrompt).toBe("intro\ntail");
     expect(requireRecord(result.options, "codex native options").apiKey).toBe("oauth-bearer-token");
     expect(nativeStreamFn).toHaveBeenCalledTimes(1);
+  });
+
+  it("routes custom Codex responses streams through boundary-aware transports", async () => {
+    const sessionStreamFn = vi.fn(async (_model, _context, options) => options);
+    const innerStreamFn = vi.fn(async (_model, _context, options) => options);
+    overrideBoundaryAwareStreamFnOnce(innerStreamFn as never);
+    const streamFn = resolveEmbeddedAgentStreamFn({
+      currentStreamFn: sessionStreamFn as never,
+      shouldUseWebSocketTransport: false,
+      sessionId: "session-1",
+      model: {
+        api: "openai-chatgpt-responses",
+        provider: "openai",
+        id: "gpt-5.5",
+      } as never,
+      resolvedApiKey: "oauth-bearer-token",
+    });
+
+    await expect(
+      streamFn({ provider: "openai", id: "gpt-5.5" } as never, {} as never, {}),
+    ).resolves.toMatchObject({ apiKey: "oauth-bearer-token" });
+    expect(innerStreamFn).toHaveBeenCalledTimes(1);
+    expect(sessionStreamFn).not.toHaveBeenCalled();
   });
 
   it("routes GitHub Copilot fallbacks through boundary-aware transports", () => {

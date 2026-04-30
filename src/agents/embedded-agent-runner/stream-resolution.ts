@@ -72,11 +72,16 @@ function resolveOpenClawNativeCodexResponsesStreamFn(params: {
 export function describeEmbeddedAgentStreamStrategy(params: {
   currentStreamFn: StreamFn | undefined;
   providerStreamFn?: StreamFn;
+  shouldUseWebSocketTransport?: boolean;
+  wsApiKey?: string;
   model: EmbeddedRunAttemptParams["model"];
   resolvedApiKey?: string;
 }): string {
   if (params.providerStreamFn) {
     return "provider";
+  }
+  if (params.shouldUseWebSocketTransport) {
+    return "session-http-fallback";
   }
   if (params.model.provider === "anthropic-vertex") {
     return "anthropic-vertex";
@@ -118,6 +123,8 @@ export async function resolveEmbeddedAgentApiKey(params: {
 export function resolveEmbeddedAgentStreamFn(params: {
   currentStreamFn: StreamFn | undefined;
   providerStreamFn?: StreamFn;
+  shouldUseWebSocketTransport?: boolean;
+  wsApiKey?: string;
   sessionId: string;
   promptCacheKey?: string;
   signal?: AbortSignal;
@@ -145,6 +152,10 @@ export function resolveEmbeddedAgentStreamFn(params: {
   }
 
   const currentStreamFn = params.currentStreamFn ?? streamSimple;
+  if (params.shouldUseWebSocketTransport) {
+    return currentStreamFn;
+  }
+
   if (params.model.provider === "anthropic-vertex") {
     return createAnthropicVertexStreamFnForModel(params.model);
   }

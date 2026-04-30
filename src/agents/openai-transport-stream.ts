@@ -116,7 +116,7 @@ const MAX_OPENAI_STRICT_TOOL_DOWNGRADE_DIAGNOSTIC_KEYS = 256;
 const OPENAI_RESPONSES_REASONING_REPLAY_META_KEY = "__openclaw_replay";
 const OPENAI_RESPONSES_REASONING_REPLAY_BLOCK_META_KEY = "openclawReasoningReplay";
 const OPENAI_RESPONSES_REPLAY_ITEM_ID_MAX_LENGTH = 64;
-const OPENAI_CODEX_RESPONSES_PROVIDERS = new Set(["openai"]);
+const OPENAI_CODEX_RESPONSES_PROVIDERS = new Set(["openai", "openai-codex"]);
 const log = createSubsystemLogger("openai-transport");
 const loggedOpenAIStrictToolDowngradeDiagnosticKeys = new Set<string>();
 
@@ -1941,7 +1941,18 @@ function buildOpenAIClientHeaders(
     callerHeaders: Object.keys(callerHeaders).length > 0 ? callerHeaders : undefined,
     precedence: "caller-wins",
   }).headers;
-  return headers ?? {};
+  const resolvedHeaders = { ...(headers ?? {}) };
+  if (usesNativeOpenAICodexResponsesBackend(model)) {
+    const version = process.env.OPENCLAW_VERSION?.trim();
+    resolvedHeaders.originator = resolvedHeaders.originator ?? "openclaw";
+    if (version) {
+      resolvedHeaders.version = resolvedHeaders.version ?? version;
+      resolvedHeaders["User-Agent"] = `openclaw/${version}`;
+    } else {
+      resolvedHeaders["User-Agent"] = resolvedHeaders["User-Agent"] ?? "openclaw";
+    }
+  }
+  return resolvedHeaders;
 }
 
 function resolveProviderTransportTurnState(
@@ -2054,7 +2065,35 @@ function parseOpenAICodexAuthCredential(apiKey: string): { token: string; accoun
   if (accountId) {
     return { token: trimmed, accountId };
   }
-  throw new Error("Failed to extract ChatGPT account ID from OpenAI Codex OAuth token");
+  throw new Error(
+    `Failed to extract ChatGPT account ID from OpenAI Codex OAuth token (${describeOpenAICodexCredentialShape(
+      trimmed,
+    )})`,
+  );
+}
+
+function describeOpenAICodexCredentialShape(value: string): string {
+  if (!value) {
+    return "credential shape: empty";
+  }
+  if (value.startsWith("{")) {
+    try {
+      const parsed = JSON.parse(value) as Record<string, unknown>;
+      const keys = Object.keys(parsed).sort().join(",");
+      const token = typeof parsed.token === "string" ? parsed.token : undefined;
+      const accessToken = typeof parsed.accessToken === "string" ? parsed.accessToken : undefined;
+      const candidate = token ?? accessToken ?? "";
+      return [
+        "credential shape: json",
+        `keys=${keys || "none"}`,
+        `tokenParts=${candidate ? candidate.split(".").length : 0}`,
+        `hasAccountId=${typeof parsed.accountId === "string" && parsed.accountId.trim() ? "yes" : "no"}`,
+      ].join(" ");
+    } catch {
+      return "credential shape: malformed-json";
+    }
+  }
+  return `credential shape: raw tokenParts=${value.split(".").length}`;
 }
 
 function resolveOpenAICodexResponsesUrl(baseUrl: string): string {
@@ -2105,6 +2144,10 @@ async function parseOpenAICodexErrorResponse(response: Response): Promise<string
       const message = parsed.error?.message;
       if (typeof message === "string" && message.trim()) {
         return message;
+      }
+      const detail = (parsed as { detail?: unknown }).detail;
+      if (typeof detail === "string" && detail.trim()) {
+        return detail;
       }
       const code = parsed.error?.code;
       if (typeof code === "string" && code.trim()) {
@@ -2454,6 +2497,7 @@ function isOpenAICodexResponsesModel(model: Model): boolean {
   return (
     OPENAI_CODEX_RESPONSES_PROVIDERS.has(model.provider) &&
     (model.api === "openai-chatgpt-responses" ||
+      model.api === "openai-codex-responses" ||
       model.api === "openclaw-openai-responses-transport")
   );
 }
@@ -2626,13 +2670,13 @@ export function buildOpenAIResponsesParams(
     ...(metadata ? { metadata } : {}),
   };
   const effectiveMaxTokens = options?.maxTokens || model.maxTokens;
-  if (effectiveMaxTokens) {
+  if (effectiveMaxTokens && !isNativeCodexResponses) {
     params.max_output_tokens = effectiveMaxTokens;
   }
-  if (options?.temperature !== undefined) {
+  if (options?.temperature !== undefined && !isNativeCodexResponses) {
     params.temperature = options.temperature;
   }
-  if (options?.topP !== undefined) {
+  if (options?.topP !== undefined && !isNativeCodexResponses) {
     params.top_p = options.topP;
   }
   if (options?.responseFormat !== undefined) {
@@ -2641,7 +2685,11 @@ export function buildOpenAIResponsesParams(
       format: resolveOpenAIResponsesTextFormat(options.responseFormat),
     };
   }
-  if (options?.serviceTier !== undefined && payloadPolicy.allowsServiceTier) {
+  if (
+    options?.serviceTier !== undefined &&
+    payloadPolicy.allowsServiceTier &&
+    !isNativeCodexResponses
+  ) {
     params.service_tier = options.serviceTier;
   }
   if (context.tools) {
@@ -2702,6 +2750,9 @@ export function buildOpenAIResponsesParams(
     }
   }
   applyOpenAIResponsesPayloadPolicy(params as Record<string, unknown>, payloadPolicy);
+  if (isCodexResponses) {
+    params.store = false;
+  }
   return sanitizeOpenAICodexResponsesParams(
     model,
     params as Record<string, unknown>,
