@@ -1,8 +1,8 @@
-import type { OpenClawConfig } from "../../config/config.js";
 import {
   normalizeOptionalLowercaseString,
   normalizeOptionalString,
-} from "../../shared/string-coerce.js";
+} from "@openclaw/normalization-core/string-coerce";
+import type { OpenClawConfig } from "../../config/config.js";
 
 function isAcpLikeSessionKey(sessionKey: string): boolean {
   return /(^|:|[-_])acp($|:|[-_])/i.test(sessionKey);

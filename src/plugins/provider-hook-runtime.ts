@@ -47,6 +47,7 @@ export type ProviderRuntimePluginLookupParams = {
   applyAutoEnable?: boolean;
   bundledProviderVitestCompat?: boolean;
   pluginMetadataSnapshot?: PluginMetadataRegistryView;
+  installBundledRuntimeDeps?: boolean;
 };
 
 export type ProviderRuntimePluginHandle = ProviderRuntimePluginLookupParams & {
@@ -98,6 +99,7 @@ function resolveProviderRuntimePluginCacheKey(
         .join(",") ?? null,
     pluginRegistryKey: registryState?.key ?? null,
     pluginRegistryVersion: registryState?.activeVersion ?? null,
+    installBundledRuntimeDeps: params.installBundledRuntimeDeps ?? null,
   });
 }
 
@@ -212,9 +214,24 @@ export function resolveProviderPluginsForHooks(params: {
   applyAutoEnable?: boolean;
   bundledProviderVitestCompat?: boolean;
   pluginMetadataSnapshot?: PluginMetadataRegistryView;
+  installBundledRuntimeDeps?: boolean;
 }): ProviderPlugin[] {
   const env = params.env ?? process.env;
   const workspaceDir = params.workspaceDir ?? getActivePluginRegistryWorkspaceDirFromState();
+  const installBundledRuntimeDeps = params.installBundledRuntimeDeps === true;
+  if (
+    isPluginProvidersLoadInFlight({
+      ...params,
+      workspaceDir,
+      env,
+      activate: false,
+      applyAutoEnable: params.applyAutoEnable,
+      bundledProviderVitestCompat: params.bundledProviderVitestCompat ?? true,
+      installBundledRuntimeDeps,
+    })
+  ) {
+    return [];
+  }
   return resolvePluginProviders({
     ...params,
     workspaceDir,
@@ -222,6 +239,7 @@ export function resolveProviderPluginsForHooks(params: {
     activate: false,
     applyAutoEnable: params.applyAutoEnable,
     bundledProviderVitestCompat: params.bundledProviderVitestCompat ?? true,
+    installBundledRuntimeDeps,
     skipIfLoadInFlight: true,
   });
 }
@@ -253,6 +271,7 @@ export function resolveProviderRuntimePlugin(
       activate: false,
       applyAutoEnable: params.applyAutoEnable,
       bundledProviderVitestCompat: params.bundledProviderVitestCompat ?? true,
+      installBundledRuntimeDeps: params.installBundledRuntimeDeps === true,
     })
   ) {
     return undefined;
@@ -272,6 +291,7 @@ export function resolveProviderRuntimePlugin(
         applyAutoEnable: params.applyAutoEnable,
         bundledProviderVitestCompat: params.bundledProviderVitestCompat,
         pluginMetadataSnapshot: params.pluginMetadataSnapshot,
+        installBundledRuntimeDeps: params.installBundledRuntimeDeps,
       }).find((plugin) => {
         if (apiOwnerHint) {
           return (
@@ -375,6 +395,8 @@ export function ensureProviderRuntimePluginHandle(
       bundledProviderVitestCompat: params.runtimeHandle?.bundledProviderVitestCompat,
       pluginMetadataSnapshot:
         params.pluginMetadataSnapshot ?? params.runtimeHandle?.pluginMetadataSnapshot,
+      installBundledRuntimeDeps:
+        params.installBundledRuntimeDeps ?? params.runtimeHandle?.installBundledRuntimeDeps,
     });
   }
   return params.runtimeHandle;

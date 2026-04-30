@@ -21,6 +21,12 @@ run without Slack registered while later heavy agent/tool materialization caused
 long event-loop stalls, Socket Mode ping/pong misses, and Bolt
 `client is not ready` errors.
 
+2026-04-29 second follow-up: provider runtime hook resolution now defaults to
+non-installing bundled runtime dependency lookups. Gateway startup/preflight and
+explicit repair paths remain responsible for staging bundled runtime deps; live
+agent-turn hook lookup should not perform dependency install work on the same
+event-loop path that owns Slack Socket Mode.
+
 ## Scope
 
 - Make Slack inbound drops explicit, structured, and content-redacted.
@@ -53,6 +59,9 @@ long event-loop stalls, Socket Mode ping/pong misses, and Bolt
    - Preserve deterministic plugin policy and deny-list semantics.
    - Replace bundled runtime mirror chunks without an unlink gap so another
      process cannot observe a missing `dist/*.js` file during plugin import.
+   - Default provider hook lookup to non-installing bundled runtime dependency
+     resolution; startup/preflight or explicit repair flows must perform heavy
+     staging before live channel dispatch needs those hooks.
 
 4. Watchdog and recovery.
    - Detect Socket Mode disconnect/ping-pong timeout and high event-loop-delay patterns.

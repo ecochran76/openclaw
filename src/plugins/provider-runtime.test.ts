@@ -852,6 +852,57 @@ describe("provider-runtime", () => {
     expect(resolvePluginProvidersMock).toHaveBeenCalledTimes(1);
   });
 
+  it("does not install bundled runtime deps during provider hook lookup by default", () => {
+    const runtimeProvider: ProviderPlugin = {
+      id: DEMO_PROVIDER_ID,
+      label: "Demo",
+      auth: [],
+      createStreamFn: vi.fn(() => vi.fn()),
+    };
+    resolvePluginProvidersMock.mockReturnValue([runtimeProvider]);
+
+    expect(resolveProviderRuntimePlugin({ provider: DEMO_PROVIDER_ID })).toBe(runtimeProvider);
+
+    expect(resolvePluginProvidersMock).toHaveBeenCalledWith(
+      expect.objectContaining({
+        installBundledRuntimeDeps: false,
+      }),
+    );
+    expect(isPluginProvidersLoadInFlightMock).toHaveBeenCalledWith(
+      expect.objectContaining({
+        installBundledRuntimeDeps: false,
+      }),
+    );
+  });
+
+  it("preserves explicit bundled runtime deps install requests for provider hooks", () => {
+    const runtimeProvider: ProviderPlugin = {
+      id: DEMO_PROVIDER_ID,
+      label: "Demo",
+      auth: [],
+      createStreamFn: vi.fn(() => vi.fn()),
+    };
+    resolvePluginProvidersMock.mockReturnValue([runtimeProvider]);
+
+    expect(
+      resolveProviderRuntimePlugin({
+        provider: DEMO_PROVIDER_ID,
+        installBundledRuntimeDeps: true,
+      }),
+    ).toBe(runtimeProvider);
+
+    expect(resolvePluginProvidersMock).toHaveBeenCalledWith(
+      expect.objectContaining({
+        installBundledRuntimeDeps: true,
+      }),
+    );
+    expect(isPluginProvidersLoadInFlightMock).toHaveBeenCalledWith(
+      expect.objectContaining({
+        installBundledRuntimeDeps: true,
+      }),
+    );
+  });
+
   it("does not reuse auto-enabled runtime providers for synthetic auth fallback", () => {
     const runtimeProvider: ProviderPlugin = {
       id: DEMO_PROVIDER_ID,

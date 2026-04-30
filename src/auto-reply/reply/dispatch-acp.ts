@@ -78,6 +78,10 @@ function loadDispatchAcpTranscriptRuntime() {
   return dispatchAcpTranscriptRuntimeLoader.load();
 }
 
+function isRestrictiveRuntimeToolsAllow(toolsAllow: readonly string[] | undefined): boolean {
+  return Array.isArray(toolsAllow);
+}
+
 type DispatchProcessedRecorder = (
   outcome: "completed" | "skipped" | "error",
   opts?: {

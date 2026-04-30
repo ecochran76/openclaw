@@ -9,10 +9,6 @@ import type { OpenClawConfig } from "../../config/config.js";
 import { saveSessionStore } from "../../config/sessions.js";
 import type { SessionEntry } from "../../config/sessions/types.js";
 import {
-  clearApprovalNativeRouteStateForTest,
-  createApprovalNativeRouteReporter,
-} from "../../infra/approval-native-route-coordinator.js";
-import {
   createDiagnosticTraceContext,
   getActiveDiagnosticTraceContext,
   runWithDiagnosticTraceContext,
