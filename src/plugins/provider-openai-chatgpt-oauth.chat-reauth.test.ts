@@ -63,6 +63,33 @@ describe("provider-openai-chatgpt chat reauth", () => {
     expect(auth.userCode).toBe("CODE-123");
   });
 
+  it("falls back to manual OAuth when device code sign-in is unavailable", async () => {
+    const fetchMock = vi.spyOn(globalThis, "fetch").mockResolvedValue(
+      new Response(
+        JSON.stringify({
+          error: "device_code_disabled",
+          error_description: "Device code sign-in is disabled for this account.",
+        }),
+        {
+          status: 403,
+          headers: { "Content-Type": "application/json" },
+        },
+      ),
+    );
+
+    const auth = await openAICodexChatReauthCapability.createPendingAuthorization({
+      originator: "pi",
+    });
+
+    expect(fetchMock).toHaveBeenCalledOnce();
+    expect(auth.flow).toBe("callback");
+    expect(auth.redirectUri).toBe("http://localhost:1455/auth/callback");
+    expect(auth.authorizationUrl).toContain(
+      "redirect_uri=http%3A%2F%2Flocalhost%3A1455%2Fauth%2Fcallback",
+    );
+    expect(auth.authorizationUrl).toContain("originator=pi");
+  });
+
   it("exchanges a callback URL for OAuth credentials", async () => {
     const payload = Buffer.from(
       JSON.stringify({

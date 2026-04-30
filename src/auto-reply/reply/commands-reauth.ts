@@ -115,7 +115,7 @@ function formatPendingReauthMessage(pending: PendingOAuthReauth): string {
   }
   return [
     `🔐 Re-auth pending for ${pending.profileId}.`,
-    "Open this URL in a local browser, sign in, then paste the full redirect URL back in this thread:",
+    "Open this OAuth URL in any browser, sign in, then paste the full redirect URL or ?code=...&state=... response back in this thread:",
     pending.authorizationUrl ?? "[authorization URL unavailable]",
   ].join("\n");
 }

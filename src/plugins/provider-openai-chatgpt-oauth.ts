@@ -29,6 +29,7 @@ type OpenAICodexOAuthBridgeContext = ProviderAuthContext & {
   signal?: AbortSignal;
   onManualCodeInput?: () => Promise<string>;
 };
+type OpenAICodexDeviceFailureCode = "device_code_unavailable";
 
 export type OpenAICodexManualAuthorization = {
   state: string;
@@ -83,6 +84,24 @@ function isOAuthCredential(value: unknown): value is OAuthCredentials {
     typeof record.access === "string" &&
     typeof record.refresh === "string" &&
     typeof record.expires === "number"
+  );
+}
+
+function createOpenAICodexDeviceError(
+  code: OpenAICodexDeviceFailureCode,
+  message: string,
+): Error & { code: OpenAICodexDeviceFailureCode } {
+  const error = new Error(message);
+  return Object.assign(error, { code });
+}
+
+function isOpenAICodexDeviceUnavailableError(
+  error: unknown,
+): error is Error & { code: OpenAICodexDeviceFailureCode } {
+  return (
+    error instanceof Error &&
+    "code" in error &&
+    (error as { code?: unknown }).code === "device_code_unavailable"
   );
 }
 
@@ -234,13 +253,15 @@ async function createOpenAICodexDeviceAuthorization(params?: {
   });
   const bodyText = await response.text();
   if (!response.ok) {
-    throw new Error(
-      formatOpenAIDeviceCodeHttpError({
-        prefix: "OpenAI device code request failed",
-        status: response.status,
-        bodyText,
-      }),
-    );
+    const message = formatOpenAIDeviceCodeHttpError({
+      prefix: "OpenAI device code request failed",
+      status: response.status,
+      bodyText,
+    });
+    if (response.status === 400 || response.status === 403 || response.status === 404) {
+      throw createOpenAICodexDeviceError("device_code_unavailable", message);
+    }
+    throw new Error(message);
   }
   const body = parseJsonObject(bodyText);
   const deviceAuthId = readNonEmptyString(body?.device_auth_id);
@@ -396,8 +417,19 @@ export async function completeOpenAICodexManualAuthorization(params: {
 export const openAICodexChatReauthCapability: ChatReauthCapability = {
   provider: OPENAI_CODEX_PROVIDER_ID,
   looksLikeCallbackInput: looksLikeOpenAICodexCallbackInput,
-  createPendingAuthorization: (params) =>
-    createOpenAICodexDeviceAuthorization(params),
+  createPendingAuthorization: async (params) => {
+    try {
+      return await createOpenAICodexDeviceAuthorization(params);
+    } catch (error) {
+      if (!isOpenAICodexDeviceUnavailableError(error)) {
+        throw error;
+      }
+      return {
+        flow: "callback",
+        ...createOpenAICodexManualAuthorization({ originator: params?.originator }),
+      };
+    }
+  },
   completePendingAuthorization: async ({ input, pending }) =>
     await completeOpenAICodexManualAuthorization({
       input,
