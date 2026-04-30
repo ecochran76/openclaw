@@ -1,4 +1,5 @@
 import { ensureAuthProfileStore } from "../../agents/auth-profiles.js";
+import { normalizeProviderId } from "../../agents/model-selection.js";
 import { formatCliCommand } from "../../cli/command-format.js";
 import { updateConfig } from "../../commands/models/shared.js";
 import { updateSessionStore } from "../../config/sessions.js";
@@ -29,6 +30,17 @@ const DEVICE_CODE_WATCH_DURATION_MS = 10 * 60_000;
 const DEVICE_CODE_WATCH_DEFAULT_INTERVAL_MS = 5_000;
 const DEVICE_CODE_WATCH_MIN_INTERVAL_MS = 1_000;
 const DEVICE_CODE_WATCH_MAX_INTERVAL_MS = 15_000;
+const POST_REAUTH_PROBE_TIMEOUT_MS = 45_000;
+const POST_REAUTH_PROBE_MAX_TOKENS = 16;
+
+type ListProbeRuntime = typeof import("../../commands/models/list.probe.js");
+
+let listProbeRuntimePromise: Promise<ListProbeRuntime> | undefined;
+
+function loadListProbeRuntime(): Promise<ListProbeRuntime> {
+  listProbeRuntimePromise ??= import("../../commands/models/list.probe.js");
+  return listProbeRuntimePromise;
+}
 
 const activeDeviceCodeWatchers = new Map<string, ReturnType<typeof setTimeout>>();
 
@@ -36,6 +48,14 @@ type PendingReauthMatch = {
   pending: PendingOAuthReauth;
   sessionEntry: SessionEntry;
   sessionKey: string;
+};
+
+type PostReauthProbeResult = {
+  ok: boolean;
+  profileId: string;
+  model?: string;
+  status?: string;
+  error?: string;
 };
 
 function resolveMessageBody(params: Parameters<CommandHandler>[0]): string {
@@ -321,11 +341,124 @@ async function persistOAuthCredentials(params: {
   return profileId;
 }
 
+function resolvePostReauthModelCandidate(params: {
+  commandParams: Parameters<CommandHandler>[0];
+  provider: string;
+}): string | null {
+  const provider = normalizeProviderId(params.provider);
+  const activeProvider = normalizeProviderId(params.commandParams.provider);
+  const model = params.commandParams.model?.trim();
+  if (!model || activeProvider !== provider) {
+    return null;
+  }
+  return `${activeProvider}/${model}`;
+}
+
+function formatPostReauthProbeFailure(probe: PostReauthProbeResult): string {
+  const detail = [
+    probe.model ? `model ${probe.model}` : undefined,
+    probe.status ? `status ${probe.status}` : undefined,
+    probe.error,
+  ]
+    .filter(Boolean)
+    .join("; ");
+  return [
+    `⚠️ Re-auth credentials were updated for ${probe.profileId}, but the live model probe did not pass.`,
+    detail ? `Probe: ${detail}` : undefined,
+    "The profile is not verified usable yet.",
+  ]
+    .filter(Boolean)
+    .join("\n");
+}
+
+function formatPostReauthProbeSuccess(probe: PostReauthProbeResult): string {
+  if (probe.status === "ok") {
+    return `🔐 Re-auth complete for ${probe.profileId}. Live probe passed.`;
+  }
+  return `🔐 Re-auth credentials updated for ${probe.profileId}. Live probe was not run for this conversation context.`;
+}
+
+async function probeReauthenticatedProfile(params: {
+  commandParams: Parameters<CommandHandler>[0];
+  provider: string;
+  profileId: string;
+}): Promise<PostReauthProbeResult> {
+  const modelCandidate = resolvePostReauthModelCandidate({
+    commandParams: params.commandParams,
+    provider: params.provider,
+  });
+  if (!modelCandidate) {
+    return {
+      ok: true,
+      profileId: params.profileId,
+      status: "skipped",
+      error: "Active conversation model does not use this provider.",
+    };
+  }
+  const agentId = params.commandParams.agentId;
+  const agentDir = params.commandParams.agentDir;
+  if (!agentId || !agentDir) {
+    return {
+      ok: true,
+      profileId: params.profileId,
+      model: modelCandidate,
+      status: "skipped",
+      error: "Agent id or agent directory was unavailable.",
+    };
+  }
+  const { runAuthProbes } = await loadListProbeRuntime();
+  const summary = await runAuthProbes({
+    cfg: params.commandParams.cfg,
+    agentId,
+    agentDir,
+    workspaceDir: params.commandParams.workspaceDir,
+    providers: [params.provider],
+    modelCandidates: [modelCandidate],
+    options: {
+      provider: params.provider,
+      profileIds: [params.profileId],
+      timeoutMs: POST_REAUTH_PROBE_TIMEOUT_MS,
+      concurrency: 1,
+      maxTokens: POST_REAUTH_PROBE_MAX_TOKENS,
+    },
+  });
+  const result = summary.results.find((entry) => entry.profileId === params.profileId);
+  if (result?.status === "ok") {
+    return {
+      ok: true,
+      profileId: params.profileId,
+      model: result.model ?? modelCandidate,
+      status: result.status,
+    };
+  }
+  return {
+    ok: false,
+    profileId: params.profileId,
+    model: result?.model ?? modelCandidate,
+    status: result?.status,
+    error: result?.error ?? "No matching live probe result was returned.",
+  };
+}
+
+async function persistAndProbeOAuthCredentials(params: {
+  commandParams: Parameters<CommandHandler>[0];
+  provider: string;
+  profileId: string;
+  creds: Parameters<typeof writeOAuthCredentials>[1];
+}): Promise<PostReauthProbeResult> {
+  const profileId = await persistOAuthCredentials(params);
+  return await probeReauthenticatedProfile({
+    commandParams: params.commandParams,
+    provider: params.provider,
+    profileId,
+  });
+}
+
 async function pollDeviceCodeReauth(params: {
   commandParams: Parameters<CommandHandler>[0];
   pending: PendingOAuthReauth;
   capability: NonNullable<ReturnType<typeof getChatReauthCapability>>;
-}): Promise<string | null> {
+}): Promise<PostReauthProbeResult | null> {
   if (params.pending.flow !== "device_code" || !params.capability.pollPendingAuthorization) {
     return null;
   }
@@ -340,7 +473,7 @@ async function pollDeviceCodeReauth(params: {
   if (!creds) {
     return null;
   }
-  const profileId = await persistOAuthCredentials({
+  const probe = await persistAndProbeOAuthCredentials({
     commandParams: params.commandParams,
     provider: params.pending.provider,
     profileId: params.pending.profileId,
@@ -349,7 +482,7 @@ async function pollDeviceCodeReauth(params: {
   stopDeviceCodeReauthWatcher(params.commandParams, params.pending);
   clearPendingReauth(params.commandParams);
   await persistSessionEntry(params.commandParams);
-  return profileId;
+  return probe;
 }
 
 function startDeviceCodeReauthWatcher(params: {
@@ -415,10 +548,17 @@ function startDeviceCodeReauthWatcher(params: {
         pending: params.pending,
         capability: params.capability,
       });
+      if (completedProfileId?.ok) {
+        finish();
+        await params.commandParams.opts?.onBlockReply?.({
+          text: formatPostReauthProbeSuccess(completedProfileId),
+        });
+        return;
+      }
       if (completedProfileId) {
         finish();
         await params.commandParams.opts?.onBlockReply?.({
-          text: `🔐 Re-auth complete for ${completedProfileId}.`,
+          text: formatPostReauthProbeFailure(completedProfileId),
         });
         return;
       }
@@ -509,7 +649,7 @@ async function completePendingReauthCallback(
         redirectUri: pending.redirectUri,
       },
     });
-    const profileId = await persistOAuthCredentials({
+    const probe = await persistAndProbeOAuthCredentials({
       commandParams: params,
       provider: pending.provider,
       profileId: pending.profileId,
@@ -519,7 +659,9 @@ async function completePendingReauthCallback(
     await persistMatchedSessionEntry(params, match);
     return {
       shouldContinue: false,
-      reply: { text: `🔐 Re-auth complete for ${profileId}.` },
+      reply: {
+        text: probe.ok ? formatPostReauthProbeSuccess(probe) : formatPostReauthProbeFailure(probe),
+      },
     };
   } catch (error) {
     const message = error instanceof Error ? error.message : String(error);
@@ -582,10 +724,16 @@ export const handleReauthCommand: CommandHandler = async (params, allowTextComma
             pending,
             capability,
           });
+          if (completedProfileId?.ok) {
+            return {
+              shouldContinue: false,
+              reply: { text: formatPostReauthProbeSuccess(completedProfileId) },
+            };
+          }
           if (completedProfileId) {
             return {
               shouldContinue: false,
-              reply: { text: `🔐 Re-auth complete for ${completedProfileId}.` },
+              reply: { text: formatPostReauthProbeFailure(completedProfileId) },
             };
           }
         } catch (error) {
