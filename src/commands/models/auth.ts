@@ -577,6 +577,7 @@ async function runProviderAuthMethod(params: {
               target: params.notifySlack ?? "",
               accountId: params.notifySlackAccount,
               providerId: prompt.providerId,
+              profileId: params.requestedProfileId,
               verificationUrl: prompt.verificationUrl,
               userCode: prompt.userCode,
               expiresInMs: prompt.expiresInMs,
@@ -617,6 +618,7 @@ async function notifyDeviceCodeToSlack(params: {
   runtime: RuntimeEnv;
   target: string;
   accountId?: string;
+  profileId?: string;
   providerId: string;
   verificationUrl: string;
   userCode: string;
@@ -636,6 +638,7 @@ async function notifyDeviceCodeToSlack(params: {
       accountId: params.accountId,
       message: [
         `OpenClaw ${params.providerId} device-code login`,
+        ...(params.profileId ? [`Profile: ${params.profileId}`] : []),
         `URL: ${params.verificationUrl}`,
         `Code: ${params.userCode}`,
         `Expires in: ${expiresInMinutes} minutes`,

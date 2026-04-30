@@ -892,6 +892,9 @@ describe("modelsAuthLoginCommand", () => {
       expect.any(Object),
       runtime,
     );
+    expect(mocks.messageCommand.mock.calls[0]?.[0]?.message).toContain(
+      "Profile: openai:soylei",
+    );
     expect(runtime.log).toHaveBeenCalledWith("Sent device code to Slack user:U0127BGJ3U5.");
   });
 
