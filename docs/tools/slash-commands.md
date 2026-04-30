@@ -407,6 +407,7 @@ model dropdowns. The picker respects `agents.defaults.models`, including
 - `/reauth` starts or inspects a chat-native OAuth re-auth flow for the current session.
 - `/reauth --oauth <provider:profile-id>` forces a browser/callback OAuth flow instead of device-code sign-in.
 - `/reauth --device-code <provider:profile-id>` requests device-code sign-in when the provider supports it.
+- `/reauth callback <redirect-url>` completes a pending browser/callback OAuth flow deterministically.
 
 ## `/config` — on-disk config writes
 

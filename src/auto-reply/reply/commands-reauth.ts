@@ -22,7 +22,8 @@ type ParsedReauthCommand =
       preferredFlow?: "device_code" | "callback";
     }
   | { kind: "status" }
-  | { kind: "cancel" };
+  | { kind: "cancel" }
+  | { kind: "callback"; callbackInput: string };
 
 const DEVICE_CODE_WATCH_DURATION_MS = 10 * 60_000;
 const DEVICE_CODE_WATCH_DEFAULT_INTERVAL_MS = 5_000;
@@ -58,6 +59,13 @@ function parseReauthCommand(raw: string): ParsedReauthCommand | { error: string 
   if (argText === "cancel") {
     return { kind: "cancel" };
   }
+  if (/^(?:callback|complete)$/i.test(argText)) {
+    return { error: "Usage: /reauth callback <redirect-url>" };
+  }
+  const callbackMatch = argText.match(/^(?:callback|complete)\s+([\s\S]+)$/i);
+  if (callbackMatch?.[1]?.trim()) {
+    return { kind: "callback", callbackInput: callbackMatch[1].trim() };
+  }
   const tokens = argText.split(/\s+/).filter(Boolean);
   let preferredFlow: "device_code" | "callback" | undefined;
   const profileTokens: string[] = [];
@@ -75,7 +83,7 @@ function parseReauthCommand(raw: string): ParsedReauthCommand | { error: string 
   if (profileTokens.length > 1) {
     return {
       error:
-        "Usage: /reauth [--oauth|--device-code] [provider:profile-id|profile-id|status|cancel]",
+        "Usage: /reauth [--oauth|--device-code] [provider:profile-id|profile-id|status|cancel] or /reauth callback <redirect-url>",
     };
   }
   if (profileTokens[0] === "status") {
@@ -228,7 +236,7 @@ function formatPendingReauthMessage(pending: PendingOAuthReauth): string {
   }
   return [
     `🔐 Re-auth pending for ${pending.profileId}.`,
-    "Open this OAuth URL in any browser, sign in, then paste the full redirect URL or ?code=...&state=... response back in this thread:",
+    "Open this OAuth URL in any browser, sign in, then reply with /reauth callback followed by the full redirect URL or ?code=...&state=... response:",
     pending.authorizationUrl ?? "[authorization URL unavailable]",
   ].join("\n");
 }
@@ -398,7 +406,15 @@ function startDeviceCodeReauthWatcher(params: {
 
 export const handlePendingReauthInput: CommandHandler = async (params) => {
   const rawBody = resolveMessageBody(params);
-  const match = findPendingReauthMatch(params, rawBody);
+  return await completePendingReauthCallback(params, rawBody, { requireCallbackLikeInput: true });
+};
+
+async function completePendingReauthCallback(
+  params: Parameters<CommandHandler>[0],
+  input: string,
+  options?: { requireCallbackLikeInput?: boolean },
+): Promise<Awaited<ReturnType<CommandHandler>>> {
+  const match = findPendingReauthMatch(params, input);
   if (!match) {
     return null;
   }
@@ -408,7 +424,7 @@ export const handlePendingReauthInput: CommandHandler = async (params) => {
     return null;
   }
 
-  if (!capability.looksLikeCallbackInput(rawBody)) {
+  if (options?.requireCallbackLikeInput !== false && !capability.looksLikeCallbackInput(input)) {
     return null;
   }
 
@@ -450,7 +466,7 @@ export const handlePendingReauthInput: CommandHandler = async (params) => {
 
   try {
     const creds = await capability.completePendingAuthorization({
-      input: rawBody,
+      input,
       pending: {
         state: pending.state,
         verifier: pending.verifier,
@@ -476,7 +492,7 @@ export const handlePendingReauthInput: CommandHandler = async (params) => {
       reply: { text: `⚠️ Re-auth failed: ${message}` },
     };
   }
-};
+}
 
 export const handleReauthCommand: CommandHandler = async (params, allowTextCommands) => {
   if (!allowTextCommands) {
@@ -503,6 +519,20 @@ export const handleReauthCommand: CommandHandler = async (params, allowTextComma
   const parsed = parseReauthCommand(normalized);
   if ("error" in parsed) {
     return { shouldContinue: false, reply: { text: `⚠️ ${parsed.error}` } };
+  }
+
+  if (parsed.kind === "callback") {
+    const result = await completePendingReauthCallback(params, parsed.callbackInput, {
+      requireCallbackLikeInput: true,
+    });
+    return (
+      result ?? {
+        shouldContinue: false,
+        reply: {
+          text: "⚠️ No matching pending re-auth flow was found for that callback. Reply /reauth status or start a new flow with /reauth --oauth <profile-id>.",
+        },
+      }
+    );
   }
 
   if (parsed.kind === "status") {
