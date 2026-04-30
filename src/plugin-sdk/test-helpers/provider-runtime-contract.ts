@@ -700,6 +700,21 @@ export function describeOpenAIProviderRuntimeContract(load: ProviderRuntimeContr
         plan: "Plus",
       });
     });
+
+    it("owns OAuth auth-profile formatting", () => {
+      const provider = requireProviderContractProvider("openai-codex");
+
+      expect(
+        provider.formatApiKey?.({
+          type: "oauth",
+          provider: "openai-codex",
+          access: "codex-token",
+          refresh: "refresh-token",
+          expires: Date.now() + 60_000,
+          accountId: "acc-1",
+        }),
+      ).toBe('{"token":"codex-token","accountId":"acc-1"}');
+    });
   });
 }
 

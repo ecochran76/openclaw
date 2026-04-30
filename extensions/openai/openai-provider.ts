@@ -793,6 +793,7 @@ export function buildOpenAIProvider(): ProviderPlugin {
     },
     resolveUsageAuth: codexHooks.resolveUsageAuth,
     fetchUsageSnapshot: codexHooks.fetchUsageSnapshot,
+    formatApiKey: codexHooks.formatApiKey,
     refreshOAuth: codexHooks.refreshOAuth,
     buildUnknownModelHint: ({ modelId }) => buildOpenAIUnknownModelHint(modelId),
     buildMissingAuthMessage: (ctx) => {

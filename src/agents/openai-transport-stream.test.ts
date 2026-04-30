@@ -1015,6 +1015,7 @@ describe("openai transport stream", () => {
       const token = makeJwt({
         "https://api.openai.com/auth": { chatgpt_account_id: "acct_test_123" },
       });
+      const credential = JSON.stringify({ token, accountId: "acct_test_123" });
       const stream = createOpenAIResponsesTransportStreamFn()(
         {
           id: "gpt-5.5",
@@ -1034,9 +1035,9 @@ describe("openai transport stream", () => {
           tools: [],
         } as never,
         {
-          apiKey: token,
+          apiKey: credential,
           sessionId: "session-123",
-          onPayload: (payload) => ({
+          onPayload: (payload: unknown) => ({
             ...(payload as Record<string, unknown>),
             metadata: { unsupported: "for-codex" },
           }),

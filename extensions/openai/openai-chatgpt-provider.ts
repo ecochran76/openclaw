@@ -591,6 +591,17 @@ export function buildOpenAIChatGPTAuthMethods(): ProviderAuthMethod[] {
   ];
 }
 
+function formatOpenAICodexApiKey(cred: OAuthCredential): string {
+  const accountId = readStringValue(cred.accountId);
+  if (!accountId) {
+    return cred.access;
+  }
+  return JSON.stringify({
+    token: cred.access,
+    accountId,
+  });
+}
+
 export function buildOpenAICodexProviderHooks(): Pick<
   ProviderPlugin,
   | "resolveDynamicModel"
@@ -602,6 +613,7 @@ export function buildOpenAICodexProviderHooks(): Pick<
   | "normalizeTransport"
   | "resolveUsageAuth"
   | "fetchUsageSnapshot"
+  | "formatApiKey"
   | "refreshOAuth"
   | "augmentModelCatalog"
   | "resolveReasoningOutputMode"
@@ -652,6 +664,8 @@ export function buildOpenAICodexProviderHooks(): Pick<
     resolveUsageAuth: async (ctx) => await ctx.resolveOAuthToken(),
     fetchUsageSnapshot: async (ctx) =>
       await fetchCodexUsage(ctx.token, ctx.accountId, ctx.timeoutMs, ctx.fetchFn),
+    formatApiKey: (cred) =>
+      cred.type === "oauth" && cred.provider === PROVIDER_ID ? formatOpenAICodexApiKey(cred) : "",
     refreshOAuth: async (cred) => await refreshOpenAICodexOAuthCredential(cred),
     augmentModelCatalog: (ctx) => {
       const gpt54Template = findCatalogTemplate({

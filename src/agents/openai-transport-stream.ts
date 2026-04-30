@@ -2003,11 +2003,11 @@ function buildOpenAISdkRequestOptions(
   };
 }
 
-function extractOpenAICodexAccountId(token: string): string {
+function readOpenAICodexAccountIdFromJwt(token: string): string | undefined {
   try {
     const [, payloadPart] = token.split(".");
     if (!payloadPart) {
-      throw new Error("missing payload");
+      return undefined;
     }
     const payload = JSON.parse(Buffer.from(payloadPart, "base64url").toString("utf8")) as {
       "https://api.openai.com/auth"?: { chatgpt_account_id?: unknown };
@@ -2018,6 +2018,41 @@ function extractOpenAICodexAccountId(token: string): string {
     }
   } catch {
     // Normalize the implementation detail into an operator-actionable error.
+  }
+  return undefined;
+}
+
+function parseOpenAICodexAuthCredential(apiKey: string): { token: string; accountId: string } {
+  const trimmed = apiKey.trim();
+  if (trimmed.startsWith("{")) {
+    try {
+      const parsed = JSON.parse(trimmed) as {
+        token?: unknown;
+        accessToken?: unknown;
+        accountId?: unknown;
+      };
+      const token =
+        typeof parsed.token === "string"
+          ? parsed.token.trim()
+          : typeof parsed.accessToken === "string"
+            ? parsed.accessToken.trim()
+            : "";
+      const accountId = typeof parsed.accountId === "string" ? parsed.accountId.trim() : "";
+      if (token && accountId) {
+        return { token, accountId };
+      }
+      const tokenAccountId = token ? readOpenAICodexAccountIdFromJwt(token) : undefined;
+      if (token && tokenAccountId) {
+        return { token, accountId: tokenAccountId };
+      }
+    } catch {
+      // Fall through to JWT parsing for legacy/raw credentials.
+    }
+  }
+
+  const accountId = readOpenAICodexAccountIdFromJwt(trimmed);
+  if (accountId) {
+    return { token: trimmed, accountId };
   }
   throw new Error("Failed to extract ChatGPT account ID from OpenAI Codex OAuth token");
 }
@@ -2203,7 +2238,7 @@ export function createOpenAIResponsesTransportStreamFn(): StreamFn {
           transport: "stream",
         });
         if (isOpenAICodexResponsesModel(model)) {
-          const accountId = extractOpenAICodexAccountId(apiKey);
+          const codexAuth = parseOpenAICodexAuthCredential(apiKey);
           let params = buildOpenAIResponsesParams(
             model,
             context,
@@ -2223,8 +2258,8 @@ export function createOpenAIResponsesTransportStreamFn(): StreamFn {
               headers: buildOpenAICodexResponsesHeaders({
                 model,
                 context,
-                apiKey,
-                accountId,
+                apiKey: codexAuth.token,
+                accountId: codexAuth.accountId,
                 optionHeaders: options?.headers,
                 turnHeaders: turnState?.headers,
                 sessionId: options?.sessionId,

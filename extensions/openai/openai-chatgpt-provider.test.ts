@@ -246,4 +246,35 @@ describe("OpenAI provider Codex transport hooks", () => {
       refresh: "new-refresh",
     });
   });
+
+  it("falls back to the cached credential when accountId extraction fails", async () => {
+    const provider = buildOpenAIProvider();
+    const credential = {
+      type: "oauth" as const,
+      provider: "openai",
+      access: "cached-access-token",
+      refresh: "refresh-token",
+      expires: Date.now() - 60_000,
+    };
+    refreshOpenAICodexTokenMock.mockRejectedValueOnce(
+      new Error("Failed to extract accountId from token"),
+    );
+
+    await expect(provider.refreshOAuth?.(credential)).resolves.toEqual(credential);
+  });
+
+  it("formats OAuth credentials with account metadata for ChatGPT responses", () => {
+    const provider = buildOpenAIProvider();
+
+    expect(
+      provider.formatApiKey?.({
+        type: "oauth",
+        provider: "openai",
+        access: "chatgpt-access-token",
+        refresh: "refresh-token",
+        expires: Date.now() + 60_000,
+        accountId: "acct-123",
+      }),
+    ).toBe(JSON.stringify({ token: "chatgpt-access-token", accountId: "acct-123" }));
+  });
 });
