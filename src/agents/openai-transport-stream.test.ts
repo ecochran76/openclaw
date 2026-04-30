@@ -11,6 +11,7 @@ import {
   buildOpenAIResponsesParams,
   buildOpenAICompletionsParams,
   createOpenAICompletionsTransportStreamFn,
+  createOpenAIResponsesTransportStreamFn,
   parseTransportChunkUsage,
   resolveAzureOpenAIApiVersion,
   sanitizeTransportPayloadText,
@@ -141,6 +142,13 @@ function expectRecordFields(record: unknown, expected: Record<string, unknown>) 
 }
 
 describe("openai transport stream", () => {
+  const makeJwt = (payload: Record<string, unknown>) =>
+    [
+      Buffer.from(JSON.stringify({ alg: "none", typ: "JWT" })).toString("base64url"),
+      Buffer.from(JSON.stringify(payload)).toString("base64url"),
+      "signature",
+    ].join(".");
+
   it("fails Azure Responses streams when headers arrive but no first event follows", async () => {
     const model = createAzureResponsesModel();
     await expect(
@@ -920,6 +928,148 @@ describe("openai transport stream", () => {
     expect(
       testing.buildOpenAISdkRequestOptions(openAIModel, undefined, { stream: true }),
     ).toBeUndefined();
+  });
+
+  it("posts Codex responses traffic to the ChatGPT Codex endpoint with account headers", async () => {
+    vi.stubEnv("OPENCLAW_VERSION", "2026.4.30-test");
+    let captured:
+      | {
+          path?: string;
+          authorization?: string;
+          accountId?: string;
+          beta?: string;
+          accept?: string;
+          originator?: string;
+          userAgent?: string;
+          body?: Record<string, unknown>;
+        }
+      | undefined;
+    const server = createServer((req, res) => {
+      let body = "";
+      req.setEncoding("utf8");
+      req.on("data", (chunk) => {
+        body += chunk;
+      });
+      req.on("end", () => {
+        captured = {
+          path: req.url,
+          authorization: req.headers.authorization,
+          accountId: Array.isArray(req.headers["chatgpt-account-id"])
+            ? req.headers["chatgpt-account-id"][0]
+            : req.headers["chatgpt-account-id"],
+          beta: Array.isArray(req.headers["openai-beta"])
+            ? req.headers["openai-beta"][0]
+            : req.headers["openai-beta"],
+          accept: req.headers.accept,
+          originator: Array.isArray(req.headers.originator)
+            ? req.headers.originator[0]
+            : req.headers.originator,
+          userAgent: req.headers["user-agent"],
+          body: JSON.parse(body) as Record<string, unknown>,
+        };
+        res.writeHead(200, {
+          "content-type": "text/event-stream; charset=utf-8",
+          "cache-control": "no-cache",
+        });
+        res.write(
+          `data: ${JSON.stringify({
+            type: "response.output_item.added",
+            item: {
+              id: "msg_1",
+              type: "message",
+              role: "assistant",
+              content: [],
+              status: "in_progress",
+            },
+          })}\n\n`,
+        );
+        res.write(
+          `data: ${JSON.stringify({
+            type: "response.output_text.delta",
+            item_id: "msg_1",
+            output_index: 0,
+            content_index: 0,
+            delta: "OK",
+          })}\n\n`,
+        );
+        res.write(
+          `data: ${JSON.stringify({
+            type: "response.done",
+            response: {
+              id: "resp_1",
+              status: "completed",
+              usage: { input_tokens: 1, output_tokens: 1, total_tokens: 2 },
+            },
+          })}\n\n`,
+        );
+        res.end();
+      });
+    });
+
+    await new Promise<void>((resolve) => server.listen(0, "127.0.0.1", resolve));
+    try {
+      const address = server.address();
+      if (!address || typeof address === "string") {
+        throw new Error("Missing loopback server address");
+      }
+      const token = makeJwt({
+        "https://api.openai.com/auth": { chatgpt_account_id: "acct_test_123" },
+      });
+      const stream = createOpenAIResponsesTransportStreamFn()(
+        {
+          id: "gpt-5.5",
+          name: "GPT-5.5",
+          api: "openai-codex-responses",
+          provider: "openai-codex",
+          baseUrl: `http://127.0.0.1:${address.port}/backend-api`,
+          reasoning: true,
+          input: ["text"],
+          cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 },
+          contextWindow: 400000,
+          maxTokens: 128000,
+        } satisfies Model<"openai-codex-responses">,
+        {
+          systemPrompt: "system",
+          messages: [{ role: "user", content: "Reply OK", timestamp: Date.now() }],
+          tools: [],
+        } as never,
+        { apiKey: token, sessionId: "session-123" } as never,
+      );
+
+      let text = "";
+      let doneReason: string | undefined;
+      for await (const event of stream as AsyncIterable<{
+        type: string;
+        delta?: string;
+        reason?: string;
+      }>) {
+        if (event.type === "text_delta") {
+          text += event.delta ?? "";
+        }
+        if (event.type === "done") {
+          doneReason = event.reason;
+        }
+      }
+
+      expect(captured?.path).toBe("/backend-api/codex/responses");
+      expect(captured?.authorization).toBe(`Bearer ${token}`);
+      expect(captured?.accountId).toBe("acct_test_123");
+      expect(captured?.beta).toBe("responses=experimental");
+      expect(captured?.accept).toContain("text/event-stream");
+      expect(captured?.body).toMatchObject({
+        model: "gpt-5.5",
+        stream: true,
+        store: false,
+        instructions: "system",
+        prompt_cache_key: "session-123",
+      });
+      expect(text).toBe("OK");
+      expect(doneReason).toBe("stop");
+    } finally {
+      await new Promise<void>((resolve, reject) => {
+        server.close((error) => (error ? reject(error) : resolve()));
+      });
+    }
   });
 
   it("moves Azure OpenAI completions api-version headers into default query params", () => {

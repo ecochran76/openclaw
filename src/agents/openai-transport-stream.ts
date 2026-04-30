@@ -2003,6 +2003,157 @@ function buildOpenAISdkRequestOptions(
   };
 }
 
+function extractOpenAICodexAccountId(token: string): string {
+  try {
+    const [, payloadPart] = token.split(".");
+    if (!payloadPart) {
+      throw new Error("missing payload");
+    }
+    const payload = JSON.parse(Buffer.from(payloadPart, "base64url").toString("utf8")) as {
+      "https://api.openai.com/auth"?: { chatgpt_account_id?: unknown };
+    };
+    const accountId = payload["https://api.openai.com/auth"]?.chatgpt_account_id;
+    if (typeof accountId === "string" && accountId.trim()) {
+      return accountId;
+    }
+  } catch {
+    // Normalize the implementation detail into an operator-actionable error.
+  }
+  throw new Error("Failed to extract ChatGPT account ID from OpenAI Codex OAuth token");
+}
+
+function resolveOpenAICodexResponsesUrl(baseUrl: string): string {
+  const normalized = baseUrl.trim().replace(/\/+$/, "");
+  if (normalized.endsWith("/codex/responses")) {
+    return normalized;
+  }
+  if (normalized.endsWith("/codex")) {
+    return `${normalized}/responses`;
+  }
+  return `${normalized}/codex/responses`;
+}
+
+function buildOpenAICodexResponsesHeaders(params: {
+  model: Model<Api>;
+  context: Context;
+  apiKey: string;
+  accountId: string;
+  optionHeaders?: Record<string, string>;
+  turnHeaders?: Record<string, string>;
+  sessionId?: string;
+}): Headers {
+  const headers = new Headers(
+    buildOpenAIClientHeaders(
+      params.model,
+      params.context,
+      params.optionHeaders,
+      params.turnHeaders,
+    ),
+  );
+  headers.set("Authorization", `Bearer ${params.apiKey}`);
+  headers.set("chatgpt-account-id", params.accountId);
+  headers.set("OpenAI-Beta", "responses=experimental");
+  headers.set("accept", "text/event-stream");
+  headers.set("content-type", "application/json");
+  if (params.sessionId) {
+    headers.set("session_id", params.sessionId);
+    headers.set("x-client-request-id", params.sessionId);
+  }
+  return headers;
+}
+
+async function parseOpenAICodexErrorResponse(response: Response): Promise<string> {
+  const raw = await response.text().catch(() => "");
+  if (raw) {
+    try {
+      const parsed = JSON.parse(raw) as { error?: { message?: unknown; code?: unknown } };
+      const message = parsed.error?.message;
+      if (typeof message === "string" && message.trim()) {
+        return message;
+      }
+      const code = parsed.error?.code;
+      if (typeof code === "string" && code.trim()) {
+        return `${response.status} ${response.statusText || "status code"}: ${code}`;
+      }
+    } catch {
+      return `${response.status} ${response.statusText || "status code"}: ${raw.slice(0, 300)}`;
+    }
+  }
+  return `${response.status} status code${response.statusText ? ` (${response.statusText})` : ""}`;
+}
+
+function normalizeOpenAICodexResponseStatus(status: unknown): string | undefined {
+  return typeof status === "string" ? status : undefined;
+}
+
+async function* parseOpenAICodexSse(response: Response): AsyncIterable<unknown> {
+  if (!response.body) {
+    return;
+  }
+  const reader = response.body.getReader();
+  const decoder = new TextDecoder();
+  let buffer = "";
+  const parseBlock = (block: string): unknown | undefined => {
+    const data = block
+      .split(/\r\n|\n|\r/)
+      .filter((line) => line.startsWith("data:"))
+      .map((line) => line.slice("data:".length).trimStart())
+      .join("\n")
+      .trim();
+    if (!data || data === "[DONE]") {
+      return undefined;
+    }
+    try {
+      const event = JSON.parse(data) as Record<string, unknown>;
+      if (event.type === "response.done" || event.type === "response.completed") {
+        const responseValue =
+          event.response && typeof event.response === "object"
+            ? {
+                ...(event.response as Record<string, unknown>),
+                status: normalizeOpenAICodexResponseStatus(
+                  (event.response as Record<string, unknown>).status,
+                ),
+              }
+            : event.response;
+        return { ...event, type: "response.completed", response: responseValue };
+      }
+      return event;
+    } catch {
+      return undefined;
+    }
+  };
+  try {
+    for (;;) {
+      const chunk = await reader.read();
+      if (chunk.done) {
+        break;
+      }
+      buffer += decoder.decode(chunk.value, { stream: true });
+      for (;;) {
+        const match = /\r\n\r\n|\n\n|\r\r/.exec(buffer);
+        if (!match) {
+          break;
+        }
+        const block = buffer.slice(0, match.index);
+        buffer = buffer.slice(match.index + match[0].length);
+        const event = parseBlock(block);
+        if (event) {
+          yield event;
+        }
+      }
+    }
+    const tail = `${buffer}${decoder.decode()}`;
+    if (tail.trim()) {
+      const event = parseBlock(tail);
+      if (event) {
+        yield event;
+      }
+    }
+  } finally {
+    reader.releaseLock();
+  }
+}
+
 function createOpenAIResponsesClient(
   model: Model,
   context: Context,
@@ -2051,6 +2202,58 @@ export function createOpenAIResponsesTransportStreamFn(): StreamFn {
           attempt: 1,
           transport: "stream",
         });
+        if (isOpenAICodexResponsesModel(model)) {
+          const accountId = extractOpenAICodexAccountId(apiKey);
+          let params = buildOpenAIResponsesParams(
+            model,
+            context,
+            options as OpenAIResponsesOptions,
+            turnState?.metadata,
+          );
+          const nextParams = await options?.onPayload?.(params, model);
+          if (nextParams !== undefined) {
+            params = nextParams as typeof params;
+          }
+          params = mergeTransportMetadata(params, turnState?.metadata);
+          const response = await buildGuardedModelFetch(model)(
+            resolveOpenAICodexResponsesUrl(model.baseUrl),
+            {
+              method: "POST",
+              headers: buildOpenAICodexResponsesHeaders({
+                model,
+                context,
+                apiKey,
+                accountId,
+                optionHeaders: options?.headers,
+                turnHeaders: turnState?.headers,
+                sessionId: options?.sessionId,
+              }),
+              body: JSON.stringify(params),
+              signal: options?.signal,
+            },
+          );
+          if (!response.ok) {
+            throw new Error(await parseOpenAICodexErrorResponse(response));
+          }
+          stream.push({ type: "start", partial: output as never });
+          await processResponsesStream(parseOpenAICodexSse(response), output, stream, model, {
+            serviceTier: (options as OpenAIResponsesOptions | undefined)?.serviceTier,
+            applyServiceTierPricing,
+          });
+          if (options?.signal?.aborted) {
+            throw new Error("Request was aborted");
+          }
+          if (output.stopReason === "aborted" || output.stopReason === "error") {
+            throw new Error("An unknown error occurred");
+          }
+          stream.push({
+            type: "done",
+            reason: output.stopReason as never,
+            message: output as never,
+          });
+          stream.end();
+          return;
+        }
         const client = createOpenAIResponsesClient(
           model,
           context,
@@ -4485,6 +4688,8 @@ export const testing = {
   getCompat,
   assertCodeModeResponsesToolSurface,
   buildOpenAIClientHeaders,
+  buildOpenAICodexResponsesHeaders,
+  resolveOpenAICodexResponsesUrl,
   buildOpenAISdkClientOptions,
   buildOpenAISdkRequestOptions,
   createAzureOpenAIClient,
