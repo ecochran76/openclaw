@@ -2215,6 +2215,7 @@ export function createOpenAIResponsesTransportStreamFn(): StreamFn {
             params = nextParams as typeof params;
           }
           params = mergeTransportMetadata(params, turnState?.metadata);
+          delete params.metadata;
           const response = await buildGuardedModelFetch(model)(
             resolveOpenAICodexResponsesUrl(model.baseUrl),
             {

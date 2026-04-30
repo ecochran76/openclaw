@@ -1033,7 +1033,14 @@ describe("openai transport stream", () => {
           messages: [{ role: "user", content: "Reply OK", timestamp: Date.now() }],
           tools: [],
         } as never,
-        { apiKey: token, sessionId: "session-123" } as never,
+        {
+          apiKey: token,
+          sessionId: "session-123",
+          onPayload: (payload) => ({
+            ...(payload as Record<string, unknown>),
+            metadata: { unsupported: "for-codex" },
+          }),
+        } as never,
       );
 
       let text = "";
@@ -1063,6 +1070,7 @@ describe("openai transport stream", () => {
         instructions: "system",
         prompt_cache_key: "session-123",
       });
+      expect(captured?.body).not.toHaveProperty("metadata");
       expect(text).toBe("OK");
       expect(doneReason).toBe("stop");
     } finally {
