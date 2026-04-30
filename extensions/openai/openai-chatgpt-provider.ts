@@ -478,6 +478,12 @@ async function runOpenAICodexDeviceCode(ctx: ProviderAuthContext) {
       onProgress: (message) => spin.update(message),
       onVerification: async ({ verificationUrl, userCode, expiresInMs }) => {
         const expiresInMinutes = Math.max(1, Math.round(expiresInMs / 60_000));
+        await ctx.notifications?.deviceCode?.({
+          providerId: PROVIDER_ID,
+          verificationUrl,
+          userCode,
+          expiresInMs,
+        });
         const showRemoteDeviceCode = shouldShowRemoteDeviceCode(ctx);
         const hideDeviceCode = ctx.isRemote && !showRemoteDeviceCode;
         const codeLine = hideDeviceCode

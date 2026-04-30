@@ -146,6 +146,31 @@ export function buildAuthFailureNotice(params: {
   return `🔐 Auth failed for ${profileId ?? selected}. Using ${active} for this turn. ${recoveryHint}`;
 }
 
+export function buildTerminalAuthFailureNotice(params: {
+  selectedProvider: string;
+  selectedModel: string;
+  attempts: RuntimeFallbackAttempt[];
+  authProfileId?: string;
+}): string | null {
+  if (
+    params.attempts.length === 0 ||
+    !params.attempts.every(
+      (attempt) => attempt.reason === "auth" || attempt.reason === "auth_permanent",
+    )
+  ) {
+    return null;
+  }
+  const selected = formatProviderModelRef(params.selectedProvider, params.selectedModel);
+  const profileId = params.authProfileId?.trim();
+  const recoveryHint = formatAuthRecoveryHint({
+    provider: params.selectedProvider,
+    authProfileId: profileId,
+    allowChatReauth: true,
+    includeCliAlternative: true,
+  });
+  return `🔐 Auth failed for ${profileId ?? selected}. ${recoveryHint}`;
+}
+
 /** Builds the visible notice shown when runtime returns to the selected model. */
 export function buildFallbackClearedNotice(params: {
   selectedProvider: string;

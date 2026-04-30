@@ -4,6 +4,7 @@ import { testing as cliBackendsTesting } from "../agents/cli-backends.js";
 import {
   buildAuthFailureNotice,
   buildFallbackNotice,
+  buildTerminalAuthFailureNotice,
   resolveActiveFallbackState,
   resolveFallbackTransition,
   type FallbackNoticeState,
@@ -289,5 +290,25 @@ describe("fallback-state", () => {
     });
 
     expect(notice).toBeNull();
+  });
+
+  it("builds a terminal auth failure notice when every attempted model lost auth", () => {
+    const notice = buildTerminalAuthFailureNotice({
+      selectedProvider: "openai-codex",
+      selectedModel: "gpt-5.5",
+      attempts: [
+        {
+          provider: "openai-codex",
+          model: "gpt-5.5",
+          error: "401 status code",
+          reason: "auth",
+        },
+      ],
+      authProfileId: "openai-codex:soylei",
+    });
+
+    expect(notice).toContain("Auth failed for openai-codex:soylei");
+    expect(notice).toContain("/reauth openai-codex:soylei");
+    expect(notice).toContain("openclaw models auth login --provider openai");
   });
 });

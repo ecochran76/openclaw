@@ -93,6 +93,7 @@ import {
   resolveMessageChannel,
 } from "../../utils/message-channel.js";
 import { isInternalMessageChannel } from "../../utils/message-channel.js";
+import { buildTerminalAuthFailureNotice } from "../fallback-state.js";
 import { stripHeartbeatToken } from "../heartbeat.js";
 import { markReplyPayloadForSourceSuppressionDelivery } from "../reply-payload.js";
 import type { TemplateContext } from "../templating.js";
@@ -3257,6 +3258,25 @@ export async function runAgentTurnWithFallback(params: {
         !isFallbackSummary || isPureTransientSummary
           ? formatRateLimitOrOverloadedErrorCopy(message)
           : undefined;
+      const authFailureAttempts = isFallbackSummaryError(err)
+        ? err.attempts.map((attempt) => ({
+            provider: attempt.provider,
+            model: attempt.model,
+            error: attempt.error,
+            reason: attempt.reason || undefined,
+            status: typeof attempt.status === "number" ? attempt.status : undefined,
+            code: attempt.code || undefined,
+          }))
+        : fallbackAttempts;
+      const selectedAuthFailureAttempt = authFailureAttempts[0];
+      const authFailureSummaryText = selectedAuthFailureAttempt
+        ? buildTerminalAuthFailureNotice({
+            selectedProvider: selectedAuthFailureAttempt.provider,
+            selectedModel: selectedAuthFailureAttempt.model,
+            attempts: authFailureAttempts,
+            authProfileId: params.followupRun.run.authProfileId,
+          })
+        : null;
       const safeMessage = isTransientHttp
         ? sanitizeUserFacingText(message, { errorContext: true })
         : message;
@@ -3280,6 +3300,8 @@ export async function runAgentTurnWithFallback(params: {
         : GENERIC_EXTERNAL_RUN_FAILURE_TEXT;
       const fallbackText = isBilling
         ? resolveBillingFailureReplyText(err)
+        : authFailureSummaryText
+          ? authFailureSummaryText
         : isRateLimit && !isOverloadedErrorMessage(message)
           ? buildRateLimitCooldownMessage(err)
           : rateLimitOrOverloadedCopy

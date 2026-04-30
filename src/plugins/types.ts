@@ -371,6 +371,14 @@ export type ProviderAuthContext = {
   oauth: {
     createVpsAwareHandlers: typeof createVpsAwareOAuthHandlers;
   };
+  notifications?: {
+    deviceCode?: (prompt: {
+      providerId: string;
+      verificationUrl: string;
+      userCode: string;
+      expiresInMs: number;
+    }) => Promise<void> | void;
+  };
 };
 
 export type ProviderNonInteractiveApiKeyResult = {

@@ -239,6 +239,14 @@ Choose your preferred auth method and follow the setup steps.
         openclaw models auth login --provider openai --device-code
         ```
 
+        When you are operating OpenClaw from a remote agent session, keep the
+        terminal output redacted but send the short-lived device code to your
+        Slack DM explicitly:
+
+        ```bash
+        openclaw models auth login --provider openai-codex --method device-code --profile-id openai-codex:work --notify-slack user:U123 --notify-slack-account default
+        ```
+
         To store the login under an explicit shared profile id:
 
         ```bash

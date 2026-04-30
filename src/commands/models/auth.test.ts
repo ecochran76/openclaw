@@ -64,6 +64,9 @@ const mocks = vi.hoisted(() => ({
   clearAuthProfileCooldown: vi.fn(),
   resolvePluginSetupProvider: vi.fn(),
   resolvePluginSetupRegistry: vi.fn(),
+  createDefaultDeps: vi.fn(() => ({ slack: vi.fn() })),
+  ensurePluginRegistryLoaded: vi.fn(),
+  messageCommand: vi.fn(),
 }));
 
 vi.mock("../../agents/auth-profiles/profiles.js", () => ({
@@ -130,6 +133,18 @@ vi.mock("../../agents/agent-scope.js", async (importOriginal) => {
 
 vi.mock("../../agents/workspace.js", () => ({
   resolveDefaultAgentWorkspaceDir: mocks.resolveDefaultAgentWorkspaceDir,
+}));
+
+vi.mock("../../cli/deps.js", () => ({
+  createDefaultDeps: mocks.createDefaultDeps,
+}));
+
+vi.mock("../../cli/plugin-registry.js", () => ({
+  ensurePluginRegistryLoaded: mocks.ensurePluginRegistryLoaded,
+}));
+
+vi.mock("../message.js", () => ({
+  messageCommand: mocks.messageCommand,
 }));
 
 vi.mock("../../plugins/providers.runtime.js", () => ({
@@ -367,6 +382,9 @@ describe("modelsAuthLoginCommand", () => {
     mocks.promoteAuthProfileInOrder.mockReset();
     mocks.removeProviderAuthProfilesWithLock.mockReset();
     mocks.removeProviderAuthProfilesWithLock.mockResolvedValue({ version: 1, profiles: {} });
+    mocks.createDefaultDeps.mockClear();
+    mocks.ensurePluginRegistryLoaded.mockClear();
+    mocks.messageCommand.mockReset();
 
     mocks.resolveDefaultAgentId.mockReturnValue("main");
     mocks.resolveAgentDir.mockReturnValue("/tmp/openclaw/agents/main");
@@ -824,35 +842,85 @@ describe("modelsAuthLoginCommand", () => {
     ).toBe("/tmp/openclaw/agents/coder");
   });
 
-  it("passes requested profile ids through to provider auth methods", async () => {
+  it("can send device-code prompts to an explicit Slack target", async () => {
     const runtime = createRuntime();
+    runProviderAuth.mockImplementationOnce(async (ctx) => {
+      await ctx.notifications?.deviceCode?.({
+        providerId: "openai",
+        verificationUrl: "https://auth.openai.com/codex/device",
+        userCode: "CODE-12345",
+        expiresInMs: 900_000,
+      });
+      return {
+        profiles: [
+          {
+            profileId: "openai:soylei",
+            credential: {
+              type: "oauth",
+              provider: "openai",
+              access: "access-token",
+              refresh: "refresh-token",
+              expires: Date.now() + 60_000,
+            },
+          },
+        ],
+      };
+    });
 
     await modelsAuthLoginCommand(
-      { provider: "openai-codex", profileId: "openai-codex:work" },
+      {
+        provider: "openai",
+        profileId: "soylei",
+        notifySlack: "user:U0127BGJ3U5",
+        notifySlackAccount: "soylei",
+      },
       runtime,
     );
 
+    expect(mocks.ensurePluginRegistryLoaded).toHaveBeenCalledWith({
+      scope: "configured-channels",
+      onlyChannelIds: ["slack"],
+    });
+    expect(mocks.messageCommand).toHaveBeenCalledWith(
+      expect.objectContaining({
+        action: "send",
+        channel: "slack",
+        target: "user:U0127BGJ3U5",
+        accountId: "soylei",
+        message: expect.stringContaining("Code: CODE-12345"),
+      }),
+      expect.any(Object),
+      runtime,
+    );
+    expect(runtime.log).toHaveBeenCalledWith("Sent device code to Slack user:U0127BGJ3U5.");
+  });
+
+  it("passes requested profile ids through to provider auth methods", async () => {
+    const runtime = createRuntime();
+
+    await modelsAuthLoginCommand({ provider: "openai", profileId: "openai:work" }, runtime);
+
     expect(runProviderAuth).toHaveBeenCalledWith(
       expect.objectContaining({
-        profileId: "openai-codex:work",
+        profileId: "openai:work",
       }),
     );
     expect(mocks.upsertAuthProfileWithLock).toHaveBeenCalledWith(
       expect.objectContaining({
-        profileId: "openai-codex:work",
+        profileId: "openai:work",
       }),
     );
   });
 
-  it("applies openai-codex default model when --set-default is used", async () => {
+  it("applies openai default model when --set-default is used", async () => {
     const runtime = createRuntime();
 
-    await modelsAuthLoginCommand({ provider: "openai-codex", setDefault: true }, runtime);
+    await modelsAuthLoginCommand({ provider: "openai", setDefault: true }, runtime);
 
     expect(lastUpdatedConfig?.agents?.defaults?.model).toEqual({
-      primary: "openai-codex/gpt-5.5",
+      primary: "openai/gpt-5.5",
     });
-    expect(runtime.log).toHaveBeenCalledWith("Default model set to openai-codex/gpt-5.5");
+    expect(runtime.log).toHaveBeenCalledWith("Default model set to openai/gpt-5.5");
   });
 
   it("supports provider-owned Claude CLI migration without writing auth profiles", async () => {

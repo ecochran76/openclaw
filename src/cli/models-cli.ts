@@ -355,6 +355,11 @@ export function registerModelsCli(program: Command) {
       "Remove existing profiles for the provider before logging in (use when a cached OAuth profile is stuck or you want to switch accounts)",
       false,
     )
+    .option(
+      "--notify-slack <target>",
+      "DM device codes to a Slack user target (for example user:U123)",
+    )
+    .option("--notify-slack-account <id>", "Slack account id for --notify-slack")
     .action(async (opts, command) => {
       if (opts.deviceCode && typeof opts.method === "string" && opts.method !== "device-code") {
         throw new Error(
@@ -371,6 +376,8 @@ export function registerModelsCli(program: Command) {
             profileId: opts.profileId as string | undefined,
             setDefault: Boolean(opts.setDefault),
             force: Boolean(opts.force),
+            notifySlack: opts.notifySlack as string | undefined,
+            notifySlackAccount: opts.notifySlackAccount as string | undefined,
             agent,
           },
           defaultRuntime,

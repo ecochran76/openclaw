@@ -38,7 +38,9 @@ import { normalizeProviderId } from "../../agents/model-selection-normalize.js";
 import { resolveProviderIdForAuth } from "../../agents/provider-auth-aliases.js";
 import { resolveDefaultAgentWorkspaceDir } from "../../agents/workspace.js";
 import { formatCliCommand } from "../../cli/command-format.js";
+import { createDefaultDeps } from "../../cli/deps.js";
 import { parseDurationMs } from "../../cli/parse-duration.js";
+import { ensurePluginRegistryLoaded } from "../../cli/plugin-registry.js";
 import { logConfigUpdated } from "../../config/logging.js";
 import { normalizeAgentModelRefForConfig } from "../../config/model-input.js";
 import type { OpenClawConfig } from "../../config/types.openclaw.js";
@@ -68,6 +70,7 @@ import { validateAnthropicSetupToken } from "../auth-token.js";
 import { repairCodexRuntimePluginInstallForModelSelection } from "../codex-runtime-plugin-install.js";
 import { repairCopilotRuntimePluginInstallForModelSelection } from "../copilot-runtime-plugin-install.js";
 import { isRemoteEnvironment } from "../../infra/remote-env.js";
+import { messageCommand } from "../message.js";
 import { loadValidConfigOrThrow, resolveKnownAgentId, updateConfig } from "./shared.js";
 
 type UpsertAuthProfileParams = Parameters<typeof upsertAuthProfileWithLock>[0];
@@ -542,6 +545,8 @@ async function runProviderAuthMethod(params: {
   prompter: ReturnType<typeof createClackPrompter>;
   requestedProfileId?: string;
   setDefault?: boolean;
+  notifySlack?: string;
+  notifySlackAccount?: string;
 }) {
   const selectedProviderId = normalizeProviderId(params.provider.id);
   await clearStaleProfileLockouts(selectedProviderId, params.agentDir);
@@ -563,6 +568,22 @@ async function runProviderAuthMethod(params: {
     oauth: {
       createVpsAwareHandlers: (runtimeParams) => createVpsAwareOAuthHandlers(runtimeParams),
     },
+    notifications: params.notifySlack
+      ? {
+          deviceCode: async (prompt) => {
+            await notifyDeviceCodeToSlack({
+              cfg: params.config,
+              runtime: params.runtime,
+              target: params.notifySlack ?? "",
+              accountId: params.notifySlackAccount,
+              providerId: prompt.providerId,
+              verificationUrl: prompt.verificationUrl,
+              userCode: prompt.userCode,
+              expiresInMs: prompt.expiresInMs,
+            });
+          },
+        }
+      : undefined,
   });
   const resultProviderIds = new Set(
     result.profiles.map((profile) => normalizeProviderId(profile.credential.provider)),
@@ -589,6 +610,42 @@ async function runProviderAuthMethod(params: {
     prompter: params.prompter,
     setDefault: params.setDefault,
   });
+}
+
+async function notifyDeviceCodeToSlack(params: {
+  cfg: OpenClawConfig;
+  runtime: RuntimeEnv;
+  target: string;
+  accountId?: string;
+  providerId: string;
+  verificationUrl: string;
+  userCode: string;
+  expiresInMs: number;
+}) {
+  const target = params.target.trim();
+  if (!target) {
+    throw new Error("--notify-slack requires a Slack user target such as user:U123.");
+  }
+  const expiresInMinutes = Math.max(1, Math.round(params.expiresInMs / 60_000));
+  ensurePluginRegistryLoaded({ scope: "configured-channels", onlyChannelIds: ["slack"] });
+  await messageCommand(
+    {
+      action: "send",
+      channel: "slack",
+      target,
+      accountId: params.accountId,
+      message: [
+        `OpenClaw ${params.providerId} device-code login`,
+        `URL: ${params.verificationUrl}`,
+        `Code: ${params.userCode}`,
+        `Expires in: ${expiresInMinutes} minutes`,
+        "Never share this code outside the intended login flow.",
+      ].join("\n"),
+    },
+    createDefaultDeps(),
+    params.runtime,
+  );
+  params.runtime.log(`Sent device code to Slack ${target}.`);
 }
 
 /** Runs an interactive provider setup-token auth flow. */
@@ -896,6 +953,8 @@ type LoginOptions = {
    * because credentials already exist on disk.
    */
   force?: boolean;
+  notifySlack?: string;
+  notifySlackAccount?: string;
 };
 
 /**
@@ -1059,6 +1118,8 @@ export async function modelsAuthLoginCommand(opts: LoginOptions, runtime: Runtim
     prompter,
     requestedProfileId: normalizeRequestedProfileId(selectedProvider.id, opts.profileId),
     setDefault: opts.setDefault,
+    notifySlack: opts.notifySlack,
+    notifySlackAccount: opts.notifySlackAccount,
   });
   maybeLogOpenAICodexNativeSearchTip(runtime, selectedProvider.id);
 }
