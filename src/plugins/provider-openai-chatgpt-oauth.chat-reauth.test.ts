@@ -148,4 +148,42 @@ describe("provider-openai-chatgpt chat reauth", () => {
       accountId: "acct_123",
     });
   });
+
+  it("exchanges a Slack-wrapped callback URL for OAuth credentials", async () => {
+    const payload = Buffer.from(
+      JSON.stringify({
+        "https://api.openai.com/auth": {
+          chatgpt_account_id: "acct_123",
+        },
+      }),
+    ).toString("base64url");
+    const accessToken = `header.${payload}.signature`;
+    const fetchMock = vi.spyOn(globalThis, "fetch").mockResolvedValue(
+      new Response(
+        JSON.stringify({
+          access_token: accessToken,
+          refresh_token: "refresh-token",
+          expires_in: 60,
+        }),
+        {
+          status: 200,
+          headers: { "Content-Type": "application/json" },
+        },
+      ),
+    );
+
+    const result = await completeOpenAICodexManualAuthorization({
+      input:
+        "<http://localhost:1455/auth/callback?code=test-code&state=state-1|http://localhost:1455/auth/callback?code=test-code&state=state-1>",
+      state: "state-1",
+      verifier: "verifier-1",
+    });
+
+    expect(fetchMock).toHaveBeenCalledOnce();
+    expect(result).toMatchObject({
+      access: accessToken,
+      refresh: "refresh-token",
+      accountId: "acct_123",
+    });
+  });
 });

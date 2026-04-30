@@ -287,6 +287,62 @@ describe("/reauth commands", () => {
     expect(params.sessionEntry.pendingOAuthReauth).toBeUndefined();
   });
 
+  it("completes a pasted callback flow from another session key by state", async () => {
+    hoisted.getChatReauthCapabilityMock.mockReturnValue({
+      provider: "openai-codex",
+      looksLikeCallbackInput: vi.fn(() => true),
+      createPendingAuthorization: vi.fn(),
+      completePendingAuthorization: vi.fn(async () => ({
+        access: "access-token",
+        refresh: "refresh-token",
+        expires: 123,
+        accountId: "acct_123",
+      })),
+    });
+    hoisted.writeOAuthCredentialsMock.mockResolvedValue("openai-codex:work");
+    hoisted.updateConfigMock.mockResolvedValue(cfg);
+
+    const pendingSessionEntry = {
+      sessionId: "slash-command-session",
+      updatedAt: 1,
+      pendingOAuthReauth: {
+        kind: "oauth" as const,
+        provider: "openai-codex",
+        profileId: "openai-codex:work",
+        flow: "callback" as const,
+        state: "state-1",
+        verifier: "verifier-1",
+        authorizationUrl: "https://auth.example.test/start",
+        redirectUri: "http://localhost:1455/auth/callback",
+        createdAt: Date.now(),
+        expiresAt: Date.now() + 60_000,
+      },
+    };
+    const sessionStore = {
+      "agent:main:slack:slash": pendingSessionEntry,
+    };
+    const params = buildCommandTestParams(
+      "http://localhost:1455/auth/callback?code=test&state=state-1",
+      cfg,
+    );
+    params.agentDir = "/tmp/agent";
+    params.sessionKey = "agent:main:slack:message";
+    params.sessionEntry = { sessionId: "message-session", updatedAt: 1 };
+    params.sessionStore = sessionStore;
+
+    const result = await handlePendingReauthInput(params, true);
+
+    expect(result?.reply?.text).toBe("🔐 Re-auth complete for openai-codex:work.");
+    expect(hoisted.writeOAuthCredentialsMock).toHaveBeenCalledWith(
+      "openai-codex",
+      expect.objectContaining({ access: "access-token" }),
+      "/tmp/agent",
+      expect.objectContaining({ profileId: "openai-codex:work", syncSiblingAgents: true }),
+    );
+    expect(pendingSessionEntry.pendingOAuthReauth).toBeUndefined();
+    expect(params.sessionEntry.pendingOAuthReauth).toBeUndefined();
+  });
+
   it("falls back to CLI guidance for providers without chat reauth support", async () => {
     hoisted.ensureAuthProfileStoreMock.mockReturnValue({
       profiles: {

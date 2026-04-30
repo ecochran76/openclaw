@@ -2,7 +2,7 @@ import { ensureAuthProfileStore } from "../../agents/auth-profiles.js";
 import { formatCliCommand } from "../../cli/command-format.js";
 import { updateConfig } from "../../commands/models/shared.js";
 import { updateSessionStore } from "../../config/sessions.js";
-import type { PendingOAuthReauth } from "../../config/sessions/types.js";
+import type { PendingOAuthReauth, SessionEntry } from "../../config/sessions/types.js";
 import { logVerbose } from "../../globals.js";
 import {
   applyAuthProfileConfig,
@@ -30,6 +30,12 @@ const DEVICE_CODE_WATCH_MIN_INTERVAL_MS = 1_000;
 const DEVICE_CODE_WATCH_MAX_INTERVAL_MS = 15_000;
 
 const activeDeviceCodeWatchers = new Map<string, ReturnType<typeof setTimeout>>();
+
+type PendingReauthMatch = {
+  pending: PendingOAuthReauth;
+  sessionEntry: SessionEntry;
+  sessionKey: string;
+};
 
 function resolveMessageBody(params: Parameters<CommandHandler>[0]): string {
   return (
@@ -81,6 +87,67 @@ function parseReauthCommand(raw: string): ParsedReauthCommand | { error: string 
   return { kind: "start", requestedProfileId: profileTokens[0], preferredFlow };
 }
 
+function extractOAuthCallbackState(input: string): string | undefined {
+  const trimmed = input.trim();
+  if (!trimmed) {
+    return undefined;
+  }
+  const candidates = [trimmed];
+  const slackLink = trimmed.match(/<([^>|]+)(?:\|[^>]+)?>/);
+  if (slackLink?.[1]) {
+    candidates.unshift(slackLink[1]);
+  }
+  const urlMatch = trimmed.match(/https?:\/\/\S+/i);
+  if (urlMatch?.[0]) {
+    candidates.push(urlMatch[0].replace(/[>)\]}.,]+$/, "").split("|")[0] ?? urlMatch[0]);
+  }
+
+  for (const candidate of candidates) {
+    try {
+      const url = new URL(candidate);
+      const state = url.searchParams.get("state")?.trim();
+      if (state) {
+        return state;
+      }
+    } catch {
+      // Try query-string parsing below.
+    }
+    const params = new URLSearchParams(
+      candidate.startsWith("?") ? candidate.slice(1) : candidate.replace(/^[^?]*\?/, ""),
+    );
+    const state = params.get("state")?.trim();
+    if (state) {
+      return state;
+    }
+  }
+  return undefined;
+}
+
+function findPendingReauthMatch(
+  params: Parameters<CommandHandler>[0],
+  input: string,
+): PendingReauthMatch | null {
+  const currentPending = params.sessionEntry?.pendingOAuthReauth;
+  if (currentPending && params.sessionEntry) {
+    return {
+      pending: currentPending,
+      sessionEntry: params.sessionEntry,
+      sessionKey: params.sessionKey,
+    };
+  }
+  const state = extractOAuthCallbackState(input);
+  if (!state || !params.sessionStore) {
+    return null;
+  }
+  for (const [sessionKey, sessionEntry] of Object.entries(params.sessionStore)) {
+    const pending = sessionEntry.pendingOAuthReauth;
+    if (pending?.flow !== "device_code" && pending?.state === state) {
+      return { pending, sessionEntry, sessionKey };
+    }
+  }
+  return null;
+}
+
 async function persistSessionEntry(params: Parameters<CommandHandler>[0]): Promise<boolean> {
   if (!params.sessionEntry || !params.sessionStore || !params.sessionKey) {
     return false;
@@ -95,11 +162,31 @@ async function persistSessionEntry(params: Parameters<CommandHandler>[0]): Promi
   return true;
 }
 
+async function persistMatchedSessionEntry(
+  params: Parameters<CommandHandler>[0],
+  match: PendingReauthMatch,
+): Promise<boolean> {
+  match.sessionEntry.updatedAt = Date.now();
+  if (params.sessionStore) {
+    params.sessionStore[match.sessionKey] = match.sessionEntry;
+  }
+  if (params.storePath) {
+    await updateSessionStore(params.storePath, (store) => {
+      store[match.sessionKey] = match.sessionEntry;
+    });
+  }
+  return true;
+}
+
 function clearPendingReauth(params: Parameters<CommandHandler>[0]): void {
   if (!params.sessionEntry) {
     return;
   }
   delete params.sessionEntry.pendingOAuthReauth;
+}
+
+function clearMatchedPendingReauth(match: PendingReauthMatch): void {
+  delete match.sessionEntry.pendingOAuthReauth;
 }
 
 function resolveDeviceCodeWatchIntervalMs(pending: PendingOAuthReauth): number {
@@ -310,16 +397,17 @@ function startDeviceCodeReauthWatcher(params: {
 }
 
 export const handlePendingReauthInput: CommandHandler = async (params) => {
-  const pending = params.sessionEntry?.pendingOAuthReauth;
-  if (!pending) {
+  const rawBody = resolveMessageBody(params);
+  const match = findPendingReauthMatch(params, rawBody);
+  if (!match) {
     return null;
   }
+  const pending = match.pending;
   const capability = getChatReauthCapability(pending.provider);
   if (!capability) {
     return null;
   }
 
-  const rawBody = resolveMessageBody(params);
   if (!capability.looksLikeCallbackInput(rawBody)) {
     return null;
   }
@@ -335,8 +423,8 @@ export const handlePendingReauthInput: CommandHandler = async (params) => {
   }
 
   if (Date.now() > pending.expiresAt) {
-    clearPendingReauth(params);
-    await persistSessionEntry(params);
+    clearMatchedPendingReauth(match);
+    await persistMatchedSessionEntry(params, match);
     return {
       shouldContinue: false,
       reply: {
@@ -350,8 +438,8 @@ export const handlePendingReauthInput: CommandHandler = async (params) => {
   }
 
   if (!pending.state || !pending.verifier) {
-    clearPendingReauth(params);
-    await persistSessionEntry(params);
+    clearMatchedPendingReauth(match);
+    await persistMatchedSessionEntry(params, match);
     return {
       shouldContinue: false,
       reply: {
@@ -375,8 +463,8 @@ export const handlePendingReauthInput: CommandHandler = async (params) => {
       profileId: pending.profileId,
       creds,
     });
-    clearPendingReauth(params);
-    await persistSessionEntry(params);
+    clearMatchedPendingReauth(match);
+    await persistMatchedSessionEntry(params, match);
     return {
       shouldContinue: false,
       reply: { text: `🔐 Re-auth complete for ${profileId}.` },

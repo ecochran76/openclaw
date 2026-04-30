@@ -109,7 +109,8 @@ function parseManualAuthorizationInput(
   input: string,
   expectedState: string,
 ): { code: string; state: string } {
-  const trimmed = input.trim();
+  const slackLink = input.trim().match(/^<([^>|]+)(?:\|[^>]+)?>$/);
+  const trimmed = (slackLink?.[1] ?? input).trim();
   if (!trimmed) {
     throw new Error("Missing OAuth redirect URL.");
   }
@@ -206,7 +207,7 @@ export function looksLikeOpenAICodexCallbackInput(input: string): boolean {
   }
   return (
     /\/auth\/callback\?/i.test(trimmed) ||
-    (/code=/.test(trimmed) && /state=/.test(trimmed)) ||
+    (trimmed.includes("code=") && trimmed.includes("state=")) ||
     trimmed.startsWith("?code=")
   );
 }
