@@ -400,6 +400,94 @@ describe("/reauth commands", () => {
     expect(pendingSessionEntry.pendingOAuthReauth).toBeUndefined();
   });
 
+  it("does not exchange a stale explicit callback against the current pending verifier", async () => {
+    const completePendingAuthorization = vi.fn();
+    hoisted.getChatReauthCapabilityMock.mockReturnValue({
+      provider: "openai-codex",
+      looksLikeCallbackInput: vi.fn(() => true),
+      createPendingAuthorization: vi.fn(),
+      completePendingAuthorization,
+    });
+
+    const params = buildCommandTestParams(
+      "/reauth callback http://localhost:1455/auth/callback?code=test&state=old-state",
+      cfg,
+    );
+    params.agentDir = "/tmp/agent";
+    params.sessionEntry = {
+      sessionId: "message-session",
+      updatedAt: 1,
+      pendingOAuthReauth: {
+        kind: "oauth",
+        provider: "openai-codex",
+        profileId: "openai-codex:work",
+        flow: "callback",
+        state: "new-state",
+        verifier: "new-verifier",
+        authorizationUrl: "https://auth.example.test/start",
+        redirectUri: "http://localhost:1455/auth/callback",
+        createdAt: Date.now(),
+        expiresAt: Date.now() + 60_000,
+      },
+    };
+    params.sessionStore = {
+      "agent:main:slack:message": params.sessionEntry,
+    };
+
+    const result = await handleReauthCommand(params, true);
+
+    expect(result?.shouldContinue).toBe(false);
+    expect(result?.reply?.text).toContain("No matching pending re-auth flow");
+    expect(completePendingAuthorization).not.toHaveBeenCalled();
+    expect(params.sessionEntry.pendingOAuthReauth?.state).toBe("new-state");
+  });
+
+  it("matches Slack-escaped callback state in explicit reauth command", async () => {
+    hoisted.getChatReauthCapabilityMock.mockReturnValue({
+      provider: "openai-codex",
+      looksLikeCallbackInput: vi.fn(() => true),
+      createPendingAuthorization: vi.fn(),
+      completePendingAuthorization: vi.fn(async () => ({
+        access: "access-token",
+        refresh: "refresh-token",
+        expires: 123,
+        accountId: "acct_123",
+      })),
+    });
+    hoisted.writeOAuthCredentialsMock.mockResolvedValue("openai-codex:work");
+    hoisted.updateConfigMock.mockResolvedValue(cfg);
+
+    const params = buildCommandTestParams(
+      "/reauth callback <http://localhost:1455/auth/callback?code=test&amp;scope=openid+profile+email+offline_access&amp;state=state-1|http://localhost:1455/auth/callback?code=test&amp;state=state-1>",
+      cfg,
+    );
+    params.agentDir = "/tmp/agent";
+    params.sessionEntry = {
+      sessionId: "message-session",
+      updatedAt: 1,
+      pendingOAuthReauth: {
+        kind: "oauth",
+        provider: "openai-codex",
+        profileId: "openai-codex:work",
+        flow: "callback",
+        state: "state-1",
+        verifier: "verifier-1",
+        authorizationUrl: "https://auth.example.test/start",
+        redirectUri: "http://localhost:1455/auth/callback",
+        createdAt: Date.now(),
+        expiresAt: Date.now() + 60_000,
+      },
+    };
+    params.sessionStore = {
+      "agent:main:slack:message": params.sessionEntry,
+    };
+
+    const result = await handleReauthCommand(params, true);
+
+    expect(result?.reply?.text).toBe("🔐 Re-auth complete for openai-codex:work.");
+    expect(params.sessionEntry.pendingOAuthReauth).toBeUndefined();
+  });
+
   it("does not route an unmatched explicit callback to the agent", async () => {
     hoisted.getChatReauthCapabilityMock.mockReturnValue({
       provider: "openai-codex",

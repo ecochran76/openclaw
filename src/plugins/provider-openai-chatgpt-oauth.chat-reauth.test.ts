@@ -174,7 +174,7 @@ describe("provider-openai-chatgpt chat reauth", () => {
 
     const result = await completeOpenAICodexManualAuthorization({
       input:
-        "<http://localhost:1455/auth/callback?code=test-code&state=state-1|http://localhost:1455/auth/callback?code=test-code&state=state-1>",
+        "<http://localhost:1455/auth/callback?code=test-code&amp;scope=openid+profile+email+offline_access&amp;state=state-1|http://localhost:1455/auth/callback?code=test-code&amp;state=state-1>",
       state: "state-1",
       verifier: "verifier-1",
     });

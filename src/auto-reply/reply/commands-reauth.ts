@@ -96,7 +96,7 @@ function parseReauthCommand(raw: string): ParsedReauthCommand | { error: string 
 }
 
 function extractOAuthCallbackState(input: string): string | undefined {
-  const trimmed = input.trim();
+  const trimmed = input.trim().replace(/&amp;/g, "&");
   if (!trimmed) {
     return undefined;
   }
@@ -135,15 +135,26 @@ function findPendingReauthMatch(
   params: Parameters<CommandHandler>[0],
   input: string,
 ): PendingReauthMatch | null {
+  const state = extractOAuthCallbackState(input);
   const currentPending = params.sessionEntry?.pendingOAuthReauth;
   if (currentPending && params.sessionEntry) {
-    return {
-      pending: currentPending,
-      sessionEntry: params.sessionEntry,
-      sessionKey: params.sessionKey,
-    };
+    if (
+      state &&
+      currentPending.flow !== "device_code" &&
+      currentPending.state &&
+      currentPending.state !== state
+    ) {
+      // The current Slack session may have a newer pending OAuth flow than the
+      // pasted callback. Do not exchange a stale callback against the wrong
+      // verifier; keep searching by state for the matching pending flow.
+    } else {
+      return {
+        pending: currentPending,
+        sessionEntry: params.sessionEntry,
+        sessionKey: params.sessionKey,
+      };
+    }
   }
-  const state = extractOAuthCallbackState(input);
   if (!state || !params.sessionStore) {
     return null;
   }

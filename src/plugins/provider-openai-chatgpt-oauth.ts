@@ -110,7 +110,7 @@ function parseManualAuthorizationInput(
   expectedState: string,
 ): { code: string; state: string } {
   const slackLink = input.trim().match(/^<([^>|]+)(?:\|[^>]+)?>$/);
-  const trimmed = (slackLink?.[1] ?? input).trim();
+  const trimmed = (slackLink?.[1] ?? input).trim().replace(/&amp;/g, "&");
   if (!trimmed) {
     throw new Error("Missing OAuth redirect URL.");
   }
