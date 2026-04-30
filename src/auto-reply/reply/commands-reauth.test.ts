@@ -1,4 +1,4 @@
-import { beforeEach, describe, expect, it, vi } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import type { OpenClawConfig } from "../../config/config.js";
 
 const hoisted = vi.hoisted(() => {
@@ -43,6 +43,10 @@ const cfg = {
 } satisfies OpenClawConfig;
 
 describe("/reauth commands", () => {
+  afterEach(() => {
+    vi.useRealTimers();
+  });
+
   beforeEach(() => {
     hoisted.ensureAuthProfileStoreMock.mockReset();
     hoisted.writeOAuthCredentialsMock.mockReset();
@@ -84,6 +88,59 @@ describe("/reauth commands", () => {
     expect(result?.reply?.text).toContain("Code: CODE-123");
     expect(params.sessionEntry.pendingOAuthReauth?.profileId).toBe("openai:dillan");
     expect(params.sessionEntry.pendingOAuthReauth?.flow).toBe("device_code");
+  });
+
+  it("watches a pending device-code flow and confirms completion", async () => {
+    vi.useFakeTimers();
+    vi.setSystemTime(new Date("2026-04-30T12:00:00Z"));
+    hoisted.ensureAuthProfileStoreMock.mockReturnValue({
+      profiles: {
+        "openai-codex:dillan": { provider: "openai-codex", type: "oauth", access: "a" },
+      },
+    });
+    const pollPendingAuthorization = vi.fn(async () => ({
+      access: "access-token",
+      refresh: "refresh-token",
+      expires: 123,
+      accountId: "acct_123",
+    }));
+    hoisted.getChatReauthCapabilityMock.mockReturnValue({
+      provider: "openai-codex",
+      looksLikeCallbackInput: vi.fn(() => false),
+      createPendingAuthorization: vi.fn(() => ({
+        flow: "device_code",
+        deviceAuthId: "device-1",
+        userCode: "CODE-123",
+        verificationUrl: "https://auth.example.test/device",
+        intervalMs: 5_000,
+        createdAt: Date.now(),
+        expiresAt: Date.now() + 15 * 60_000,
+      })),
+      completePendingAuthorization: vi.fn(),
+      pollPendingAuthorization,
+    });
+    hoisted.writeOAuthCredentialsMock.mockResolvedValue("openai-codex:dillan");
+    hoisted.updateConfigMock.mockResolvedValue(cfg);
+    const onBlockReply = vi.fn(async () => undefined);
+
+    const params = buildCommandTestParams("/reauth dillan", cfg);
+    params.agentDir = "/tmp/agent";
+    params.sessionEntry = { sessionId: "s1", updatedAt: 1 };
+    params.sessionStore = {};
+    params.opts = { onBlockReply };
+
+    const result = await handleReauthCommand(params, true);
+
+    expect(result?.reply?.text).toContain("I will watch for completion for up to 10 minutes");
+    expect(onBlockReply).not.toHaveBeenCalled();
+
+    await vi.advanceTimersByTimeAsync(5_000);
+
+    expect(pollPendingAuthorization).toHaveBeenCalledOnce();
+    expect(onBlockReply).toHaveBeenCalledWith({
+      text: "🔐 Re-auth complete for openai-codex:dillan.",
+    });
+    expect(params.sessionEntry.pendingOAuthReauth).toBeUndefined();
   });
 
   it("finishes a pending device-code flow on status after user approval", async () => {

@@ -20,6 +20,13 @@ type ParsedReauthCommand =
   | { kind: "status" }
   | { kind: "cancel" };
 
+const DEVICE_CODE_WATCH_DURATION_MS = 10 * 60_000;
+const DEVICE_CODE_WATCH_DEFAULT_INTERVAL_MS = 5_000;
+const DEVICE_CODE_WATCH_MIN_INTERVAL_MS = 1_000;
+const DEVICE_CODE_WATCH_MAX_INTERVAL_MS = 15_000;
+
+const activeDeviceCodeWatchers = new Map<string, ReturnType<typeof setTimeout>>();
+
 function resolveMessageBody(params: Parameters<CommandHandler>[0]): string {
   return (
     params.ctx.BodyForCommands ??
@@ -69,6 +76,30 @@ function clearPendingReauth(params: Parameters<CommandHandler>[0]): void {
   delete params.sessionEntry.pendingOAuthReauth;
 }
 
+function resolveDeviceCodeWatchIntervalMs(pending: PendingOAuthReauth): number {
+  const intervalMs = pending.intervalMs;
+  if (typeof intervalMs !== "number" || !Number.isFinite(intervalMs) || intervalMs <= 0) {
+    return DEVICE_CODE_WATCH_DEFAULT_INTERVAL_MS;
+  }
+  return Math.min(
+    DEVICE_CODE_WATCH_MAX_INTERVAL_MS,
+    Math.max(DEVICE_CODE_WATCH_MIN_INTERVAL_MS, Math.trunc(intervalMs)),
+  );
+}
+
+function resolveDeviceCodeWatcherKey(
+  params: Parameters<CommandHandler>[0],
+  pending: PendingOAuthReauth,
+): string {
+  return [
+    params.storePath ?? "memory",
+    params.sessionKey,
+    pending.provider,
+    pending.profileId,
+    pending.deviceAuthId ?? pending.userCode ?? String(pending.createdAt),
+  ].join("\u0000");
+}
+
 function formatPendingReauthMessage(pending: PendingOAuthReauth): string {
   if (pending.flow === "device_code") {
     const verificationUrl = pending.verificationUrl ?? pending.authorizationUrl;
@@ -77,7 +108,7 @@ function formatPendingReauthMessage(pending: PendingOAuthReauth): string {
       "Open this URL in a browser and enter the code below:",
       verificationUrl,
       `Code: ${pending.userCode ?? "[missing]"}`,
-      "After approving it, reply /reauth status in this thread to finish storing the refreshed profile.",
+      "I will watch for completion for up to 10 minutes and confirm here. You can also reply /reauth status to check immediately.",
     ]
       .filter(Boolean)
       .join("\n");
@@ -87,6 +118,18 @@ function formatPendingReauthMessage(pending: PendingOAuthReauth): string {
     "Open this URL in a local browser, sign in, then paste the full redirect URL back in this thread:",
     pending.authorizationUrl ?? "[authorization URL unavailable]",
   ].join("\n");
+}
+
+function stopDeviceCodeReauthWatcher(
+  params: Parameters<CommandHandler>[0],
+  pending: PendingOAuthReauth,
+): void {
+  const key = resolveDeviceCodeWatcherKey(params, pending);
+  const timer = activeDeviceCodeWatchers.get(key);
+  if (timer) {
+    clearTimeout(timer);
+  }
+  activeDeviceCodeWatchers.delete(key);
 }
 
 function formatThreadReauthUnsupported(profileId: string, provider: string): string {
@@ -146,9 +189,98 @@ async function pollDeviceCodeReauth(params: {
     profileId: params.pending.profileId,
     creds,
   });
+  stopDeviceCodeReauthWatcher(params.commandParams, params.pending);
   clearPendingReauth(params.commandParams);
   await persistSessionEntry(params.commandParams);
   return profileId;
+}
+
+function startDeviceCodeReauthWatcher(params: {
+  commandParams: Parameters<CommandHandler>[0];
+  pending: PendingOAuthReauth;
+  capability: NonNullable<ReturnType<typeof getChatReauthCapability>>;
+}): boolean {
+  if (
+    params.pending.flow !== "device_code" ||
+    !params.capability.pollPendingAuthorization ||
+    !params.commandParams.opts?.onBlockReply
+  ) {
+    return false;
+  }
+  const key = resolveDeviceCodeWatcherKey(params.commandParams, params.pending);
+  if (activeDeviceCodeWatchers.has(key)) {
+    return true;
+  }
+  const deadlineMs = Math.min(params.pending.expiresAt, Date.now() + DEVICE_CODE_WATCH_DURATION_MS);
+  const scheduleNext = (delayMs: number) => {
+    const timer = setTimeout(() => {
+      void pollOnce();
+    }, delayMs);
+    timer.unref?.();
+    activeDeviceCodeWatchers.set(key, timer);
+  };
+  const finish = () => {
+    const timer = activeDeviceCodeWatchers.get(key);
+    if (timer) {
+      clearTimeout(timer);
+    }
+    activeDeviceCodeWatchers.delete(key);
+  };
+  const pollOnce = async () => {
+    const currentPending = params.commandParams.sessionEntry?.pendingOAuthReauth;
+    if (
+      !currentPending ||
+      currentPending.provider !== params.pending.provider ||
+      currentPending.profileId !== params.pending.profileId ||
+      currentPending.deviceAuthId !== params.pending.deviceAuthId
+    ) {
+      finish();
+      return;
+    }
+    const now = Date.now();
+    if (now >= deadlineMs) {
+      finish();
+      const expired = now >= params.pending.expiresAt;
+      if (expired) {
+        clearPendingReauth(params.commandParams);
+        await persistSessionEntry(params.commandParams);
+      }
+      await params.commandParams.opts?.onBlockReply?.({
+        text: expired
+          ? `⚠️ Re-auth request for ${params.pending.profileId} expired. Reply /reauth ${params.pending.profileId} to start a new one.`
+          : `🔐 Re-auth for ${params.pending.profileId} is still pending after 10 minutes. Reply /reauth status to check once or /reauth cancel to stop it.`,
+      });
+      return;
+    }
+    try {
+      const completedProfileId = await pollDeviceCodeReauth({
+        commandParams: params.commandParams,
+        pending: params.pending,
+        capability: params.capability,
+      });
+      if (completedProfileId) {
+        finish();
+        await params.commandParams.opts?.onBlockReply?.({
+          text: `🔐 Re-auth complete for ${completedProfileId}.`,
+        });
+        return;
+      }
+    } catch (error) {
+      finish();
+      const message = error instanceof Error ? error.message : String(error);
+      await params.commandParams.opts?.onBlockReply?.({
+        text: `⚠️ Re-auth failed for ${params.pending.profileId}: ${message}`,
+      });
+      return;
+    }
+    const nextDelayMs = Math.min(
+      resolveDeviceCodeWatchIntervalMs(params.pending),
+      deadlineMs - now,
+    );
+    scheduleNext(nextDelayMs);
+  };
+  scheduleNext(resolveDeviceCodeWatchIntervalMs(params.pending));
+  return true;
 }
 
 export const handlePendingReauthInput: CommandHandler = async (params) => {
@@ -296,7 +428,11 @@ export const handleReauthCommand: CommandHandler = async (params, allowTextComma
   }
 
   if (parsed.kind === "cancel") {
-    const hadPending = Boolean(params.sessionEntry.pendingOAuthReauth);
+    const pending = params.sessionEntry.pendingOAuthReauth;
+    const hadPending = Boolean(pending);
+    if (pending) {
+      stopDeviceCodeReauthWatcher(params, pending);
+    }
     clearPendingReauth(params);
     await persistSessionEntry(params);
     return {
@@ -361,6 +497,11 @@ export const handleReauthCommand: CommandHandler = async (params, allowTextComma
   };
   params.sessionEntry.pendingOAuthReauth = pending;
   await persistSessionEntry(params);
+  startDeviceCodeReauthWatcher({
+    commandParams: params,
+    pending,
+    capability,
+  });
   return {
     shouldContinue: false,
     reply: { text: formatPendingReauthMessage(pending) },
