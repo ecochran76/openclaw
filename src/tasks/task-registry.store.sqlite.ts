@@ -127,7 +127,7 @@ function rowToTaskDeliveryState(row: TaskDeliveryStateRow): TaskDeliveryState {
   const requesterOrigin = parseDeliveryContextJson(row.requester_origin_json);
   const lastNotifiedEventAt = normalizeSqliteNumber(row.last_notified_event_at);
   return {
-    taskId: row.task_id,
+    taskId: row.task_id ?? "",
     ...(requesterOrigin ? { requesterOrigin } : {}),
     ...(lastNotifiedEventAt != null ? { lastNotifiedEventAt } : {}),
   };
@@ -254,6 +254,8 @@ function upsertTaskRow(db: DatabaseSync, row: Insertable<TaskRunsTable>): void {
         }),
       ),
   );
+  db.exec(`DELETE FROM task_delivery_state WHERE task_id IS NULL OR trim(task_id) = '';`);
+  db.exec(`DELETE FROM task_runs WHERE task_id IS NULL OR trim(task_id) = '';`);
 }
 
 function replaceTaskDeliveryStateRow(
@@ -308,11 +310,17 @@ function withWriteTransaction(write: (database: TaskRegistryDatabase) => void) {
 
 export function loadTaskRegistryStateFromSqlite(): TaskRegistryStoreSnapshot {
   const { db } = openTaskRegistryDatabase();
+  db.exec(`DELETE FROM task_delivery_state WHERE task_id IS NULL OR trim(task_id) = '';`);
+  db.exec(`DELETE FROM task_runs WHERE task_id IS NULL OR trim(task_id) = '';`);
   const taskRows = selectTaskRows(db);
   const deliveryRows = selectTaskDeliveryStateRows(db);
+  const validTaskRows = taskRows.filter((row) => row.task_id.trim());
+  const validDeliveryRows = deliveryRows.filter((row) => row.task_id.trim());
   return {
-    tasks: new Map(taskRows.map((row) => [row.task_id, rowToTaskRecord(row)])),
-    deliveryStates: new Map(deliveryRows.map((row) => [row.task_id, rowToTaskDeliveryState(row)])),
+    tasks: new Map(validTaskRows.map((row) => [row.task_id!, rowToTaskRecord(row)])),
+    deliveryStates: new Map(
+      validDeliveryRows.map((row) => [row.task_id!, rowToTaskDeliveryState(row)]),
+    ),
   };
 }
 

@@ -2,6 +2,7 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import type { AcpSessionStoreEntry } from "../acp/runtime/session-meta.js";
 import { startAcpSpawnParentStreamRelay } from "../agents/acp-spawn-parent-stream.js";
+import type { SessionEntry } from "../config/sessions/types.js";
 import { resetCronActiveJobs } from "../cron/active-jobs.js";
 import {
   emitAgentEvent,
@@ -144,7 +145,7 @@ function configureTaskRegistryMaintenanceRuntimeForTest(params: {
   acpEntry?: AcpSessionStoreEntry;
   acpEntries?: AcpSessionStoreEntry[];
   hasActiveAcpTurn?: (sessionKey: string) => boolean;
-  sessionStore?: Record<string, unknown>;
+  sessionStore?: Record<string, SessionEntry>;
   sessionBindings?: SessionBindingRecord[];
   closeAcpSession?: (params: {
     cfg: AcpSessionStoreEntry["cfg"];
@@ -2516,7 +2517,7 @@ describe("task-registry", () => {
         currentTasks,
         snapshotTasks: [current],
         sessionStore: {
-          [childSessionKey]: { sessionId: "left-behind-session-row" },
+          [childSessionKey]: { sessionId: "left-behind-session-row", updatedAt: now },
         },
       });
 
@@ -2594,7 +2595,7 @@ describe("task-registry", () => {
         currentTasks,
         snapshotTasks: [current],
         sessionStore: {
-          [childSessionKey]: { sessionId: "media-session-row" },
+          [childSessionKey]: { sessionId: "media-session-row", updatedAt: now },
         },
       });
 

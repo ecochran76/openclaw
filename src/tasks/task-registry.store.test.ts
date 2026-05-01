@@ -1,5 +1,5 @@
 // Covers task registry store persistence, in-memory behavior, and observer notifications.
-import { statSync } from "node:fs";
+import { mkdirSync, statSync } from "node:fs";
 import path from "node:path";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import {
@@ -26,6 +26,8 @@ import {
   findTaskByRunId,
   getTaskById,
   listFreshTasksForOwnerKey,
+  listTaskRecords,
+  markTaskLostById,
   markTaskTerminalById,
   maybeDeliverTaskStateChangeUpdate,
   resetTaskRegistryForTests,
@@ -257,6 +259,34 @@ describe("task-registry store runtime", () => {
         expect(restored.deliveryStates.get(created.taskId)?.requesterOrigin).toBeUndefined();
       },
     );
+  });
+
+  it("skips restored tasks and delivery state without stable task ids", () => {
+    const invalidTask = {
+      ...createStoredTask(),
+      taskId: null as unknown as string,
+      runId: "run-invalid-id",
+    };
+    configureTaskRegistryRuntime({
+      store: {
+        loadSnapshot: () => ({
+          tasks: new Map([[null as unknown as string, invalidTask]]),
+          deliveryStates: new Map([
+            [
+              null as unknown as string,
+              {
+                taskId: null as unknown as string,
+                lastNotifiedEventAt: 100,
+              },
+            ],
+          ]),
+        }),
+        saveSnapshot: () => {},
+      },
+    });
+
+    expect(findTaskByRunId("run-invalid-id")).toBeUndefined();
+    expect(listTaskRecords()).toEqual([]);
   });
 
   it("emits incremental observer events for restore, mutation, and delete", () => {
@@ -596,6 +626,75 @@ describe("task-registry store runtime", () => {
           channel: "test-channel",
           to: "C1234567890",
         });
+      },
+    );
+  });
+
+  it("purges legacy sqlite rows without stable task ids before restore", async () => {
+    await withOpenClawTestState(
+      { layout: "state-only", prefix: "openclaw-task-store-null-id-" },
+      async () => {
+        const sqlitePath = resolveOpenClawStateSqlitePath(process.env);
+        mkdirSync(path.dirname(sqlitePath), { recursive: true });
+        const database = openOpenClawStateDatabase();
+        const db = database.db;
+        db.prepare(`
+      INSERT INTO task_runs (
+        task_id,
+        runtime,
+        requester_session_key,
+        owner_key,
+        scope_kind,
+        run_id,
+        task,
+        status,
+        delivery_status,
+        notify_policy,
+        created_at,
+        last_event_at
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+    `).run(
+          "",
+          "cli",
+          "agent:main:main",
+          "agent:main:main",
+          "session",
+          "run-null-id",
+          "Null id task",
+          "running",
+          "pending",
+          "silent",
+          100,
+          100,
+        );
+        db.prepare(`
+      INSERT INTO task_delivery_state (
+        task_id,
+        requester_origin_json,
+        last_notified_event_at
+      ) VALUES (?, ?, ?)
+    `).run("", null, 100);
+
+        const restored = loadTaskRegistryStateFromSqlite();
+        expect(restored.tasks.size).toBe(0);
+        expect(restored.deliveryStates.size).toBe(0);
+
+        resetTaskRegistryForTests({ persist: false });
+
+        expect(findTaskByRunId("run-null-id")).toBeUndefined();
+        expect(listTaskRecords()).toEqual([]);
+
+        resetTaskRegistryForTests({ persist: false });
+        const verifyDb = openOpenClawStateDatabase().db;
+        const taskRows = verifyDb.prepare("SELECT count(*) AS count FROM task_runs").get() as {
+          count: number | bigint;
+        };
+        const deliveryRows = verifyDb
+          .prepare("SELECT count(*) AS count FROM task_delivery_state")
+          .get() as { count: number | bigint };
+
+        expect(Number(taskRows.count)).toBe(0);
+        expect(Number(deliveryRows.count)).toBe(0);
       },
     );
   });

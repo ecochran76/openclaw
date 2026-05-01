@@ -1135,10 +1135,28 @@ function restoreTaskRegistryOnce() {
       return;
     }
     for (const [taskId, task] of restored.tasks.entries()) {
-      tasks.set(taskId, normalizeTaskTimestamps(task));
+      const restoredTaskId =
+        typeof task.taskId === "string" && task.taskId.trim()
+          ? task.taskId.trim()
+          : typeof taskId === "string" && taskId.trim()
+            ? taskId.trim()
+            : "";
+      if (!restoredTaskId) {
+        continue;
+      }
+      tasks.set(restoredTaskId, normalizeTaskTimestamps({ ...task, taskId: restoredTaskId }));
     }
     for (const [taskId, state] of restored.deliveryStates.entries()) {
-      taskDeliveryStates.set(taskId, state);
+      const restoredTaskId =
+        typeof state.taskId === "string" && state.taskId.trim()
+          ? state.taskId.trim()
+          : typeof taskId === "string" && taskId.trim()
+            ? taskId.trim()
+            : "";
+      if (!restoredTaskId) {
+        continue;
+      }
+      taskDeliveryStates.set(restoredTaskId, { ...state, taskId: restoredTaskId });
     }
     rebuildRunIdIndex();
     rebuildOwnerKeyIndex();

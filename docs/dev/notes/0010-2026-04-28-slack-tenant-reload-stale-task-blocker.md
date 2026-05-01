@@ -253,6 +253,8 @@ Live result after patch:
 Residual work:
 
 - This closes the current cancellable-id SoyLei stale-task incident.
-- The older null-id row class still needs direct fixture coverage if it can
-  still be produced by any supported store path; the durable invariant remains
-  that active task rows need a stable repair token.
+- Direct fixture coverage now exists for the older null-id row class. Restore
+  paths skip invalid task/delivery ids defensively, and the SQLite store purges
+  legacy rows with missing or blank `task_id` values before exposing a snapshot
+  to the in-memory task registry. The durable invariant remains that active task
+  rows need a stable repair token.
