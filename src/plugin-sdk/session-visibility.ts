@@ -366,10 +366,7 @@ function buildA2ADenyPermissionRequest(params: {
     suggestedChanges: [
       {
         path: "tools.agentToAgent.allow",
-        value: dedupeTrimmedStrings([
-          ...params.a2aPolicy.allowPatterns.map((pattern) => String(pattern ?? "")),
-          ...missingAllowAgents,
-        ]),
+        value: dedupeTrimmedStrings([...params.a2aPolicy.allowPatterns, ...missingAllowAgents]),
       },
     ],
     missingAllowAgents,

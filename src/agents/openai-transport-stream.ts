@@ -2079,7 +2079,7 @@ function describeOpenAICodexCredentialShape(value: string): string {
   if (value.startsWith("{")) {
     try {
       const parsed = JSON.parse(value) as Record<string, unknown>;
-      const keys = Object.keys(parsed).sort().join(",");
+      const keys = Object.keys(parsed).toSorted().join(",");
       const token = typeof parsed.token === "string" ? parsed.token : undefined;
       const accessToken = typeof parsed.accessToken === "string" ? parsed.accessToken : undefined;
       const candidate = token ?? accessToken ?? "";
@@ -2171,7 +2171,7 @@ async function* parseOpenAICodexSse(response: Response): AsyncIterable<unknown> 
   const reader = response.body.getReader();
   const decoder = new TextDecoder();
   let buffer = "";
-  const parseBlock = (block: string): unknown | undefined => {
+  const parseBlock = (block: string): Record<string, unknown> | undefined => {
     const data = block
       .split(/\r\n|\n|\r/)
       .filter((line) => line.startsWith("data:"))

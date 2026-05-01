@@ -128,7 +128,7 @@ function applyLiveChannelRuntime(
 
     channels[channelId] = {
       ...current,
-      ...(runtimeChannel ?? {}),
+      ...runtimeChannel,
       accountId: liveAccountId,
       accounts: nextAccounts,
     };
