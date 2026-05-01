@@ -5,7 +5,11 @@
 import type { OpenClawConfig } from "../config/types.openclaw.js";
 import { normalizePluginsConfig } from "../plugins/config-state.js";
 import { getCurrentPluginMetadataSnapshot } from "../plugins/current-plugin-metadata-snapshot.js";
-import { getActivePluginRuntimeSubagentMode } from "../plugins/runtime.js";
+import {
+  getActivePluginRegistry,
+  getActivePluginRegistryKey,
+  getActivePluginRuntimeSubagentMode,
+} from "../plugins/runtime.js";
 import { ensureStandaloneRuntimePluginRegistryLoaded } from "../plugins/runtime/standalone-runtime-registry-loader.js";
 import { resolveUserPath } from "../utils.js";
 
@@ -52,6 +56,14 @@ export function ensureRuntimePluginsLoaded(params: {
   const allowGatewaySubagentBinding =
     params.allowGatewaySubagentBinding === true ||
     getActivePluginRuntimeSubagentMode() === "gateway-bindable";
+  if (
+    allowGatewaySubagentBinding &&
+    getActivePluginRegistryKey() &&
+    getActivePluginRuntimeSubagentMode() === "gateway-bindable" &&
+    getActivePluginRegistry()
+  ) {
+    return;
+  }
   ensureStandaloneRuntimePluginRegistryLoaded({
     requiredPluginIds: startupPluginIds,
     loadOptions: {

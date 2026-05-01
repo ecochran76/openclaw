@@ -21,6 +21,11 @@ import type { PluginMetadataManifestView } from "./plugin-metadata-snapshot.type
 import type { PluginRegistry, PluginToolRegistration } from "./registry-types.js";
 import { withPluginRuntimePluginScope } from "./runtime/gateway-request-scope.js";
 import {
+  getActivePluginRegistry,
+  getActivePluginRegistryKey,
+  getActivePluginRuntimeSubagentMode,
+} from "./runtime.js";
+import {
   buildPluginRuntimeLoadOptions,
   resolvePluginRuntimeLoadContext,
 } from "./runtime/load-context.js";
@@ -916,6 +921,12 @@ function resolvePluginToolRegistry(params: {
   retainedRegistry?: PluginRegistry;
   onRetainRegistry?: (registry: PluginRegistry) => void;
 }) {
+  if (getActivePluginRegistryKey() && getActivePluginRuntimeSubagentMode() === "gateway-bindable") {
+    const activeRegistry = getActivePluginRegistry() ?? undefined;
+    if (registryHasScopedPluginTools(activeRegistry, params.onlyPluginIds)) {
+      return activeRegistry;
+    }
+  }
   const lookup = {
     env: params.loadOptions.env,
     loadOptions: params.loadOptions,

@@ -114,7 +114,7 @@ describe("probeGatewayStatus", () => {
     expect(result.version).toBe("2026.5.6");
   });
 
-  it("uses a real status RPC when requireRpc is enabled", async () => {
+  it("uses a cheap read RPC when requireRpc is enabled", async () => {
     callGatewayMock.mockReset();
     probeGatewayMock.mockReset();
     callGatewayMock.mockResolvedValueOnce({ status: "ok" });
@@ -162,13 +162,13 @@ describe("probeGatewayStatus", () => {
       token: "temp-token",
       password: undefined,
       tlsFingerprint: "abc123",
-      method: "status",
+      method: "system-presence",
       timeoutMs: 5_000,
       configPath: "/tmp/openclaw-daemon/openclaw.json",
     });
   });
 
-  it("forwards configured handshake timeout to the connect probe and status RPC", async () => {
+  it("forwards configured handshake timeout to the connect probe and read RPC", async () => {
     callGatewayMock.mockReset();
     probeGatewayMock.mockReset();
     callGatewayMock.mockResolvedValueOnce({ status: "ok" });
@@ -208,7 +208,7 @@ describe("probeGatewayStatus", () => {
       password: undefined,
       tlsFingerprint: undefined,
       config,
-      method: "status",
+      method: "system-presence",
       timeoutMs: 30_000,
     });
   });
@@ -253,7 +253,7 @@ describe("probeGatewayStatus", () => {
       token: "temp-token",
       password: undefined,
       tlsFingerprint: undefined,
-      method: "status",
+      method: "system-presence",
       timeoutMs: 5_000,
     });
   });
@@ -292,7 +292,7 @@ describe("probeGatewayStatus", () => {
     expect(probeGatewayMock).not.toHaveBeenCalled();
   });
 
-  it("falls back to read-only when the status RPC succeeds but the auth probe is inconclusive", async () => {
+  it("falls back to read-only when the read RPC succeeds but the auth probe is inconclusive", async () => {
     callGatewayMock.mockReset();
     probeGatewayMock.mockReset();
     callGatewayMock.mockResolvedValueOnce({ status: "ok" });
@@ -432,7 +432,7 @@ describe("probeGatewayStatus", () => {
     expect(result.error).toBe("scope upgrade pending approval (requestId: req-123)");
   });
 
-  it("surfaces status RPC errors when requireRpc is enabled", async () => {
+  it("surfaces read RPC errors when requireRpc is enabled", async () => {
     callGatewayMock.mockReset();
     probeGatewayMock.mockReset();
     callGatewayMock.mockRejectedValueOnce(new Error("missing scope: operator.admin"));

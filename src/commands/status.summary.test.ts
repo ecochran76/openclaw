@@ -174,6 +174,7 @@ vi.mock("./status.link-channel.js", () => ({
 const { buildChannelSummary } = await import("../infra/channel-summary.js");
 const { resolveStorePath } = await import("../config/sessions/paths.js");
 const { listGatewayAgentsBasic } = await import("../gateway/agent-list.js");
+const taskRegistryMaintenance = await import("../tasks/task-registry.maintenance.js");
 const { resolveLinkChannelContext } = await import("./status.link-channel.js");
 let getStatusSummary: typeof import("./status.summary.js").getStatusSummary;
 let statusSummaryRuntime: typeof import("./status.summary.runtime.js").statusSummaryRuntime;
@@ -354,6 +355,23 @@ describe("getStatusSummary", () => {
     expect(statusSummaryMocks.hasConfiguredChannelsForReadOnlyScope).not.toHaveBeenCalled();
     expect(buildChannelSummary).not.toHaveBeenCalled();
     expect(resolveLinkChannelContext).not.toHaveBeenCalled();
+  });
+
+  it("can skip session store reads for liveness status probes", async () => {
+    const summary = await getStatusSummary({
+      includeChannelSummary: false,
+      includeSessions: false,
+      includeTasks: false,
+    });
+
+    expect(summary.sessions.count).toBe(0);
+    expect(summary.sessions.paths).toEqual([]);
+    expect(summary.sessions.recent).toEqual([]);
+    expect(summary.sessions.byAgent).toEqual([]);
+    expect(summary.tasks.total).toBe(0);
+    expect(summary.taskAudit.total).toBe(0);
+    expect(statusSummaryRuntime.resolveConfiguredStatusModelRef).not.toHaveBeenCalled();
+    expect(taskRegistryMaintenance.configureTaskRegistryMaintenance).not.toHaveBeenCalled();
   });
 
   it("does not trigger async context warmup while building status summaries", async () => {

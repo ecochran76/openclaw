@@ -97,7 +97,7 @@ export async function probeGatewayStatus(opts: {
             password: opts.password,
             tlsFingerprint: opts.tlsFingerprint,
             ...(allowRpcConfigCredentials && opts.config ? { config: opts.config } : {}),
-            method: "status",
+            method: "system-presence",
             timeoutMs: opts.timeoutMs,
             ...(opts.configPath ? { configPath: opts.configPath } : {}),
           });

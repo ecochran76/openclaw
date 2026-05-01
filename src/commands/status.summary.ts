@@ -18,9 +18,11 @@ import { parseAgentSessionKey } from "../routing/session-key.js";
 import { createLazyImportLoader } from "../shared/lazy-promise.js";
 import { createLazyRuntimeSurface } from "../shared/lazy-runtime.js";
 import {
+  createEmptyTaskAuditSummary,
   summarizeActionableTaskAuditFindings,
   summarizeRetainedLostTaskAuditFindings,
 } from "../tasks/task-registry.audit.js";
+import { createEmptyTaskRegistrySummary } from "../tasks/task-registry.summary.js";
 import { resolveRuntimeServiceVersion } from "../version.js";
 import type { HeartbeatStatus, SessionStatus, StatusSummary } from "./status.types.js";
 
@@ -243,18 +245,19 @@ export async function getStatusSummary(
   options: {
     includeSensitive?: boolean;
     includeChannelSummary?: boolean;
+    includeSessions?: boolean;
+    includeTasks?: boolean;
     config?: OpenClawConfig;
     sourceConfig?: OpenClawConfig;
   } = {},
 ): Promise<StatusSummary> {
-  const { includeSensitive = true, includeChannelSummary = true } = options;
   const {
-    classifySessionKey,
-    resolveConfiguredStatusModelRef,
-    resolveContextTokensForModel,
-    resolveSessionRuntimeLabel,
-    resolveSessionModelRef,
-  } = await loadStatusSummaryRuntimeModule();
+    includeSensitive = true,
+    includeChannelSummary = true,
+    includeSessions = true,
+    includeTasks = true,
+  } = options;
+  const statusRuntime = includeSessions ? await loadStatusSummaryRuntimeModule() : null;
   const cfg = options.config ?? getRuntimeConfig();
   const contextSourceConfig =
     options.sourceConfig !== undefined
@@ -330,42 +333,52 @@ export async function getStatusSummary(
     : [];
   const mainSessionKey = resolveMainSessionKey(cfg);
   const queuedSystemEvents = peekSystemEvents(mainSessionKey);
-  const taskMaintenanceModule = await loadTaskRegistryMaintenanceModule();
-  // Configure maintenance store before reading task summaries so cron-backed tasks are in scope.
-  taskMaintenanceModule.configureTaskRegistryMaintenance({
-    cronStorePath: resolveCronJobsStorePath(cfg.cron?.store),
-  });
-  const inspectableTasks = taskMaintenanceModule.reconcileInspectableTasks();
-  const rawTasks = taskMaintenanceModule.getInspectableTaskRegistrySummary(inspectableTasks);
-  const taskAuditFindings = taskMaintenanceModule.getInspectableTaskAuditFindings(inspectableTasks);
   const now = Date.now();
-  const taskAudit = summarizeActionableTaskAuditFindings(taskAuditFindings, { now });
+  const taskMaintenanceModule = includeTasks ? await loadTaskRegistryMaintenanceModule() : null;
+  if (taskMaintenanceModule) {
+    // Configure maintenance store before reading task summaries so cron-backed tasks are in scope.
+    taskMaintenanceModule.configureTaskRegistryMaintenance({
+      cronStorePath: resolveCronJobsStorePath(cfg.cron?.store),
+    });
+  }
+  const inspectableTasks = taskMaintenanceModule?.reconcileInspectableTasks() ?? [];
+  const rawTasks = taskMaintenanceModule
+    ? taskMaintenanceModule.getInspectableTaskRegistrySummary(inspectableTasks)
+    : createEmptyTaskRegistrySummary();
+  const taskAuditFindings = taskMaintenanceModule
+    ? taskMaintenanceModule.getInspectableTaskAuditFindings(inspectableTasks)
+    : [];
+  const taskAudit = taskMaintenanceModule
+    ? summarizeActionableTaskAuditFindings(taskAuditFindings, { now })
+    : createEmptyTaskAuditSummary();
   const taskAuditRetainedLost = summarizeRetainedLostTaskAuditFindings(taskAuditFindings, { now });
   const tasks = discountRetainedLostTaskFailures(rawTasks, taskAuditRetainedLost.count);
 
-  const resolved = resolveConfiguredStatusModelRef({
-    cfg,
-    defaultProvider: DEFAULT_PROVIDER,
-    defaultModel: DEFAULT_MODEL,
-  });
+  const resolved = statusRuntime
+    ? statusRuntime.resolveConfiguredStatusModelRef({
+        cfg,
+        defaultProvider: DEFAULT_PROVIDER,
+        defaultModel: DEFAULT_MODEL,
+      })
+    : { provider: DEFAULT_PROVIDER, model: DEFAULT_MODEL };
   const configModel = resolved.model ?? DEFAULT_MODEL;
-  const configModelContext = await resolveStaticModelContext(
-    resolved.provider ?? DEFAULT_PROVIDER,
-    configModel,
-  );
-  const configContextTokens =
-    resolveContextTokensForModel({
-      cfg,
-      sourceCfg: contextSourceConfig,
-      provider: resolved.provider ?? DEFAULT_PROVIDER,
-      model: configModel,
-      ...configModelContext,
-      contextTokensOverride: cfg.agents?.defaults?.contextTokens,
-      fallbackContextTokens: DEFAULT_CONTEXT_TOKENS,
-      // Keep `status`/`status --json` startup read-only. These summary lookups
-      // use offline static catalogs but never start live provider discovery.
-      allowAsyncLoad: false,
-    }) ?? DEFAULT_CONTEXT_TOKENS;
+  const configModelContext = statusRuntime
+    ? await resolveStaticModelContext(resolved.provider ?? DEFAULT_PROVIDER, configModel)
+    : {};
+  const configContextTokens = statusRuntime
+    ? (statusRuntime.resolveContextTokensForModel({
+        cfg,
+        sourceCfg: contextSourceConfig,
+        provider: resolved.provider ?? DEFAULT_PROVIDER,
+        model: configModel,
+        ...configModelContext,
+        contextTokensOverride: cfg.agents?.defaults?.contextTokens,
+        fallbackContextTokens: DEFAULT_CONTEXT_TOKENS,
+        // Keep `status`/`status --json` startup read-only. These summary lookups
+        // use offline static catalogs but never start live provider discovery.
+        allowAsyncLoad: false,
+      }) ?? DEFAULT_CONTEXT_TOKENS)
+    : (cfg.agents?.defaults?.contextTokens ?? DEFAULT_CONTEXT_TOKENS);
 
   const candidateCache = new Map<string, SessionCandidate[]>();
   const loadSessionCandidates = (storePath: string, agentId?: string) => {
@@ -387,15 +400,25 @@ export async function getStatusSummary(
         const age = updatedAt ? now - updatedAt : null;
         const parsedAgentId = parseAgentSessionKey(key)?.agentId;
         const agentId = opts.agentIdOverride ?? parsedAgentId;
-        const configuredForSession = resolveConfiguredStatusModelRef({
+        const configuredForSession = statusRuntime?.resolveConfiguredStatusModelRef({
           cfg,
           defaultProvider: DEFAULT_PROVIDER,
           defaultModel: DEFAULT_MODEL,
           agentId,
-        });
+        }) ?? {
+          provider: resolved.provider ?? DEFAULT_PROVIDER,
+          model: configModel,
+        };
         const configuredSessionModel = configuredForSession.model ?? DEFAULT_MODEL;
         const configuredSessionModelLabel = `${configuredForSession.provider ?? DEFAULT_PROVIDER}/${configuredSessionModel}`;
-        const resolvedModel = resolveSessionModelRef(cfg, entry, opts.agentIdOverride);
+        const resolvedModel = statusRuntime?.resolveSessionModelRef(
+          cfg,
+          entry,
+          opts.agentIdOverride,
+        ) ?? {
+          provider: configuredForSession.provider ?? resolved.provider,
+          model: configuredSessionModel,
+        };
         const model = resolvedModel.model ?? configuredSessionModel ?? null;
         const modelContext = await resolveStaticModelContext(
           resolvedModel.provider,
@@ -410,7 +433,7 @@ export async function getStatusSummary(
           hasUserPinnedModelSelection(entry);
         // Session rows show the live selected model but warn only for user-pinned differences.
         const contextTokens =
-          resolveContextTokensForModel({
+          statusRuntime?.resolveContextTokensForModel({
             cfg,
             sourceCfg: contextSourceConfig,
             provider: resolvedModel.provider,
@@ -433,19 +456,20 @@ export async function getStatusSummary(
           contextTokens && contextTokens > 0 && total !== undefined
             ? Math.min(999, Math.round((total / contextTokens) * 100))
             : null;
-        const runtime = resolveSessionRuntimeLabel({
-          cfg,
-          entry,
-          provider: resolvedModel.provider,
-          model: model ?? "",
-          agentId,
-          sessionKey: key,
-        });
+        const runtime =
+          statusRuntime?.resolveSessionRuntimeLabel({
+            cfg,
+            entry,
+            provider: resolvedModel.provider,
+            model: model ?? "",
+            agentId,
+            sessionKey: key,
+          }) ?? "unknown";
 
         return {
           agentId,
           key,
-          kind: classifySessionKey(key, entry),
+          kind: statusRuntime?.classifySessionKey(key, entry) ?? "unknown",
           sessionId: entry?.sessionId,
           updatedAt,
           age,
@@ -482,41 +506,49 @@ export async function getStatusSummary(
   }));
   const paths = new Set<string>();
   const pathCounts = new Map<string, number>();
-  for (const source of storeSources) {
-    paths.add(source.storePath);
-    pathCounts.set(source.storePath, (pathCounts.get(source.storePath) ?? 0) + 1);
+  if (includeSessions) {
+    for (const source of storeSources) {
+      paths.add(source.storePath);
+      pathCounts.set(source.storePath, (pathCounts.get(source.storePath) ?? 0) + 1);
+    }
   }
 
-  const byAgent = await Promise.all(
-    agentList.agents.map(async (agent) => {
-      const storePath = resolveStorePath(cfg.session?.store, { agentId: agent.id });
-      const candidates = loadSessionCandidates(storePath, agent.id);
-      const sessions = await buildSessionRows(
-        selectRecentSessionCandidates(candidates, RECENT_SESSION_LIMIT),
-        { agentIdOverride: agent.id },
-      );
-      return {
-        agentId: agent.id,
-        path: storePath,
-        count: candidates.length,
-        recent: sessions,
-      };
-    }),
-  );
+  const byAgent = includeSessions
+    ? await Promise.all(
+        agentList.agents.map(async (agent) => {
+          const storePath = resolveStorePath(cfg.session?.store, { agentId: agent.id });
+          const candidates = loadSessionCandidates(storePath, agent.id);
+          const sessions = await buildSessionRows(
+            selectRecentSessionCandidates(candidates, RECENT_SESSION_LIMIT),
+            { agentIdOverride: agent.id },
+          );
+          return {
+            agentId: agent.id,
+            path: storePath,
+            count: candidates.length,
+            recent: sessions,
+          };
+        }),
+      )
+    : [];
 
-  const allSessions = storeSources
-    .filter((source, index, sources) => {
-      return sources.findIndex((candidate) => candidate.storePath === source.storePath) === index;
-    })
-    .flatMap((source) =>
-      loadSessionCandidates(
-        source.storePath,
-        pathCounts.get(source.storePath) === 1 ? source.agentId : undefined,
-      ),
-    );
-  const recent = await buildSessionRows(
-    selectRecentSessionCandidates(allSessions, RECENT_SESSION_LIMIT),
-  );
+  const allSessions = includeSessions
+    ? storeSources
+        .filter((source, index, sources) => {
+          return (
+            sources.findIndex((candidate) => candidate.storePath === source.storePath) === index
+          );
+        })
+        .flatMap((source) =>
+          loadSessionCandidates(
+            source.storePath,
+            pathCounts.get(source.storePath) === 1 ? source.agentId : undefined,
+          ),
+        )
+    : [];
+  const recent = includeSessions
+    ? await buildSessionRows(selectRecentSessionCandidates(allSessions, RECENT_SESSION_LIMIT))
+    : [];
   const totalSessions = allSessions.length;
 
   const summary: StatusSummary = {

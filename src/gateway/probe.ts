@@ -247,7 +247,7 @@ export async function probeGateway(opts: {
   let server = emptyProbeServer();
   let authMetadataPresent = false;
 
-  const detailLevel = opts.includeDetails === false ? "none" : (opts.detailLevel ?? "full");
+  const detailLevel = opts.includeDetails === false ? "none" : (opts.detailLevel ?? "presence");
 
   const deviceIdentity = await (async () => {
     try {

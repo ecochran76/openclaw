@@ -4315,6 +4315,8 @@ describe("gateway healthHandlers.status scope handling", () => {
       expect(vi.mocked(statusModule.getStatusSummary)).toHaveBeenCalledWith({
         includeSensitive,
         includeChannelSummary: true,
+        includeSessions: true,
+        includeTasks: true,
       });
       expect(respond).toHaveBeenCalledWith(true, { ok: true }, undefined);
     },
@@ -4335,6 +4337,29 @@ describe("gateway healthHandlers.status scope handling", () => {
     expect(vi.mocked(statusModule.getStatusSummary)).toHaveBeenCalledWith({
       includeSensitive: false,
       includeChannelSummary: false,
+      includeSessions: true,
+      includeTasks: true,
+    });
+    expect(respond).toHaveBeenCalledWith(true, { ok: true }, undefined);
+  });
+
+  it("can skip heavyweight status sections for liveness-only status requests", async () => {
+    const respond = vi.fn();
+
+    await healthHandlers.status({
+      req: {} as never,
+      params: { includeChannelSummary: false, includeSessions: false, includeTasks: false },
+      respond: respond as never,
+      context: {} as never,
+      client: { connect: { role: "operator", scopes: ["operator.read"] } } as never,
+      isWebchatConnect: () => false,
+    });
+
+    expect(vi.mocked(statusModule.getStatusSummary)).toHaveBeenCalledWith({
+      includeSensitive: false,
+      includeChannelSummary: false,
+      includeSessions: false,
+      includeTasks: false,
     });
     expect(respond).toHaveBeenCalledWith(true, { ok: true }, undefined);
   });

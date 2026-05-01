@@ -2842,6 +2842,22 @@ describe("resolvePluginTools optional tools", () => {
     expect(loadOpenClawPluginsMock).not.toHaveBeenCalled();
   });
 
+  it("reuses the gateway-bindable registry for hot-path tool loads", () => {
+    const activeRegistry = createOptionalDemoActiveRegistry();
+    setActivePluginRegistry(activeRegistry as never, "gateway-startup", "gateway-bindable");
+    resolveRuntimePluginRegistryMock.mockReturnValue(undefined);
+
+    const tools = resolvePluginTools(
+      createResolveToolsParams({
+        toolAllowlist: ["optional_tool"],
+      }),
+    );
+
+    expectResolvedToolNames(tools, ["optional_tool"]);
+    expect(resolveRuntimePluginRegistryMock).not.toHaveBeenCalled();
+    expect(loadOpenClawPluginsMock).not.toHaveBeenCalled();
+  });
+
   it("loads plugin tools when gateway-bindable tool loads have no active registry", () => {
     setOptionalDemoRegistry();
 

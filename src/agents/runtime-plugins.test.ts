@@ -4,6 +4,8 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 const hoisted = vi.hoisted(() => ({
   getCurrentPluginMetadataSnapshot: vi.fn(),
   ensureStandaloneRuntimePluginRegistryLoaded: vi.fn(),
+  getActivePluginRegistry: vi.fn<() => unknown>(() => null),
+  getActivePluginRegistryKey: vi.fn<() => string | null>(() => null),
   getActivePluginRuntimeSubagentMode: vi.fn<() => "default" | "explicit" | "gateway-bindable">(
     () => "default",
   ),
@@ -19,6 +21,8 @@ vi.mock("../plugins/runtime/standalone-runtime-registry-loader.js", () => ({
 }));
 
 vi.mock("../plugins/runtime.js", () => ({
+  getActivePluginRegistry: hoisted.getActivePluginRegistry,
+  getActivePluginRegistryKey: hoisted.getActivePluginRegistryKey,
   getActivePluginRuntimeSubagentMode: hoisted.getActivePluginRuntimeSubagentMode,
   getActivePluginRegistryWorkspaceDir: hoisted.getActivePluginRegistryWorkspaceDir,
 }));
@@ -32,6 +36,10 @@ describe("ensureRuntimePluginsLoaded", () => {
     hoisted.getCurrentPluginMetadataSnapshot.mockReturnValue(undefined);
     hoisted.ensureStandaloneRuntimePluginRegistryLoaded.mockReset();
     hoisted.ensureStandaloneRuntimePluginRegistryLoaded.mockReturnValue(undefined);
+    hoisted.getActivePluginRegistry.mockReset();
+    hoisted.getActivePluginRegistry.mockReturnValue(null);
+    hoisted.getActivePluginRegistryKey.mockReset();
+    hoisted.getActivePluginRegistryKey.mockReturnValue(null);
     hoisted.getActivePluginRuntimeSubagentMode.mockReset();
     hoisted.getActivePluginRuntimeSubagentMode.mockReturnValue("default");
     hoisted.getActivePluginRegistryWorkspaceDir.mockReset();
@@ -218,5 +226,18 @@ describe("ensureRuntimePluginsLoaded", () => {
         },
       },
     });
+  });
+
+  it("skips plugin reload when an active gateway-bindable registry is already available", async () => {
+    hoisted.getActivePluginRuntimeSubagentMode.mockReturnValue("gateway-bindable");
+    hoisted.getActivePluginRegistryKey.mockReturnValue("gateway-startup");
+    hoisted.getActivePluginRegistry.mockReturnValue({});
+
+    ensureRuntimePluginsLoaded({
+      config: {} as never,
+      workspaceDir: "/tmp/workspace",
+    });
+
+    expect(hoisted.ensureStandaloneRuntimePluginRegistryLoaded).not.toHaveBeenCalled();
   });
 });
