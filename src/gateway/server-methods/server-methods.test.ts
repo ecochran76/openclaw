@@ -28,6 +28,7 @@ import {
   buildSystemRunApprovalEnvBinding,
 } from "../../infra/system-run-approval-binding.js";
 import { resetLogger, setLoggerOverride } from "../../logging.js";
+import type { ChannelRuntimeSnapshot } from "../server-channel-runtime.types.js";
 import {
   DEFAULT_CHAT_HISTORY_TEXT_MAX_CHARS,
   augmentChatHistoryWithCanvasBlocks,
@@ -4388,7 +4389,7 @@ describe("gateway healthHandlers.health live channel runtime", () => {
     clearContextEngineRuntimeQuarantine();
   });
 
-  const baseHealth = {
+  const baseHealth: HealthSummary = {
     ok: true,
     ts: Date.now(),
     durationMs: 1,
@@ -4422,7 +4423,7 @@ describe("gateway healthHandlers.health live channel runtime", () => {
     defaultAgentId: "main",
     agents: [],
     sessions: { path: "/tmp/openclaw-sessions.json", count: 0, recent: [] },
-  } satisfies HealthSummary;
+  };
 
   function createHealthContext(overrides?: {
     cached?: HealthSummary | null;
@@ -4432,7 +4433,7 @@ describe("gateway healthHandlers.health live channel runtime", () => {
       getHealthCache: vi.fn(() => overrides?.cached ?? null),
       refreshHealthSnapshot: vi.fn(async () => overrides?.refreshed ?? baseHealth),
       logHealth: { error: vi.fn() },
-      getRuntimeSnapshot: vi.fn(() => ({
+      getRuntimeSnapshot: vi.fn<() => ChannelRuntimeSnapshot>(() => ({
         channels: {
           slack: {
             accountId: "default",
