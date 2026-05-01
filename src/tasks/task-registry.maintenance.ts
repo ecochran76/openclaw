@@ -481,8 +481,11 @@ function hasActiveCliRun(task: TaskRecord): boolean {
   return false;
 }
 
-function hasCliRunIdentity(task: TaskRecord): boolean {
-  return [task.sourceId, task.runId].some((candidate) => Boolean(candidate?.trim()));
+function isRunContextTrackedCliTask(task: TaskRecord): boolean {
+  if (task.runtime !== "cli" || task.taskKind?.trim()) {
+    return false;
+  }
+  return Boolean(task.sourceId?.trim() || task.runId?.trim());
 }
 
 function hasBackingSession(task: TaskRecord, context?: BackingSessionLookupContext): boolean {
@@ -497,7 +500,7 @@ function hasBackingSession(task: TaskRecord, context?: BackingSessionLookupConte
   if (task.runtime === "cli" && hasActiveCliRun(task)) {
     return true;
   }
-  if (task.runtime === "cli" && hasCliRunIdentity(task)) {
+  if (isRunContextTrackedCliTask(task)) {
     return false;
   }
 

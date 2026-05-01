@@ -144,6 +144,7 @@ function configureTaskRegistryMaintenanceRuntimeForTest(params: {
   acpEntry?: AcpSessionStoreEntry;
   acpEntries?: AcpSessionStoreEntry[];
   hasActiveAcpTurn?: (sessionKey: string) => boolean;
+  sessionStore?: Record<string, unknown>;
   sessionBindings?: SessionBindingRecord[];
   closeAcpSession?: (params: {
     cfg: AcpSessionStoreEntry["cfg"];
@@ -170,7 +171,7 @@ function configureTaskRegistryMaintenanceRuntimeForTest(params: {
     listSessionBindingsBySession: () => params.sessionBindings ?? [],
     closeAcpSession: params.closeAcpSession,
     unbindSessionBindings: params.unbindSessionBindings,
-    loadSessionStore: () => ({}),
+    loadSessionStore: () => params.sessionStore ?? {},
     resolveStorePath: () => "",
     parseAgentSessionKey: () => null as ParsedAgentSessionKey | null,
     isCronJobActive: () => false,
@@ -2485,6 +2486,51 @@ describe("task-registry", () => {
     });
   });
 
+  it("marks stale gateway cli tasks lost even when the session row remains", async () => {
+    await withTaskRegistryTempDir(async (root) => {
+      process.env.OPENCLAW_STATE_DIR = root;
+      resetTaskRegistryForTests();
+      const now = Date.now();
+      const childSessionKey = "agent:main:monitor-dispatch:tenant:stale";
+
+      const task = createTaskRecord({
+        runtime: "cli",
+        ownerKey: childSessionKey,
+        scopeKind: "session",
+        childSessionKey,
+        sourceId: "run-stale-cli",
+        runId: "run-stale-cli",
+        task: "Gateway agent command",
+        status: "running",
+        deliveryStatus: "not_applicable",
+        notifyPolicy: "silent",
+      });
+      recordTaskProgressByRunId({
+        runId: task.runId,
+        lastEventAt: now - 10 * 60_000,
+      });
+      const current = getTaskById(task.taskId)!;
+      const currentTasks = new Map([[task.taskId, current]]);
+
+      configureTaskRegistryMaintenanceRuntimeForTest({
+        currentTasks,
+        snapshotTasks: [current],
+        sessionStore: {
+          [childSessionKey]: { sessionId: "left-behind-session-row" },
+        },
+      });
+
+      expect(await runTaskRegistryMaintenance()).toMatchObject({
+        reconciled: 1,
+        recovered: 0,
+      });
+      expect(currentTasks.get(task.taskId)).toMatchObject({
+        status: "lost",
+        error: "backing session missing",
+      });
+    });
+  });
+
   it("does not mark unrelated childless subagent tasks lost", async () => {
     await withTaskRegistryTempDir(async () => {
       resetTaskRegistryForTests();
@@ -2513,6 +2559,51 @@ describe("task-registry", () => {
       expectRecordFields(requireTaskById(task.taskId), {
         status: "running",
         lastEventAt: now - 31 * 60_000,
+      });
+    });
+  });
+
+  it("keeps task-kind cli jobs backed by an existing session active", async () => {
+    await withTaskRegistryTempDir(async (root) => {
+      process.env.OPENCLAW_STATE_DIR = root;
+      resetTaskRegistryForTests();
+      const now = Date.now();
+      const childSessionKey = "agent:main:media:active";
+
+      const task = createTaskRecord({
+        runtime: "cli",
+        taskKind: "video_generation",
+        ownerKey: childSessionKey,
+        scopeKind: "session",
+        childSessionKey,
+        sourceId: "tool:video_generate:active",
+        runId: "tool:video_generate:active",
+        task: "Generate video",
+        status: "running",
+        deliveryStatus: "not_applicable",
+        notifyPolicy: "silent",
+      });
+      recordTaskProgressByRunId({
+        runId: task.runId,
+        lastEventAt: now - 10 * 60_000,
+      });
+      const current = getTaskById(task.taskId)!;
+      const currentTasks = new Map([[task.taskId, current]]);
+
+      configureTaskRegistryMaintenanceRuntimeForTest({
+        currentTasks,
+        snapshotTasks: [current],
+        sessionStore: {
+          [childSessionKey]: { sessionId: "media-session-row" },
+        },
+      });
+
+      expect(await runTaskRegistryMaintenance()).toMatchObject({
+        reconciled: 0,
+        recovered: 0,
+      });
+      expect(currentTasks.get(task.taskId)).toMatchObject({
+        status: "running",
       });
     });
   });

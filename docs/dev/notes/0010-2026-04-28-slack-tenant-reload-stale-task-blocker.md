@@ -145,3 +145,114 @@ Additional recommended fix:
   used by `openclaw status --deep`, or surface both counts with their sources.
 - Add a health/readiness distinction for "HTTP socket listening" versus
   "gateway can answer status requests" during channel/provider startup.
+
+## Follow-up Observation: Null-Id Task Records Block Maintenance
+
+On 2026-05-01, a user-scoped OpenClaw runtime tune-up hit the same stale-task
+family through the task maintenance surface. `openclaw tasks maintenance --apply`
+reported stale/lost task audit drift but did not reconcile it:
+
+```text
+tasks.total=351
+tasks.active=2
+tasks.byStatus.running=2
+audit.errors=1
+audit.warnings=3
+audit.byCode.stale_running=1
+audit.byCode.lost=3
+maintenance.tasks.reconciled=0
+maintenance.tasks.recovered=0
+maintenance.tasks.cleanupStamped=0
+maintenance.tasks.pruned=0
+```
+
+The active rows shown by `openclaw tasks list --json` had `id: null`, both for
+`odollo-soylei` CLI monitor-dispatch runs. Because the records had no task id,
+the usual operator recovery path from the earlier incident (`openclaw tasks
+cancel <id>`) was not available.
+
+The same tune-up removed a disabled plugin config key from the live
+`openclaw.json`; gateway reload correctly detected that a restart was required,
+but restart was deferred while these active task counts were present. A controlled
+`systemctl --user restart openclaw-gateway.service` restored gateway RPC health
+after warm-up, but the null-id task audit drift remained.
+
+Additional recommended fixes:
+
+- Ensure task creation cannot persist `running` task records without stable task
+  ids.
+- Teach `openclaw tasks maintenance --apply` to reconcile or quarantine null-id
+  task rows instead of reporting zero repair actions.
+- Include a reason in task maintenance output when a stale record cannot be
+  repaired automatically.
+
+## Cross-Repo Handoff: Odollo Integration
+
+Odollo is a representative long-running OpenClaw integration, not an out-of-scope
+use case. Its intended boundary is appropriate:
+
+- Odollo remains the deterministic execution engine for Odoo writes.
+- OpenClaw reviews bounded Odollo work packets and returns reviewed artifacts,
+  operator questions, or recommendations.
+- Odollo validates and applies through deterministic commands.
+- Slack is the operator surface for status, approvals, reports, and visibility.
+
+The product issue here is OpenClaw reliability around task-ledger durability and
+gateway reload blockers. The null-id `running` task records were associated with
+`odollo-soylei` CLI monitor-dispatch runs, but the same failure class would
+affect any long-running CLI-backed integration whose task record is persisted
+without a stable id.
+
+The matching Odollo-side note is:
+
+```text
+/home/ecochran76/workspace.local/odollo/doc/dev/notes/openclaw-task-ledger-handoff-2026-05-01.md
+```
+
+Implementation direction:
+
+- Add regression coverage for a `running` task record with a missing/null id.
+- Decide whether maintenance should repair the record in place, mark it lost, or
+  move it to a quarantine ledger; the key requirement is that the gateway reload
+  guard no longer treats it as indefinitely active work.
+- Report unrepairable task rows explicitly in `openclaw tasks maintenance`
+  output and `openclaw status --deep`.
+- Keep reload blocking diagnostics tied to both task ids and raw ledger row
+  identity so operators can act without log correlation.
+
+## 2026-05-01 Follow-up: Gateway CLI Task Reconciliation
+
+Patched task-registry maintenance so generic gateway-backed `cli` tasks no
+longer stay active solely because a child session row remains. After the normal
+stale grace period, a `cli` task without a task kind is treated as run-context
+tracked: if neither `sourceId` nor `runId` maps to an active agent run context,
+maintenance can mark the row `lost` even when the session ledger still has the
+child session key.
+
+The patch intentionally keeps task-kind-specific `cli` work, such as media
+generation jobs, on the prior backing-session path so long-running tool jobs do
+not get swept just because they are not represented by the generic gateway run
+context.
+
+Validation:
+
+- `pnpm test src/tasks/task-registry.test.ts src/tasks/task-registry.audit.test.ts`
+- `pnpm exec oxfmt --check --threads=1 src/tasks/task-registry.maintenance.ts src/tasks/task-registry.test.ts`
+- `pnpm build`
+- `scripts/patch-live-openclaw.sh --expect-branch ec-main --require-expected-branch`
+
+Live result after patch:
+
+- Gateway RPC recovered after warm-up with `Read probe: ok`.
+- The two stale SoyLei `odollo-soylei` monitor-dispatch `running` tasks were
+  reconciled to `lost` with `error="backing session missing"`.
+- SABER had no active stale task rows; recent `odollo-saber` drain tasks were
+  terminal.
+- `openclaw tasks audit --json --code stale_running` returned zero findings.
+
+Residual work:
+
+- This closes the current cancellable-id SoyLei stale-task incident.
+- The older null-id row class still needs direct fixture coverage if it can
+  still be produced by any supported store path; the durable invariant remains
+  that active task rows need a stable repair token.
