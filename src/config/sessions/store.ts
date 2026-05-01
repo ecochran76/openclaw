@@ -62,7 +62,11 @@ import {
   applyFileBackedSessionStoreMaintenance,
   type SessionMaintenanceApplyReport,
 } from "./store-maintenance-operations.js";
-import { resolveMaintenanceConfig } from "./store-maintenance-runtime.js";
+import {
+  resolveMaintenanceConfig,
+  resolveMaintenanceConfigForAgent,
+  resolveMaintenanceConfigForStorePath,
+} from "./store-maintenance-runtime.js";
 import {
   capEntryCount,
   getActiveSessionMaintenanceWarning,
@@ -172,6 +176,8 @@ export {
   pruneStaleModelRunEntries,
   pruneStaleEntries,
   resolveMaintenanceConfig,
+  resolveMaintenanceConfigForAgent,
+  resolveMaintenanceConfigForStorePath,
 };
 export type { SessionMaintenanceApplyReport } from "./store-maintenance-operations.js";
 export type {
@@ -841,7 +847,8 @@ async function saveSessionStoreUnlocked(
       onWarn: opts?.onWarn,
       onMaintenanceApplied: opts?.onMaintenanceApplied,
       maintenanceOverride: opts?.maintenanceOverride,
-      maintenanceConfig: opts?.maintenanceConfig,
+      maintenanceConfig:
+        opts?.maintenanceConfig ?? resolveMaintenanceConfigForStorePath(storePath),
       log,
       artifacts: {
         archiveRemovedSessionTranscripts,

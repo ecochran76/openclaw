@@ -83,6 +83,7 @@ Session persistence has automatic maintenance controls (`session.maintenance`) f
 - `maxEntries`: cap entries in `sessions.json` (default `500`)
 - Short-lived gateway model-run probe retention is fixed at `24h`, but it is pressure-gated: it only removes stale strict probe rows when session-entry maintenance/cap pressure is reached. This applies only to strict explicit probe keys matching `agent:*:explicit:model-run-<uuid>` and runs before global stale-entry cleanup/capping when it runs.
 - `resetArchiveRetention`: retention for `*.reset.<timestamp>` transcript archives (default: same as `pruneAfter`; `false` disables cleanup)
+- `artifactArchiveRetention`: retention for manifest-backed artifact archive runs created by `openclaw sessions cleanup --archive-artifacts` (default: disabled; `false` disables cleanup)
 - `maxDiskBytes`: optional sessions-directory budget
 - `highWaterBytes`: optional target after cleanup (default `80%` of `maxDiskBytes`)
 
@@ -98,6 +99,11 @@ that retention. The model-run cleanup is applied only under session-entry cap
 pressure. Isolated cron runs keep their own `cron.sessionRetention` control,
 independent of model-run probe retention.
 
+Per-agent overrides are available at `agents.list[].sessionMaintenance`. They
+merge over `session.maintenance` for that agent's standard store path and are
+intended for high-volume service agents where helper, monitor, or cron runs
+create many fresh sessions.
+
 OpenClaw no longer creates automatic `sessions.json.bak.*` rotation backups during Gateway writes. The legacy `session.maintenance.rotateBytes` key is ignored and `openclaw doctor --fix` removes it from older configs.
 
 Transcript mutations use a session write lock on the transcript file. Lock acquisition waits up to
@@ -108,6 +114,12 @@ reclaimed as stale; the default is `1800000` ms. `session.writeLock.maxHoldMs` c
 in-process watchdog release threshold; the default is `300000` ms. Emergency env overrides are
 `OPENCLAW_SESSION_WRITE_LOCK_ACQUIRE_TIMEOUT_MS`, `OPENCLAW_SESSION_WRITE_LOCK_STALE_MS`, and
 `OPENCLAW_SESSION_WRITE_LOCK_MAX_HOLD_MS`.
+
+Manifest-backed artifact archives are intentionally opt-in for retention
+cleanup. After reviewing archive manifests for a high-volume service agent, set
+`agents.list[].sessionMaintenance.artifactArchiveRetention` to a bounded
+duration such as `7d` so archive runs do not become the next long-lived disk
+pressure source.
 
 Enforcement order for disk budget cleanup (`mode: "enforce"`):
 

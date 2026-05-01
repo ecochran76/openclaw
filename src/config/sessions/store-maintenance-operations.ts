@@ -1,5 +1,9 @@
 // Storage-neutral session maintenance operations for the file-backed session store.
 import path from "node:path";
+import {
+  pruneSessionArtifactArchives,
+  type SessionArtifactArchivePruneResult,
+} from "./artifact-cleanup.js";
 import { enforceSessionDiskBudget, type SessionDiskBudgetSweepResult } from "./disk-budget.js";
 import { collectSessionMaintenancePreserveKeys } from "./store-maintenance-preserve.js";
 import { resolveMaintenanceConfig } from "./store-maintenance-runtime.js";
@@ -23,6 +27,7 @@ export type SessionMaintenanceApplyReport = {
   pruned: number;
   capped: number;
   diskBudget: SessionDiskBudgetSweepResult | null;
+  artifactArchivePrune: SessionArtifactArchivePruneResult | null;
 };
 
 type SessionMaintenanceLogger = {
@@ -132,6 +137,14 @@ async function applyWarnOnlyMaintenance(params: {
     warnOnly: true,
     log: params.operation.log,
   });
+  const artifactArchivePrune =
+    params.maintenance.artifactArchiveRetentionMs == null
+      ? null
+      : await pruneSessionArtifactArchives({
+          storePath: params.operation.storePath,
+          dryRun: true,
+          olderThanMs: params.maintenance.artifactArchiveRetentionMs,
+        });
   await params.operation.onMaintenanceApplied?.({
     mode: params.maintenance.mode,
     beforeCount: params.beforeCount,
@@ -140,6 +153,7 @@ async function applyWarnOnlyMaintenance(params: {
     pruned: 0,
     capped: 0,
     diskBudget,
+    artifactArchivePrune,
   });
 }
 
@@ -252,6 +266,14 @@ async function applyEnforcedMaintenance(params: {
     warnOnly: false,
     log: params.operation.log,
   });
+  const artifactArchivePrune =
+    params.maintenance.artifactArchiveRetentionMs == null
+      ? null
+      : await pruneSessionArtifactArchives({
+          storePath: params.operation.storePath,
+          dryRun: false,
+          olderThanMs: params.maintenance.artifactArchiveRetentionMs,
+        });
   await params.operation.onMaintenanceApplied?.({
     mode: params.maintenance.mode,
     beforeCount: params.beforeCount,
@@ -260,6 +282,7 @@ async function applyEnforcedMaintenance(params: {
     pruned,
     capped,
     diskBudget,
+    artifactArchivePrune,
   });
   return {
     changedStore:

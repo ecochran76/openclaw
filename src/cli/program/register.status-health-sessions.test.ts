@@ -10,6 +10,10 @@ const mocks = vi.hoisted(() => ({
   sessionsCleanupCommand: vi.fn(),
   sessionsTailCommand: vi.fn(),
   sessionsCompactCommand: vi.fn(),
+  sessionsReportCommand: vi.fn(),
+  sessionsArchiveListCommand: vi.fn(),
+  sessionsArchiveShowCommand: vi.fn(),
+  sessionsArchivePruneCommand: vi.fn(),
   exportTrajectoryCommand: vi.fn(),
   commitmentsListCommand: vi.fn(),
   commitmentsDismissCommand: vi.fn(),
@@ -36,6 +40,10 @@ const sessionsCommand = mocks.sessionsCommand;
 const sessionsCleanupCommand = mocks.sessionsCleanupCommand;
 const sessionsTailCommand = mocks.sessionsTailCommand;
 const sessionsCompactCommand = mocks.sessionsCompactCommand;
+const sessionsReportCommand = mocks.sessionsReportCommand;
+const sessionsArchiveListCommand = mocks.sessionsArchiveListCommand;
+const sessionsArchiveShowCommand = mocks.sessionsArchiveShowCommand;
+const sessionsArchivePruneCommand = mocks.sessionsArchivePruneCommand;
 const exportTrajectoryCommand = mocks.exportTrajectoryCommand;
 const commitmentsListCommand = mocks.commitmentsListCommand;
 const commitmentsDismissCommand = mocks.commitmentsDismissCommand;
@@ -101,6 +109,16 @@ vi.mock("../../commands/sessions-compact.js", () => ({
   sessionsCompactCommand: mocks.sessionsCompactCommand,
 }));
 
+vi.mock("../../commands/sessions-report.js", () => ({
+  sessionsReportCommand: mocks.sessionsReportCommand,
+}));
+
+vi.mock("../../commands/sessions-archive.js", () => ({
+  sessionsArchiveListCommand: mocks.sessionsArchiveListCommand,
+  sessionsArchiveShowCommand: mocks.sessionsArchiveShowCommand,
+  sessionsArchivePruneCommand: mocks.sessionsArchivePruneCommand,
+}));
+
 vi.mock("../../commands/export-trajectory.js", () => ({
   exportTrajectoryCommand: mocks.exportTrajectoryCommand,
 }));
@@ -149,6 +167,10 @@ describe("registerStatusHealthSessionsCommands", () => {
     sessionsCleanupCommand.mockResolvedValue(undefined);
     sessionsTailCommand.mockResolvedValue(undefined);
     sessionsCompactCommand.mockResolvedValue(undefined);
+    sessionsReportCommand.mockResolvedValue(undefined);
+    sessionsArchiveListCommand.mockResolvedValue(undefined);
+    sessionsArchiveShowCommand.mockResolvedValue(undefined);
+    sessionsArchivePruneCommand.mockResolvedValue(undefined);
     exportTrajectoryCommand.mockResolvedValue(undefined);
     commitmentsListCommand.mockResolvedValue(undefined);
     commitmentsDismissCommand.mockResolvedValue(undefined);
@@ -388,20 +410,104 @@ describe("registerStatusHealthSessionsCommands", () => {
       "--fix-dm-scope",
       "--active-key",
       "agent:main:main",
+      "--max-entries",
+      "50",
+      "--prune-after",
+      "7d",
+      "--max-disk-bytes",
+      "50mb",
+      "--high-water-bytes",
+      "40mb",
+      "--archive-artifacts",
+      "--artifact-categories",
+      "orphan-temp-store,orphan-trajectory",
+      "--max-artifacts",
+      "25",
       "--json",
     ]);
 
-    expectCommandOptions(sessionsCleanupCommand, {
-      store: "/tmp/sessions.json",
-      agent: undefined,
-      allAgents: false,
-      dryRun: true,
-      enforce: true,
-      fixMissing: true,
-      fixDmScope: true,
-      activeKey: "agent:main:main",
-      json: true,
-    });
+    expect(sessionsCleanupCommand).toHaveBeenCalledWith(
+      expect.objectContaining({
+        store: "/tmp/sessions.json",
+        agent: undefined,
+        allAgents: false,
+        dryRun: true,
+        enforce: true,
+        fixMissing: true,
+        fixDmScope: true,
+        activeKey: "agent:main:main",
+        maxEntries: "50",
+        pruneAfter: "7d",
+        maxDiskBytes: "50mb",
+        highWaterBytes: "40mb",
+        archiveArtifacts: true,
+        artifactCategories: "orphan-temp-store,orphan-trajectory",
+        maxArtifacts: "25",
+        json: true,
+      }),
+      runtime,
+    );
+  });
+
+  it("runs sessions report subcommand with forwarded options", async () => {
+    await runCli(["sessions", "report", "--agent", "graphiti-agent", "--largest", "20", "--json"]);
+
+    expect(sessionsReportCommand).toHaveBeenCalledWith(
+      expect.objectContaining({
+        agent: "graphiti-agent",
+        allAgents: false,
+        largest: "20",
+        json: true,
+      }),
+      runtime,
+    );
+  });
+
+  it("runs sessions archive list with parent options", async () => {
+    await runCli(["sessions", "--agent", "graphiti-agent", "--json", "archive", "list"]);
+
+    expect(sessionsArchiveListCommand).toHaveBeenCalledWith(
+      expect.objectContaining({
+        agent: "graphiti-agent",
+        allAgents: false,
+        json: true,
+      }),
+      runtime,
+    );
+  });
+
+  it("runs sessions archive show with run id", async () => {
+    await runCli(["sessions", "--agent", "graphiti-agent", "archive", "show", "--run", "run-1"]);
+
+    expect(sessionsArchiveShowCommand).toHaveBeenCalledWith(
+      expect.objectContaining({
+        agent: "graphiti-agent",
+        run: "run-1",
+      }),
+      runtime,
+    );
+  });
+
+  it("runs sessions archive prune with enforce flag", async () => {
+    await runCli([
+      "sessions",
+      "--agent",
+      "graphiti-agent",
+      "archive",
+      "prune",
+      "--run",
+      "run-1",
+      "--enforce",
+    ]);
+
+    expect(sessionsArchivePruneCommand).toHaveBeenCalledWith(
+      expect.objectContaining({
+        agent: "graphiti-agent",
+        run: "run-1",
+        dryRun: false,
+      }),
+      runtime,
+    );
   });
 
   it("forwards parent-level all-agents to cleanup subcommand", async () => {

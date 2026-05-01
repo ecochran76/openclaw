@@ -43,6 +43,7 @@ export type ResolvedSessionMaintenanceConfig = {
   maxEntries: number;
   modelRunPruneAfterMs: number;
   resetArchiveRetentionMs: number | null;
+  artifactArchiveRetentionMs: number | null;
   maxDiskBytes: number | null;
   highWaterBytes: number | null;
 };
@@ -82,6 +83,24 @@ function resolveResetArchiveRetentionMs(
     return parseDurationMs(normalized, { defaultUnit: "d" });
   } catch {
     return pruneAfterMs;
+  }
+}
+
+function resolveArtifactArchiveRetentionMs(
+  maintenance: SessionMaintenanceConfig | undefined,
+): number | null {
+  const raw = maintenance?.artifactArchiveRetention;
+  if (raw === false || raw === undefined) {
+    return null;
+  }
+  const normalized = normalizeStringifiedOptionalString(raw);
+  if (!normalized) {
+    return null;
+  }
+  try {
+    return parseDurationMs(normalized, { defaultUnit: "d" });
+  } catch {
+    return null;
   }
 }
 
@@ -148,6 +167,7 @@ export function resolveMaintenanceConfigFromInput(
     maxEntries: maintenance?.maxEntries ?? DEFAULT_SESSION_MAX_ENTRIES,
     modelRunPruneAfterMs: DEFAULT_MODEL_RUN_PRUNE_AFTER_MS,
     resetArchiveRetentionMs: resolveResetArchiveRetentionMs(maintenance, pruneAfterMs),
+    artifactArchiveRetentionMs: resolveArtifactArchiveRetentionMs(maintenance),
     maxDiskBytes,
     highWaterBytes: resolveHighWaterBytes(maintenance, maxDiskBytes),
   };

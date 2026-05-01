@@ -316,6 +316,20 @@ export const FIELD_HELP: Record<string, string> = {
     "When true, defer heartbeat turns on this agent's extra busy lanes: its own session-keyed subagent or nested command work. Cron lanes always defer heartbeat turns.",
   "agents.list[].heartbeat.skipWhenBusy":
     "Per-agent override that defers heartbeat turns on that agent's extra busy lanes: its own session-keyed subagent or nested command work. Cron lanes always defer heartbeat turns.",
+  "agents.list[].sessionMaintenance":
+    "Per-agent session-store retention overrides merged over session.maintenance. Use this for high-volume service agents without tightening retention for normal chat agents.",
+  "agents.list[].sessionMaintenance.mode":
+    'Per-agent maintenance mode: "warn" reports cleanup impact, "enforce" applies pruning, entry caps, archive cleanup, and disk-budget cleanup.',
+  "agents.list[].sessionMaintenance.pruneAfter":
+    "Per-agent age cutoff for stale session entries, for example 7d or 12h.",
+  "agents.list[].sessionMaintenance.maxEntries":
+    "Per-agent cap for hot sessions.json rows. Lower values are useful for monitor and service agents that create many fresh sessions.",
+  "agents.list[].sessionMaintenance.artifactArchiveRetention":
+    "Per-agent retention for manifest-backed artifact archive runs created by sessions cleanup --archive-artifacts. Leave disabled during review, then set a short duration for high-volume service agents.",
+  "agents.list[].sessionMaintenance.maxDiskBytes":
+    "Per-agent sessions-directory disk budget, for example 50mb.",
+  "agents.list[].sessionMaintenance.highWaterBytes":
+    "Per-agent target size after disk-budget cleanup. Defaults to 80% of maxDiskBytes when omitted.",
   browser:
     "Browser runtime controls for local or remote CDP attachment, profile routing, and screenshot/snapshot behavior. Keep defaults unless your automation workflow requires custom browser transport settings.",
   "browser.enabled":
@@ -1832,6 +1846,8 @@ export const FIELD_HELP: Record<string, string> = {
     'Deprecated and ignored. Do not use for `sessions.json` growth control; OpenClaw no longer creates automatic rotation backups, and "openclaw doctor --fix" removes this key.',
   "session.maintenance.resetArchiveRetention":
     "Retention for reset transcript archives (`*.reset.<timestamp>`). Accepts a duration (for example `30d`), or `false` to disable cleanup. Defaults to pruneAfter so reset artifacts do not grow forever.",
+  "session.maintenance.artifactArchiveRetention":
+    "Retention for manifest-backed artifact archive runs created by sessions cleanup --archive-artifacts. Accepts a duration, or false to disable cleanup. Defaults to disabled so operators can review manifests before pruning.",
   "session.maintenance.maxDiskBytes":
     "Optional per-agent sessions-directory disk budget (for example `500mb`). Use this to cap session storage per agent; when exceeded, warn mode reports pressure and enforce mode performs oldest-first cleanup.",
   "session.maintenance.highWaterBytes":
@@ -2103,6 +2119,8 @@ export const FIELD_HELP: Record<string, string> = {
     'Per-agent override for heartbeat direct/DM delivery policy; use "block" for agents that should only send heartbeat alerts to non-DM destinations.',
   "agents.list.*.heartbeat.skipWhenBusy":
     "Per-agent override that defers heartbeat turns on that agent's extra busy lanes: its own session-keyed subagent or nested command work. Cron lanes always defer heartbeat turns.",
+  "agents.list.*.sessionMaintenance":
+    "Per-agent session-store retention overrides merged over session.maintenance.",
   "channels.mattermost.configWrites":
     "Allow Mattermost to write config in response to channel events/commands (default: true).",
   "channels.modelByChannel":

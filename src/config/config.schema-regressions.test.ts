@@ -206,6 +206,28 @@ describe("config schema regressions", () => {
     expect(res.ok).toBe(true);
   });
 
+  it("accepts per-agent session maintenance overrides", () => {
+    const res = validateConfigObject({
+      agents: {
+        list: [
+          {
+            id: "graphiti-agent",
+            sessionMaintenance: {
+              mode: "enforce",
+              pruneAfter: "7d",
+              artifactArchiveRetention: "14d",
+              maxEntries: 75,
+              maxDiskBytes: "50mb",
+              highWaterBytes: "35mb",
+            },
+          },
+        ],
+      },
+    });
+
+    expect(res.ok).toBe(true);
+  });
+
   it("accepts agents.defaults.compaction.truncateAfterCompaction", () => {
     const res = validateConfigObject({
       agents: {

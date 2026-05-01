@@ -187,6 +187,7 @@ const TARGET_KEYS = [
   "session.maintenance.maxEntries",
   "session.maintenance.rotateBytes",
   "session.maintenance.resetArchiveRetention",
+  "session.maintenance.artifactArchiveRetention",
   "session.maintenance.maxDiskBytes",
   "session.maintenance.highWaterBytes",
   "approvals",
@@ -796,6 +797,10 @@ describe("config help copy quality", () => {
     const resetRetention = FIELD_HELP["session.maintenance.resetArchiveRetention"];
     expect(resetRetention.includes(".reset.")).toBe(true);
     expect(/false/i.test(resetRetention)).toBe(true);
+
+    const artifactRetention = FIELD_HELP["session.maintenance.artifactArchiveRetention"];
+    expect(artifactRetention.includes("--archive-artifacts")).toBe(true);
+    expect(/disabled/i.test(artifactRetention)).toBe(true);
 
     const maxDisk = FIELD_HELP["session.maintenance.maxDiskBytes"];
     expect(maxDisk.includes("500mb")).toBe(true);

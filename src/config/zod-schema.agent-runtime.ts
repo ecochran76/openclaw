@@ -23,6 +23,7 @@ import {
   TtsConfigSchema,
 } from "./zod-schema.core.js";
 import { sensitive } from "./zod-schema.sensitive.js";
+import { SessionMaintenanceSchema } from "./zod-schema.session-maintenance.js";
 
 function validateSandboxBindEntries(
   binds: readonly string[] | undefined,
@@ -1066,6 +1067,7 @@ export const AgentEntrySchema = z
     contextLimits: AgentContextLimitsSchema,
     contextTokens: z.number().int().positive().optional(),
     heartbeat: HeartbeatSchema,
+    sessionMaintenance: SessionMaintenanceSchema.optional(),
     identity: IdentitySchema,
     groupChat: GroupChatSchema,
     subagents: z

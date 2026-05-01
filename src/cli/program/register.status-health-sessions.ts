@@ -93,6 +93,25 @@ function parseTasksAuditLimit(limit: unknown): number | null | undefined {
   return parsed;
 }
 
+type SessionScopeOpts = {
+  store?: string;
+  agent?: string;
+  allAgents?: boolean;
+  json?: boolean;
+};
+
+function resolveAncestorSessionScopeOptions(command: Command): SessionScopeOpts {
+  let current: Command | null = command;
+  while (current) {
+    const opts = current.opts() as SessionScopeOpts;
+    if (opts.store || opts.agent || opts.allAgents || opts.json) {
+      return opts;
+    }
+    current = current.parent ?? null;
+  }
+  return {};
+}
+
 async function runWithVerboseAndTimeout(
   opts: { verbose?: boolean; debug?: boolean; timeout?: unknown },
   action: (params: { verbose: boolean; timeoutMs: number | undefined }) => Promise<void>,
@@ -226,6 +245,20 @@ export function registerStatusHealthSessionsCommands(program: Command) {
     .option("--all-agents", "Run maintenance across all configured agents", false)
     .option("--dry-run", "Preview maintenance actions without writing", false)
     .option("--enforce", "Apply maintenance even when configured mode is warn", false)
+    .option("--max-entries <n>", "Override session.maintenance.maxEntries for this run")
+    .option("--prune-after <duration>", "Override session.maintenance.pruneAfter for this run")
+    .option("--max-disk-bytes <size>", "Override session.maintenance.maxDiskBytes for this run")
+    .option("--high-water-bytes <size>", "Override session.maintenance.highWaterBytes for this run")
+    .option(
+      "--archive-artifacts",
+      "Archive orphan/archive session artifacts into a manifest-backed archive",
+      false,
+    )
+    .option(
+      "--artifact-categories <list>",
+      "Comma-separated artifact categories to archive (orphan-temp-store, orphan-trajectory, archive)",
+    )
+    .option("--max-artifacts <n>", "Maximum artifact files to archive in this run")
     .option(
       "--fix-missing",
       "Remove store entries whose transcript files are missing (bypasses age/count retention)",
@@ -253,6 +286,14 @@ export function registerStatusHealthSessionsCommands(program: Command) {
           ],
           ["openclaw sessions cleanup --enforce", "Apply maintenance now."],
           ["openclaw sessions cleanup --agent work --dry-run", "Preview one agent store."],
+          [
+            "openclaw sessions cleanup --agent work --dry-run --max-entries 50",
+            "Preview a one-off entry cap without editing config.",
+          ],
+          [
+            "openclaw sessions cleanup --agent work --dry-run --archive-artifacts",
+            "Preview manifest-backed artifact archiving.",
+          ],
           ["openclaw sessions cleanup --all-agents --dry-run", "Preview all agent stores."],
           [
             "openclaw sessions cleanup --enforce --store ./tmp/sessions.json",
@@ -281,6 +322,13 @@ export function registerStatusHealthSessionsCommands(program: Command) {
             fixMissing: Boolean(opts.fixMissing),
             fixDmScope: Boolean(opts.fixDmScope),
             activeKey: opts.activeKey as string | undefined,
+            maxEntries: opts.maxEntries as string | undefined,
+            pruneAfter: opts.pruneAfter as string | undefined,
+            maxDiskBytes: opts.maxDiskBytes as string | undefined,
+            highWaterBytes: opts.highWaterBytes as string | undefined,
+            archiveArtifacts: Boolean(opts.archiveArtifacts),
+            artifactCategories: opts.artifactCategories as string | undefined,
+            maxArtifacts: opts.maxArtifacts as string | undefined,
             json: Boolean(opts.json || parentOpts?.json),
           },
           defaultRuntime,
@@ -315,6 +363,194 @@ export function registerStatusHealthSessionsCommands(program: Command) {
             allAgents: Boolean(opts.allAgents || parentOpts?.allAgents),
             follow: Boolean(opts.follow),
             tail: opts.tail as string | undefined,
+          },
+          defaultRuntime,
+        );
+      });
+    });
+
+  sessionsCmd
+    .command("report")
+    .description("Report session-store artifact size and orphan/archive pressure")
+    .option("--store <path>", "Path to session store (default: resolved from config)")
+    .option("--agent <id>", "Agent id to report (default: configured default agent)")
+    .option("--all-agents", "Report all configured agent stores", false)
+    .option("--largest <n>", "Number of largest files to include", "10")
+    .option("--json", "Output JSON", false)
+    .addHelpText(
+      "after",
+      () =>
+        `\n${theme.heading("Examples:")}\n${formatHelpExamples([
+          ["openclaw sessions report --agent work", "Report one agent store."],
+          ["openclaw sessions report --all-agents", "Find large session artifact stores."],
+          ["openclaw sessions report --agent work --largest 20", "Show more large files."],
+          ["openclaw sessions report --agent work --json", "Machine-readable report."],
+        ])}`,
+    )
+    .action(async (opts, command) => {
+      const parentOpts = command.parent?.opts() as
+        | {
+            store?: string;
+            agent?: string;
+            allAgents?: boolean;
+            json?: boolean;
+          }
+        | undefined;
+      await runCommandWithRuntime(defaultRuntime, async () => {
+        const { sessionsReportCommand } = await import("../../commands/sessions-report.js");
+        await sessionsReportCommand(
+          {
+            store: (opts.store as string | undefined) ?? parentOpts?.store,
+            agent: (opts.agent as string | undefined) ?? parentOpts?.agent,
+            allAgents: Boolean(opts.allAgents || parentOpts?.allAgents),
+            largest: opts.largest as string | undefined,
+            json: Boolean(opts.json || parentOpts?.json),
+          },
+          defaultRuntime,
+        );
+      });
+    });
+
+  const sessionsArchiveCmd = sessionsCmd
+    .command("archive")
+    .description("Inspect and prune manifest-backed session artifact archives");
+
+  sessionsArchiveCmd
+    .command("list")
+    .description("List manifest-backed artifact archive runs")
+    .action(async (opts, command) => {
+      const localOpts = command.opts() as {
+        store?: string;
+        agent?: string;
+        allAgents?: boolean;
+        json?: boolean;
+      };
+      const parentOpts = command.parent?.opts() as
+        | {
+            store?: string;
+            agent?: string;
+            allAgents?: boolean;
+            json?: boolean;
+          }
+        | undefined;
+      const scopeOpts = resolveAncestorSessionScopeOptions(command);
+      await runCommandWithRuntime(defaultRuntime, async () => {
+        const { sessionsArchiveListCommand } = await import("../../commands/sessions-archive.js");
+        await sessionsArchiveListCommand(
+          {
+            store:
+              localOpts.store ??
+              (opts.store as string | undefined) ??
+              parentOpts?.store ??
+              scopeOpts.store,
+            agent:
+              localOpts.agent ??
+              (opts.agent as string | undefined) ??
+              parentOpts?.agent ??
+              scopeOpts.agent,
+            allAgents: Boolean(
+              localOpts.allAgents || opts.allAgents || parentOpts?.allAgents || scopeOpts.allAgents,
+            ),
+            json: Boolean(localOpts.json || opts.json || parentOpts?.json || scopeOpts.json),
+          },
+          defaultRuntime,
+        );
+      });
+    });
+
+  sessionsArchiveCmd
+    .command("show")
+    .description("Show one artifact archive manifest")
+    .requiredOption("--run <id>", "Archive run id")
+    .action(async (opts, command) => {
+      const localOpts = command.opts() as {
+        store?: string;
+        agent?: string;
+        allAgents?: boolean;
+        json?: boolean;
+        run?: string;
+      };
+      const parentOpts = command.parent?.opts() as
+        | {
+            store?: string;
+            agent?: string;
+            allAgents?: boolean;
+            json?: boolean;
+          }
+        | undefined;
+      const scopeOpts = resolveAncestorSessionScopeOptions(command);
+      await runCommandWithRuntime(defaultRuntime, async () => {
+        const { sessionsArchiveShowCommand } = await import("../../commands/sessions-archive.js");
+        await sessionsArchiveShowCommand(
+          {
+            store:
+              localOpts.store ??
+              (opts.store as string | undefined) ??
+              parentOpts?.store ??
+              scopeOpts.store,
+            agent:
+              localOpts.agent ??
+              (opts.agent as string | undefined) ??
+              parentOpts?.agent ??
+              scopeOpts.agent,
+            allAgents: Boolean(
+              localOpts.allAgents || opts.allAgents || parentOpts?.allAgents || scopeOpts.allAgents,
+            ),
+            run: localOpts.run ?? (opts.run as string | undefined),
+            json: Boolean(localOpts.json || opts.json || parentOpts?.json || scopeOpts.json),
+          },
+          defaultRuntime,
+        );
+      });
+    });
+
+  sessionsArchiveCmd
+    .command("prune")
+    .description("Prune artifact archive runs by id or age")
+    .option("--run <id>", "Archive run id to prune")
+    .option("--older-than <duration>", "Prune archive runs older than this duration")
+    .option("--dry-run", "Preview prune actions without deleting", true)
+    .option("--enforce", "Delete selected archive runs", false)
+    .action(async (opts, command) => {
+      const localOpts = command.opts() as {
+        store?: string;
+        agent?: string;
+        allAgents?: boolean;
+        json?: boolean;
+        run?: string;
+        olderThan?: string;
+        enforce?: boolean;
+      };
+      const parentOpts = command.parent?.opts() as
+        | {
+            store?: string;
+            agent?: string;
+            allAgents?: boolean;
+            json?: boolean;
+          }
+        | undefined;
+      const scopeOpts = resolveAncestorSessionScopeOptions(command);
+      await runCommandWithRuntime(defaultRuntime, async () => {
+        const { sessionsArchivePruneCommand } = await import("../../commands/sessions-archive.js");
+        await sessionsArchivePruneCommand(
+          {
+            store:
+              localOpts.store ??
+              (opts.store as string | undefined) ??
+              parentOpts?.store ??
+              scopeOpts.store,
+            agent:
+              localOpts.agent ??
+              (opts.agent as string | undefined) ??
+              parentOpts?.agent ??
+              scopeOpts.agent,
+            allAgents: Boolean(
+              localOpts.allAgents || opts.allAgents || parentOpts?.allAgents || scopeOpts.allAgents,
+            ),
+            run: localOpts.run ?? (opts.run as string | undefined),
+            olderThan: localOpts.olderThan ?? (opts.olderThan as string | undefined),
+            dryRun: !(localOpts.enforce || opts.enforce),
+            json: Boolean(localOpts.json || opts.json || parentOpts?.json || scopeOpts.json),
           },
           defaultRuntime,
         );

@@ -290,6 +290,12 @@ export type SessionMaintenanceConfig = {
    */
   resetArchiveRetention?: string | number | false;
   /**
+   * Retention for manifest-backed artifact archive runs created by
+   * `openclaw sessions cleanup --archive-artifacts`.
+   * Set `false` to disable artifact-archive cleanup. Default: disabled.
+   */
+  artifactArchiveRetention?: string | number | false;
+  /**
    * Optional per-agent sessions-directory disk budget (e.g. "500mb").
    * When exceeded, warn (mode=warn) or enforce oldest-first cleanup (mode=enforce).
    */

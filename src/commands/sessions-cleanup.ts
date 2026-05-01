@@ -172,6 +172,11 @@ function renderStoreDryRunPlan(params: {
       `Would enforce disk budget: ${params.summary.diskBudget.totalBytesBefore} -> ${params.summary.diskBudget.totalBytesAfter} bytes (files ${params.summary.diskBudget.removedFiles}, entries ${params.summary.diskBudget.removedEntries})`,
     );
   }
+  if (params.summary.artifactArchive) {
+    params.runtime.log(
+      `Would archive artifacts: ${params.summary.artifactArchive.files.length} files (${params.summary.artifactArchive.totalBytes} bytes)`,
+    );
+  }
   if (params.actionRows.length === 0) {
     return;
   }
@@ -221,6 +226,11 @@ function renderAppliedSummaries(params: {
         `Pruned unreferenced artifacts: ${summary.unreferencedArtifacts.removedFiles}`,
       );
     }
+    if (summary.artifactArchive?.archivedFiles) {
+      params.runtime.log(
+        `Archived artifacts: ${summary.artifactArchive.archivedFiles} files (${summary.artifactArchive.archivedBytes} bytes)`,
+      );
+    }
   }
 }
 
@@ -242,6 +252,13 @@ async function maybeRunGatewayCleanup(
         activeKey: opts.activeKey,
         fixMissing: opts.fixMissing,
         fixDmScope: opts.fixDmScope,
+        maxEntries: opts.maxEntries,
+        pruneAfter: opts.pruneAfter,
+        maxDiskBytes: opts.maxDiskBytes,
+        highWaterBytes: opts.highWaterBytes,
+        archiveArtifacts: opts.archiveArtifacts,
+        artifactCategories: opts.artifactCategories,
+        maxArtifacts: opts.maxArtifacts,
       },
       mode: GATEWAY_CLIENT_MODES.CLI,
       clientName: GATEWAY_CLIENT_NAMES.CLI,

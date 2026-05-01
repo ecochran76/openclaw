@@ -8,8 +8,18 @@ import type {
   EmbeddedAgentExecutionContract,
   SubagentDelegationMode,
 } from "./types.agent-defaults.js";
-import type { AgentModelConfig, AgentSandboxConfig } from "./types.agents-shared.js";
-import type { DmScope, HumanDelayConfig, IdentityConfig } from "./types.base.js";
+import type {
+  AgentEmbeddedHarnessConfig,
+  AgentModelConfig,
+  AgentRuntimePolicyConfig,
+  AgentSandboxConfig,
+} from "./types.agents-shared.js";
+import type {
+  DmScope,
+  HumanDelayConfig,
+  IdentityConfig,
+  SessionMaintenanceConfig,
+} from "./types.base.js";
 import type { GroupChatConfig } from "./types.messages.js";
 import type { SkillsLimitsConfig } from "./types.skills.js";
 import type { AgentToolsConfig, MemorySearchConfig } from "./types.tools.js";
@@ -128,6 +138,8 @@ export type AgentConfig = {
   contextTokens?: number;
   /** Optional per-agent heartbeat overrides. */
   heartbeat?: AgentDefaultsConfig["heartbeat"];
+  /** Optional per-agent session-store maintenance overrides. */
+  sessionMaintenance?: SessionMaintenanceConfig;
   identity?: IdentityConfig;
   groupChat?: GroupChatConfig;
   subagents?: {

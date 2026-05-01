@@ -44,6 +44,7 @@ describe("SessionSchema maintenance extensions", () => {
     const result = SessionSchema.safeParse({
       maintenance: {
         resetArchiveRetention: "14d",
+        artifactArchiveRetention: "21d",
         maxDiskBytes: "500mb",
         highWaterBytes: "350mb",
       },
@@ -52,12 +53,14 @@ describe("SessionSchema maintenance extensions", () => {
   });
 
   it("accepts disabling reset archive cleanup", () => {
-    const result = SessionSchema.safeParse({
-      maintenance: {
-        resetArchiveRetention: false,
-      },
-    });
-    expect(result.success).toBe(true);
+    expect(() =>
+      SessionSchema.parse({
+        maintenance: {
+          resetArchiveRetention: false,
+          artifactArchiveRetention: false,
+        },
+      }),
+    ).not.toThrow();
   });
 
   it("rejects invalid maintenance extension values", () => {
@@ -76,5 +79,13 @@ describe("SessionSchema maintenance extensions", () => {
         },
       }),
     ).toThrow(/maxDiskBytes|size/i);
+
+    expect(() =>
+      SessionSchema.parse({
+        maintenance: {
+          artifactArchiveRetention: "forever",
+        },
+      }),
+    ).toThrow(/artifactArchiveRetention|duration/i);
   });
 });

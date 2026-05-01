@@ -1278,6 +1278,7 @@ See [Multi-Agent Sandbox & Tools](/tools/multi-agent-sandbox-tools) for preceden
       pruneAfter: "30d",
       maxEntries: 500,
       resetArchiveRetention: "30d", // duration or false
+      artifactArchiveRetention: false, // duration or false; default disabled
       maxDiskBytes: "500mb", // optional hard budget
       highWaterBytes: "400mb", // optional cleanup target
     },
@@ -1319,8 +1320,10 @@ See [Multi-Agent Sandbox & Tools](/tools/multi-agent-sandbox-tools) for preceden
   - Short-lived gateway model-run probe sessions use fixed `24h` retention, but cleanup is pressure-gated: it only removes stale strict model-run probe rows when session-entry maintenance/cap pressure is reached. Only strict explicit probe keys matching `agent:*:explicit:model-run-<uuid>` are eligible; normal direct, group, thread, cron, hook, heartbeat, ACP, and sub-agent sessions do not inherit this 24h retention. When model-run cleanup runs, it runs before the broader `pruneAfter` stale-entry cleanup and `maxEntries` cap.
   - `rotateBytes`: deprecated and ignored; `openclaw doctor --fix` removes it from older configs.
   - `resetArchiveRetention`: retention for `*.reset.<timestamp>` transcript archives. Defaults to `pruneAfter`; set `false` to disable.
+  - `artifactArchiveRetention`: retention for manifest-backed artifact archive runs created by `openclaw sessions cleanup --archive-artifacts`. Defaults to disabled so operators can review manifests before pruning; set a duration such as `7d` for high-volume service agents after validation.
   - `maxDiskBytes`: optional sessions-directory disk budget. In `warn` mode it logs warnings; in `enforce` mode it removes oldest artifacts/sessions first.
   - `highWaterBytes`: optional target after budget cleanup. Defaults to `80%` of `maxDiskBytes`.
+  - Per-agent overrides are available as `agents.list[].sessionMaintenance` and merge over these global settings. Use per-agent overrides for high-volume service agents instead of lowering global retention for normal chat agents.
 - **`threadBindings`**: global defaults for thread-bound session features.
   - `enabled`: master default switch (providers can override; Discord uses `channels.discord.threadBindings.enabled`)
   - `idleHours`: default inactivity auto-unfocus in hours (`0` disables; providers can override)

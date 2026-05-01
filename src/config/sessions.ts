@@ -4,6 +4,8 @@ export * from "./sessions/compaction-session-file.js";
 export * from "./sessions/group.js";
 export * from "./sessions/goals.js";
 export * from "./sessions/artifacts.js";
+export * from "./sessions/artifact-cleanup.js";
+export * from "./sessions/artifact-report.js";
 export * from "./sessions/metadata.js";
 export * from "./sessions/main-session.js";
 export * from "./sessions/main-session.runtime.js";

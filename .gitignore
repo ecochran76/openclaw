@@ -257,6 +257,7 @@ openclaw-path-alias-*/
 *.heapsnapshot
 *.cpuprofile
 *.prof
+**/.artifact-cleanup-archive/
 test/fixtures/openclaw-vitest-unit-report.json
 analysis/
 .artifacts/qa-e2e/

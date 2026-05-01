@@ -120,6 +120,7 @@ in `enforce` mode and applies cleanup during maintenance. Set
       mode: "enforce",
       pruneAfter: "30d",
       maxEntries: 500,
+      artifactArchiveRetention: "7d",
     },
   },
 }
@@ -144,6 +145,14 @@ If you previously used direct-message isolation and later returned
 `openclaw sessions cleanup --dry-run --fix-dm-scope`. Applying the same flag
 retires those old direct-DM rows and keeps their transcripts as deleted
 archives.
+
+High-volume service agents can override the global policy with
+`agents.list[].sessionMaintenance`. The per-agent policy merges over
+`session.maintenance`, so monitor or helper agents can keep a smaller hot
+`sessions.json` without shortening normal interactive chat history.
+Use `artifactArchiveRetention` only after reviewing manifest-backed artifact
+archive runs; it prunes archive-run directories created by
+`openclaw sessions cleanup --archive-artifacts`.
 
 Preview with `openclaw sessions cleanup --dry-run`.
 

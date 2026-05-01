@@ -35,6 +35,7 @@ const ENFORCED_MAINTENANCE_OVERRIDE = {
   maxEntries: 500,
   modelRunPruneAfterMs: DAY_MS,
   resetArchiveRetentionMs: 7 * DAY_MS,
+  artifactArchiveRetentionMs: null,
   maxDiskBytes: null,
   highWaterBytes: null,
 };
@@ -827,6 +828,70 @@ describe("Integration: saveSessionStore with pruning", () => {
 
     await expectPathMissing(oldReset);
     await expectPathExists(freshReset);
+  });
+
+  it("cleans up manifest-backed artifact archives using artifactArchiveRetention", async () => {
+    mockLoadConfig.mockReturnValue({
+      session: {
+        maintenance: {
+          mode: "enforce",
+          pruneAfter: "30d",
+          artifactArchiveRetention: "3d",
+          maxEntries: 500,
+        },
+      },
+    });
+
+    const now = Date.now();
+    const store: Record<string, SessionEntry> = {
+      fresh: { sessionId: "fresh-session", updatedAt: now },
+    };
+    const archiveRoot = path.join(testDir, ".artifact-cleanup-archive");
+    const oldRun = path.join(archiveRoot, "old-run");
+    const freshRun = path.join(archiveRoot, "fresh-run");
+    await fs.mkdir(path.join(oldRun, "files"), { recursive: true });
+    await fs.mkdir(path.join(freshRun, "files"), { recursive: true });
+    await fs.writeFile(path.join(oldRun, "files", "old.trajectory.jsonl"), "old", "utf-8");
+    await fs.writeFile(path.join(freshRun, "files", "fresh.trajectory.jsonl"), "fresh", "utf-8");
+    await fs.writeFile(
+      path.join(oldRun, "manifest.json"),
+      `${JSON.stringify({
+        version: 1,
+        createdAt: new Date(now - 10 * DAY_MS).toISOString(),
+        dryRun: false,
+        storePath,
+        sessionsDir: testDir,
+        archiveDir: oldRun,
+        categories: ["orphan-trajectory"],
+        files: [],
+        totalBytes: 3,
+        archivedFiles: 1,
+        archivedBytes: 3,
+      })}\n`,
+      "utf-8",
+    );
+    await fs.writeFile(
+      path.join(freshRun, "manifest.json"),
+      `${JSON.stringify({
+        version: 1,
+        createdAt: new Date(now - 1 * DAY_MS).toISOString(),
+        dryRun: false,
+        storePath,
+        sessionsDir: testDir,
+        archiveDir: freshRun,
+        categories: ["orphan-trajectory"],
+        files: [],
+        totalBytes: 5,
+        archivedFiles: 1,
+        archivedBytes: 5,
+      })}\n`,
+      "utf-8",
+    );
+
+    await saveSessionStore(storePath, store);
+
+    await expect(fs.stat(oldRun)).rejects.toThrow();
+    await expect(fs.stat(freshRun)).resolves.toBeDefined();
   });
 
   it("saveSessionStore skips enforcement when maintenance mode is warn", async () => {

@@ -4,9 +4,16 @@
 import fs from "node:fs";
 import path from "node:path";
 import { resolveDefaultAgentId } from "../../agents/agent-scope.js";
+import { parseByteSize } from "../../cli/parse-bytes.js";
+import { parseDurationMs } from "../../cli/parse-duration.js";
 import { getLogger } from "../../logging/logger.js";
 import { normalizeAgentId, parseAgentSessionKey } from "../../routing/session-key.js";
 import type { OpenClawConfig } from "../types.openclaw.js";
+import {
+  archiveSessionArtifacts,
+  type SessionArtifactArchiveCategory,
+  type SessionArtifactArchiveManifest,
+} from "./artifact-cleanup.js";
 import {
   enforceSessionDiskBudget,
   pruneUnreferencedSessionArtifacts,
@@ -19,13 +26,14 @@ import {
   resolveStorePath,
 } from "./paths.js";
 import {
-  applySessionEntryLifecycleMutation,
   purgeDeletedAgentSessionEntries,
-  type SessionEntryLifecycleRemoval,
 } from "./session-accessor.js";
 import { cloneSessionStoreRecord } from "./store-cache.js";
 import { collectSessionMaintenancePreserveKeys } from "./store-maintenance-preserve.js";
-import { resolveMaintenanceConfig } from "./store-maintenance-runtime.js";
+import {
+  resolveMaintenanceConfig,
+  resolveMaintenanceConfigForAgent,
+} from "./store-maintenance-runtime.js";
 import {
   capEntryCount,
   pruneStaleModelRunEntries,
@@ -33,7 +41,12 @@ import {
   shouldRunModelRunPrune,
   type ResolvedSessionMaintenanceConfig,
 } from "./store-maintenance.js";
-import { loadSessionStore } from "./store.js";
+import {
+  archiveRemovedSessionTranscripts,
+  loadSessionStore,
+  type SessionMaintenanceApplyReport,
+  updateSessionStore,
+} from "./store.js";
 import {
   resolveSessionStoreTargets,
   type SessionStoreTarget,
@@ -48,6 +61,13 @@ export type SessionsCleanupOptions = SessionStoreSelectionOptions & {
   json?: boolean;
   fixMissing?: boolean;
   fixDmScope?: boolean;
+  maxEntries?: string | number;
+  pruneAfter?: string;
+  maxDiskBytes?: string;
+  highWaterBytes?: string;
+  archiveArtifacts?: boolean;
+  artifactCategories?: string;
+  maxArtifacts?: string | number;
 };
 
 export type SessionCleanupAction =
@@ -73,10 +93,19 @@ export type SessionCleanupSummary = {
   capped: number;
   unreferencedArtifacts: SessionUnreferencedArtifactSweepResult;
   diskBudget: Awaited<ReturnType<typeof enforceSessionDiskBudget>>;
+  artifactArchivePrune: SessionMaintenanceApplyReport["artifactArchivePrune"] | null;
+  artifactArchive?: SessionArtifactArchiveManifest;
   wouldMutate: boolean;
   applied?: true;
   appliedCount?: number;
 };
+
+const ARTIFACT_ARCHIVE_CATEGORIES = new Set<SessionArtifactArchiveCategory>([
+  "orphan-temp-store",
+  "orphan-trajectory",
+  "archive",
+]);
+const DEFAULT_ARTIFACT_ARCHIVE_MAX_ARTIFACTS = 100;
 
 export type SessionsCleanupResult =
   | SessionCleanupSummary
@@ -258,6 +287,15 @@ function retireMainScopeDirectSessionEntries(params: {
   return retired;
 }
 
+function rememberRemovedSessionFile(
+  removedSessionFiles: Map<string, string | undefined>,
+  entry: SessionEntry,
+): void {
+  if (!removedSessionFiles.has(entry.sessionId) || entry.sessionFile) {
+    removedSessionFiles.set(entry.sessionId, entry.sessionFile);
+  }
+}
+
 export function serializeSessionCleanupResult(params: {
   mode: ResolvedSessionMaintenanceConfig["mode"];
   dryRun: boolean;
@@ -334,6 +372,102 @@ function addEntryArtifactPathsToSet(params: {
   }
 }
 
+function parsePositiveIntegerOption(params: {
+  name: string;
+  value?: string | number;
+}): number | undefined {
+  if (params.value === undefined || params.value === "") {
+    return undefined;
+  }
+  const parsed = typeof params.value === "number" ? params.value : Number(params.value.trim());
+  if (!Number.isSafeInteger(parsed) || parsed <= 0) {
+    throw new Error(`${params.name} must be a positive integer`);
+  }
+  return parsed;
+}
+
+function parseDurationOption(params: { name: string; value?: string }): number | undefined {
+  const raw = params.value?.trim();
+  if (!raw) {
+    return undefined;
+  }
+  try {
+    return parseDurationMs(raw, { defaultUnit: "d" });
+  } catch {
+    throw new Error(`${params.name} must be a duration such as 7d, 12h, or 30m`);
+  }
+}
+
+function parseByteOption(params: { name: string; value?: string }): number | undefined {
+  const raw = params.value?.trim();
+  if (!raw) {
+    return undefined;
+  }
+  try {
+    return parseByteSize(raw, { defaultUnit: "b" });
+  } catch {
+    throw new Error(`${params.name} must be a byte size such as 50mb, 1gb, or 50000000`);
+  }
+}
+
+function parseArtifactCategoriesOption(
+  value?: string,
+): SessionArtifactArchiveCategory[] | undefined {
+  const raw = value?.trim();
+  if (!raw) {
+    return undefined;
+  }
+  const categories: SessionArtifactArchiveCategory[] = [];
+  for (const part of raw.split(",")) {
+    const category = part.trim();
+    if (!category) {
+      continue;
+    }
+    if (!ARTIFACT_ARCHIVE_CATEGORIES.has(category as SessionArtifactArchiveCategory)) {
+      throw new Error(
+        `--artifact-categories must only include: ${[...ARTIFACT_ARCHIVE_CATEGORIES].join(", ")}`,
+      );
+    }
+    categories.push(category as SessionArtifactArchiveCategory);
+  }
+  return [...new Set(categories)];
+}
+
+function resolveMaintenanceOverrideFromOptions(
+  opts: SessionsCleanupOptions,
+): Partial<ResolvedSessionMaintenanceConfig> {
+  const override: Partial<ResolvedSessionMaintenanceConfig> = {};
+  const maxEntries = parsePositiveIntegerOption({
+    name: "--max-entries",
+    value: opts.maxEntries,
+  });
+  const pruneAfterMs = parseDurationOption({
+    name: "--prune-after",
+    value: opts.pruneAfter,
+  });
+  const maxDiskBytes = parseByteOption({
+    name: "--max-disk-bytes",
+    value: opts.maxDiskBytes,
+  });
+  const highWaterBytes = parseByteOption({
+    name: "--high-water-bytes",
+    value: opts.highWaterBytes,
+  });
+  if (maxEntries !== undefined) {
+    override.maxEntries = maxEntries;
+  }
+  if (pruneAfterMs !== undefined) {
+    override.pruneAfterMs = pruneAfterMs;
+  }
+  if (maxDiskBytes !== undefined) {
+    override.maxDiskBytes = maxDiskBytes;
+  }
+  if (highWaterBytes !== undefined) {
+    override.highWaterBytes = highWaterBytes;
+  }
+  return override;
+}
+
 async function previewStoreCleanup(params: {
   cfg: OpenClawConfig;
   target: SessionStoreTarget;
@@ -343,6 +477,9 @@ async function previewStoreCleanup(params: {
   activeKey?: string;
   fixMissing?: boolean;
   fixDmScope?: boolean;
+  archiveArtifacts?: boolean;
+  artifactCategories?: SessionArtifactArchiveCategory[];
+  maxArtifacts?: number;
 }) {
   const beforeStore = loadSessionStore(params.target.storePath, { skipCache: true });
   // Preview always mutates a clone so dry-run output can report exact counts without touching disk.
@@ -444,13 +581,29 @@ async function previewStoreCleanup(params: {
       budgetRemovedFilePaths.add(canonicalPath);
     },
   });
-  const unreferencedArtifacts = await pruneUnreferencedSessionArtifacts({
-    store: previewStore,
-    storePath: params.target.storePath,
-    olderThanMs: params.maintenance.pruneAfterMs,
-    dryRun: true,
-    excludeCanonicalPaths: new Set([...budgetRemovedFilePaths, ...entryCleanupArtifactPaths]),
-  });
+  const unreferencedArtifacts = params.archiveArtifacts
+    ? {
+        scannedFiles: 0,
+        removedFiles: 0,
+        freedBytes: 0,
+        olderThanMs: params.maintenance.pruneAfterMs,
+      }
+    : await pruneUnreferencedSessionArtifacts({
+        store: previewStore,
+        storePath: params.target.storePath,
+        olderThanMs: params.maintenance.pruneAfterMs,
+        dryRun: true,
+        excludeCanonicalPaths: new Set([...budgetRemovedFilePaths, ...entryCleanupArtifactPaths]),
+      });
+  const artifactArchive = params.archiveArtifacts
+    ? await archiveSessionArtifacts({
+        storePath: params.target.storePath,
+        store: previewStore,
+        dryRun: true,
+        categories: params.artifactCategories,
+        maxArtifacts: params.maxArtifacts,
+      })
+    : undefined;
   const budgetEvictedKeys = new Set<string>();
   for (const key of Object.keys(beforeBudgetStore)) {
     if (!Object.hasOwn(previewStore, key)) {
@@ -467,7 +620,8 @@ async function previewStoreCleanup(params: {
     capped > 0 ||
     unreferencedArtifacts.removedFiles > 0 ||
     (diskBudget?.removedEntries ?? 0) > 0 ||
-    (diskBudget?.removedFiles ?? 0) > 0;
+    (diskBudget?.removedFiles ?? 0) > 0 ||
+    (artifactArchive?.files.length ?? 0) > 0;
 
   const summary: SessionCleanupSummary = {
     agentId: params.target.agentId,
@@ -483,6 +637,8 @@ async function previewStoreCleanup(params: {
     capped,
     unreferencedArtifacts,
     diskBudget,
+    artifactArchivePrune: null,
+    artifactArchive,
     wouldMutate,
   };
 
@@ -505,8 +661,16 @@ export async function runSessionsCleanup(params: {
   targets?: SessionStoreTarget[];
 }): Promise<SessionsCleanupRunResult> {
   const { cfg, opts } = params;
-  const maintenance = resolveMaintenanceConfig();
-  const mode = opts.enforce ? "enforce" : maintenance.mode;
+  const baseMaintenance = resolveMaintenanceConfig();
+  const mode = opts.enforce ? "enforce" : baseMaintenance.mode;
+  const maintenanceOverride = resolveMaintenanceOverrideFromOptions(opts);
+  const artifactCategories = parseArtifactCategoriesOption(opts.artifactCategories);
+  const maxArtifacts = opts.archiveArtifacts
+    ? (parsePositiveIntegerOption({
+        name: "--max-artifacts",
+        value: opts.maxArtifacts ?? DEFAULT_ARTIFACT_ARCHIVE_MAX_ARTIFACTS,
+      }) ?? DEFAULT_ARTIFACT_ARCHIVE_MAX_ARTIFACTS)
+    : undefined;
   const targets =
     params.targets ??
     resolveSessionStoreTargets(cfg, {
@@ -517,6 +681,10 @@ export async function runSessionsCleanup(params: {
 
   const previewResults: SessionsCleanupRunResult["previewResults"] = [];
   for (const target of targets) {
+    const maintenance = {
+      ...resolveMaintenanceConfigForAgent(target.agentId),
+      ...maintenanceOverride,
+    };
     const result = await previewStoreCleanup({
       cfg,
       target,
@@ -526,6 +694,9 @@ export async function runSessionsCleanup(params: {
       activeKey: opts.activeKey,
       fixMissing: Boolean(opts.fixMissing),
       fixDmScope: Boolean(opts.fixDmScope),
+      archiveArtifacts: Boolean(opts.archiveArtifacts),
+      artifactCategories,
+      maxArtifacts,
     });
     previewResults.push(result);
   }
@@ -533,81 +704,94 @@ export async function runSessionsCleanup(params: {
   const appliedSummaries: SessionCleanupSummary[] = [];
   if (!opts.dryRun) {
     for (const target of targets) {
-      const applyStore = loadSessionStore(target.storePath, { skipCache: true });
-      const missingRemovals: SessionEntryLifecycleRemoval[] = [];
-      const dmScopeRetiredRemovals: SessionEntryLifecycleRemoval[] = [];
-      if (opts.fixMissing) {
-        pruneMissingTranscriptEntries({
-          store: applyStore,
-          storePath: target.storePath,
-          onPruned: (sessionKey, entry) => {
-            missingRemovals.push({
-              sessionKey,
-              expectedEntry: cloneSessionStoreRecord({ entry }).entry,
+      const appliedReportRef: { current: SessionMaintenanceApplyReport | null } = {
+        current: null,
+      };
+      const dmScopeRemovedSessionFiles = new Map<string, string | undefined>();
+      let missingApplied = 0;
+      let dmScopeRetiredApplied = 0;
+      const maintenance = {
+        ...resolveMaintenanceConfigForAgent(target.agentId),
+        ...maintenanceOverride,
+      };
+      await updateSessionStore(
+        target.storePath,
+        async (store) => {
+          let removed = 0;
+          if (opts.fixMissing) {
+            missingApplied = pruneMissingTranscriptEntries({
+              store,
+              storePath: target.storePath,
             });
-          },
-        });
-      }
-      if (opts.fixDmScope) {
-        retireMainScopeDirectSessionEntries({
-          cfg,
-          store: applyStore,
-          targetAgentId: target.agentId,
-          activeKey: opts.activeKey,
-          onRetired: (sessionKey, entry) => {
-            dmScopeRetiredRemovals.push({
-              sessionKey,
-              expectedEntry: cloneSessionStoreRecord({ entry }).entry,
-              archiveRemovedTranscript: true,
-            });
-          },
-        });
-      }
-      const removals: SessionEntryLifecycleRemoval[] = [
-        ...missingRemovals,
-        ...dmScopeRetiredRemovals,
-      ];
-      const lifecycleResult = await applySessionEntryLifecycleMutation({
-        storePath: target.storePath,
-        removals,
-        activeSessionKey: opts.activeKey,
-        maintenanceOverride: {
-          mode,
-        },
-        restrictArchivedTranscriptsToStoreDir: true,
-        pruneUnreferencedArtifacts:
-          mode === "warn"
-            ? undefined
-            : {
-                olderThanMs: maintenance.pruneAfterMs,
-                dryRun: false,
+            removed += missingApplied;
+          }
+          if (opts.fixDmScope) {
+            dmScopeRetiredApplied = retireMainScopeDirectSessionEntries({
+              cfg,
+              store,
+              targetAgentId: target.agentId,
+              activeKey: opts.activeKey,
+              onRetired: (_key, entry) => {
+                rememberRemovedSessionFile(dmScopeRemovedSessionFiles, entry);
               },
-      });
-      const removedSessionKeys = new Set(lifecycleResult.removedSessionKeys);
-      const missingApplied = missingRemovals.filter(({ sessionKey }) =>
-        removedSessionKeys.has(sessionKey),
-      ).length;
-      const dmScopeRetiredApplied = dmScopeRetiredRemovals.filter(({ sessionKey }) =>
-        removedSessionKeys.has(sessionKey),
-      ).length;
+            });
+            removed += dmScopeRetiredApplied;
+          }
+          return removed;
+        },
+        {
+          activeSessionKey: opts.activeKey,
+          maintenanceOverride: {
+            ...maintenanceOverride,
+            mode,
+          },
+          onMaintenanceApplied: (report) => {
+            appliedReportRef.current = report;
+          },
+        },
+      );
+      if (dmScopeRemovedSessionFiles.size > 0) {
+        const storeAfterDmScopeRetire = loadSessionStore(target.storePath, { skipCache: true });
+        await archiveRemovedSessionTranscripts({
+          removedSessionFiles: dmScopeRemovedSessionFiles,
+          referencedSessionIds: new Set(
+            Object.values(storeAfterDmScopeRetire)
+              .map((entry) => entry?.sessionId)
+              .filter((id): id is string => Boolean(id)),
+          ),
+          storePath: target.storePath,
+          reason: "deleted",
+          restrictToStoreDir: true,
+        });
+      }
+      const afterStore = loadSessionStore(target.storePath, { skipCache: true });
+      const artifactArchive = opts.archiveArtifacts
+        ? await archiveSessionArtifacts({
+            storePath: target.storePath,
+            store: afterStore,
+            dryRun: false,
+            categories: artifactCategories,
+            maxArtifacts,
+          })
+        : undefined;
       const unreferencedArtifacts =
-        mode === "warn"
+        mode === "warn" || opts.archiveArtifacts
           ? {
               scannedFiles: 0,
               removedFiles: 0,
               freedBytes: 0,
               olderThanMs: maintenance.pruneAfterMs,
             }
-          : (lifecycleResult.unreferencedArtifacts ?? {
-              scannedFiles: 0,
-              removedFiles: 0,
-              freedBytes: 0,
+          : await pruneUnreferencedSessionArtifacts({
+              store: afterStore,
+              storePath: target.storePath,
               olderThanMs: maintenance.pruneAfterMs,
+              dryRun: false,
             });
       const preview = previewResults.find(
         (result) => result.summary.storePath === target.storePath,
       );
-      const appliedReport = lifecycleResult.maintenanceReport;
+      const appliedReport = appliedReportRef.current;
       const summary: SessionCleanupSummary =
         appliedReport === null
           ? {
@@ -625,14 +809,19 @@ export async function runSessionsCleanup(params: {
                 capped: 0,
                 unreferencedArtifacts,
                 diskBudget: null,
+                artifactArchivePrune: null,
+                artifactArchive,
                 wouldMutate: false,
               }),
               dryRun: false,
               unreferencedArtifacts,
               wouldMutate:
-                (preview?.summary.wouldMutate ?? false) || unreferencedArtifacts.removedFiles > 0,
+                (preview?.summary.wouldMutate ?? false) ||
+                unreferencedArtifacts.removedFiles > 0 ||
+                (artifactArchive?.archivedFiles ?? 0) > 0,
               applied: true,
-              appliedCount: lifecycleResult.afterCount,
+              appliedCount: Object.keys(afterStore).length,
+              artifactArchive,
             }
           : {
               agentId: target.agentId,
@@ -648,6 +837,8 @@ export async function runSessionsCleanup(params: {
               capped: appliedReport.capped,
               unreferencedArtifacts,
               diskBudget: appliedReport.diskBudget,
+              artifactArchivePrune: appliedReport.artifactArchivePrune,
+              artifactArchive,
               wouldMutate:
                 missingApplied > 0 ||
                 dmScopeRetiredApplied > 0 ||
@@ -656,9 +847,10 @@ export async function runSessionsCleanup(params: {
                 appliedReport.capped > 0 ||
                 unreferencedArtifacts.removedFiles > 0 ||
                 (appliedReport.diskBudget?.removedEntries ?? 0) > 0 ||
-                (appliedReport.diskBudget?.removedFiles ?? 0) > 0,
+                (appliedReport.diskBudget?.removedFiles ?? 0) > 0 ||
+                (artifactArchive?.archivedFiles ?? 0) > 0,
               applied: true,
-              appliedCount: lifecycleResult.afterCount,
+              appliedCount: appliedReport.afterCount,
             };
       appliedSummaries.push(summary);
     }
