@@ -91,9 +91,9 @@ describe("tool-policy-pipeline", () => {
         },
       ],
     });
-    expect(warnings).toEqual([
-      "tools: tools.allow allowlist contains unknown entries (wat). These entries won't match any tool unless the plugin is enabled.",
-    ]);
+    expect(warnings.length).toBe(1);
+    expect(warnings[0]).toContain("unknown entries (wat)");
+    expect(warnings[0]).toContain("plugin or MCP server is enabled and connected");
   });
 
   test("suppresses built-in profile warnings for unavailable gated core tools", () => {
@@ -134,7 +134,7 @@ describe("tool-policy-pipeline", () => {
         "memory-triggered compaction runs expose only read and append-only write",
     });
     expect(warnings).toEqual([
-      "tools: tools.allow allowlist contains unknown entries (apply_patch, wat). Some entries are shipped core tools but unavailable here: memory-triggered compaction runs expose only read and append-only write; other entries won't match any tool unless the plugin is enabled.",
+      "tools: tools.allow allowlist contains unknown entries (apply_patch, wat). Some entries are shipped core tools but unavailable here: memory-triggered compaction runs expose only read and append-only write; other entries won't match any tool unless the plugin or MCP server is enabled and connected.",
     ]);
   });
 
@@ -559,8 +559,8 @@ describe("tool-policy-pipeline", () => {
     });
 
     expect(warnings).toEqual([
-      "tools: tools.allow allowlist contains unknown entries (unknown_256). These entries won't match any tool unless the plugin is enabled.",
-      "tools: tools.allow allowlist contains unknown entries (unknown_0). These entries won't match any tool unless the plugin is enabled.",
+      "tools: tools.allow allowlist contains unknown entries (unknown_256). These entries won't match any tool unless the plugin or MCP server is enabled and connected.",
+      "tools: tools.allow allowlist contains unknown entries (unknown_0). These entries won't match any tool unless the plugin or MCP server is enabled and connected.",
     ]);
   });
 

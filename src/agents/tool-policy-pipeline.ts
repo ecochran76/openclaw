@@ -235,14 +235,14 @@ function describeUnknownAllowlistSuffix(params: {
     ? `These entries are shipped core tools but unavailable here: ${unavailableCoreToolReason}.`
     : "These entries are shipped core tools but unavailable in the current runtime/provider/model/config.";
   const mixedUnavailableCoreDetail = unavailableCoreToolReason
-    ? `Some entries are shipped core tools but unavailable here: ${unavailableCoreToolReason}; other entries won't match any tool unless the plugin is enabled.`
-    : "Some entries are shipped core tools but unavailable in the current runtime/provider/model/config; other entries won't match any tool unless the plugin is enabled.";
+    ? `Some entries are shipped core tools but unavailable here: ${unavailableCoreToolReason}; other entries won't match any tool unless the plugin or MCP server is enabled and connected.`
+    : "Some entries are shipped core tools but unavailable in the current runtime/provider/model/config; other entries won't match any tool unless the plugin or MCP server is enabled and connected.";
   const detail =
     params.hasGatedCoreEntries && params.hasOtherEntries
       ? mixedUnavailableCoreDetail
       : params.hasGatedCoreEntries
         ? unavailableCoreDetail
-        : "These entries won't match any tool unless the plugin is enabled.";
+        : "These entries won't match any tool unless the plugin or MCP server is enabled and connected.";
   return preface ? `${preface} ${detail}` : detail;
 }
 

@@ -475,6 +475,35 @@ describe("collectPluginToolAllowlistWarnings", () => {
     expect(warnings).toStrictEqual([]);
   });
 
+  it("warns when a configured MCP server tool pattern is unavailable under restrictive plugins.allow", () => {
+    const warnings = collectPluginToolAllowlistWarnings({
+      cfg: {
+        plugins: { allow: ["slack", "openai"] },
+        mcp: {
+          servers: {
+            imcli: {
+              command: "imcli",
+              args: ["mcp"],
+            },
+          },
+        },
+        agents: {
+          list: [
+            {
+              id: "odollo-soylei",
+              tools: { alsoAllow: ["imcli__*"] },
+            },
+          ],
+        },
+      },
+      manifestRegistry,
+    });
+
+    expect(warnings).toEqual([
+      '- agents.list[0].tools.alsoAllow references MCP tool pattern "imcli__*" for configured mcp.servers.imcli. If it is unavailable at runtime, make sure bundle MCP is not denied by tool policy and the MCP server starts cleanly.',
+    ]);
+  });
+
   it("does not warn when the owning plugin is allowed", () => {
     const warnings = collectPluginToolAllowlistWarnings({
       cfg: {
