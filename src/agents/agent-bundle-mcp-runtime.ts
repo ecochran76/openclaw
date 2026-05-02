@@ -12,7 +12,10 @@ import type {
   jsonSchemaValidator,
 } from "@modelcontextprotocol/sdk/validation/types.js";
 import { redactSensitiveUrlLikeString } from "@openclaw/net-policy/redact-sensitive-url";
-import { normalizeOptionalString } from "@openclaw/normalization-core/string-coerce";
+import {
+  normalizeLowercaseStringOrEmpty,
+  normalizeOptionalString,
+} from "@openclaw/normalization-core/string-coerce";
 import { Compile } from "typebox/compile";
 import type { OpenClawConfig } from "../config/types.openclaw.js";
 import { toErrorObject } from "../infra/errors.js";
@@ -426,9 +429,36 @@ function createCatalogFingerprint(servers: Record<string, unknown>): string {
   return crypto.createHash("sha1").update(JSON.stringify(servers)).digest("hex");
 }
 
+function normalizeMcpServerAllowlist(names?: string[]): Set<string> | undefined {
+  const normalized = new Set(
+    (names ?? []).map((name) => normalizeLowercaseStringOrEmpty(name)).filter(Boolean),
+  );
+  return normalized.size > 0 ? normalized : undefined;
+}
+
+function filterMcpServersForAllowlist(
+  servers: Record<string, unknown>,
+  allowedServerNames?: string[],
+): Record<string, unknown> {
+  const allowlist = normalizeMcpServerAllowlist(allowedServerNames);
+  if (!allowlist) {
+    return servers;
+  }
+  const filtered: Record<string, unknown> = {};
+  for (const [serverName, config] of Object.entries(servers)) {
+    const rawName = normalizeLowercaseStringOrEmpty(serverName);
+    const safeName = normalizeLowercaseStringOrEmpty(sanitizeServerName(serverName, new Set()));
+    if (allowlist.has(rawName) || allowlist.has(safeName)) {
+      filtered[serverName] = config;
+    }
+  }
+  return filtered;
+}
+
 function loadSessionMcpConfig(params: {
   workspaceDir: string;
   cfg?: OpenClawConfig;
+  allowedServerNames?: string[];
   logDiagnostics?: boolean;
   manifestRegistry?: Pick<PluginManifestRegistry, "plugins">;
 }): {
@@ -445,9 +475,10 @@ function loadSessionMcpConfig(params: {
       logWarn(`bundle-mcp: ${diagnostic.pluginId}: ${diagnostic.message}`);
     }
   }
+  const mcpServers = filterMcpServersForAllowlist(loaded.mcpServers, params.allowedServerNames);
   return {
-    loaded,
-    fingerprint: createCatalogFingerprint(loaded.mcpServers),
+    loaded: { ...loaded, mcpServers },
+    fingerprint: createCatalogFingerprint(mcpServers),
   };
 }
 
@@ -489,11 +520,13 @@ export function createSessionMcpRuntime(params: {
   sessionKey?: string;
   workspaceDir: string;
   cfg?: OpenClawConfig;
+  allowedServerNames?: string[];
   manifestRegistry?: Pick<PluginManifestRegistry, "plugins">;
 }): SessionMcpRuntime {
   const { loaded, fingerprint: configFingerprint } = loadSessionMcpConfig({
     workspaceDir: params.workspaceDir,
     cfg: params.cfg,
+    allowedServerNames: params.allowedServerNames,
     logDiagnostics: true,
     manifestRegistry: params.manifestRegistry,
   });
@@ -1074,6 +1107,7 @@ function createSessionMcpRuntimeManager(
       const { fingerprint: nextFingerprint } = loadSessionMcpConfig({
         workspaceDir: params.workspaceDir,
         cfg: params.cfg,
+        allowedServerNames: params.allowedServerNames,
         logDiagnostics: false,
       });
       const existing = runtimesBySessionId.get(params.sessionId);
@@ -1110,6 +1144,7 @@ function createSessionMcpRuntimeManager(
           sessionKey: params.sessionKey,
           workspaceDir: params.workspaceDir,
           cfg: params.cfg,
+          allowedServerNames: params.allowedServerNames,
           configFingerprint: nextFingerprint,
         }),
       ).then((runtime) => {
@@ -1193,6 +1228,7 @@ export async function getOrCreateSessionMcpRuntime(params: {
   sessionKey?: string;
   workspaceDir: string;
   cfg?: OpenClawConfig;
+  allowedServerNames?: string[];
 }): Promise<SessionMcpRuntime> {
   return await getSessionMcpRuntimeManager().getOrCreate(params);
 }

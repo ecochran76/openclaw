@@ -86,14 +86,14 @@ function isPluginGroupAllowlistName(normalized: string): boolean {
   return normalized === "group:plugins";
 }
 
-function selectBundleMcpPolicyProbeName(params: {
+function collectBundleMcpPolicyCandidateNames(params: {
   toolsAllow?: string[];
   config?: OpenClawConfig;
   sessionKey?: string;
   agentId?: string;
   modelProvider?: string;
   modelId?: string;
-}): string | undefined {
+}): string[] {
   const explicitPolicy = resolveEffectiveToolPolicy({
     config: params.config,
     sessionKey: params.sessionKey,
@@ -110,9 +110,46 @@ function selectBundleMcpPolicyProbeName(params: {
     ...(explicitPolicy.agentPolicy?.allow ?? []),
     ...(explicitPolicy.agentProviderPolicy?.allow ?? []),
   ];
-  return candidates
-    .map((toolName) => normalizeToolName(toolName))
-    .find((toolName) => toolName.includes(TOOL_NAME_SEPARATOR));
+  return candidates.map((toolName) => normalizeToolName(toolName));
+}
+
+function selectBundleMcpPolicyProbeName(params: {
+  toolsAllow?: string[];
+  config?: OpenClawConfig;
+  sessionKey?: string;
+  agentId?: string;
+  modelProvider?: string;
+  modelId?: string;
+}): string | undefined {
+  return collectBundleMcpPolicyCandidateNames(params).find((toolName) =>
+    toolName.includes(TOOL_NAME_SEPARATOR),
+  );
+}
+
+export function collectSpecificBundleMcpServerAllowlist(params: {
+  toolsAllow?: string[];
+  config?: OpenClawConfig;
+  sessionKey?: string;
+  agentId?: string;
+  modelProvider?: string;
+  modelId?: string;
+}): string[] | undefined {
+  const candidates = collectBundleMcpPolicyCandidateNames(params);
+  if (candidates.some((toolName) => toolName === "bundle-mcp" || toolName === "group:plugins")) {
+    return undefined;
+  }
+  if (candidates.includes("*")) {
+    return undefined;
+  }
+  const servers = new Set<string>();
+  for (const toolName of candidates) {
+    const separatorIndex = toolName.indexOf(TOOL_NAME_SEPARATOR);
+    if (separatorIndex <= 0) {
+      continue;
+    }
+    servers.add(toolName.slice(0, separatorIndex));
+  }
+  return servers.size > 0 ? Array.from(servers).sort() : undefined;
 }
 
 function hasWildcardToolAllowlist(toolsAllow: string[]): boolean {

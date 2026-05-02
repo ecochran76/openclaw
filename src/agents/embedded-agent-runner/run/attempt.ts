@@ -359,6 +359,7 @@ import {
 import { buildAttemptSystemPrompt } from "./attempt-system-prompt.js";
 import {
   applyEmbeddedAttemptToolsAllow,
+  collectSpecificBundleMcpServerAllowlist,
   mergeForcedEmbeddedAttemptToolsAllow,
   resolveEmbeddedAttemptToolConstructionPlan,
   shouldCreateBundleLspRuntimeForAttempt,
@@ -1579,12 +1580,24 @@ export async function runEmbeddedAttempt(
       modelProvider: params.provider,
       modelId: params.modelId,
     });
+    markStartupPhase("bundle-mcp.policy", { enabled: bundleMcpEnabled });
+    const bundleMcpAllowedServerNames = bundleMcpEnabled
+      ? collectSpecificBundleMcpServerAllowlist({
+          toolsAllow: params.toolsAllow,
+          config: params.config,
+          sessionKey: sandboxSessionKey ?? params.sessionKey,
+          agentId: sessionAgentId,
+          modelProvider: params.provider,
+          modelId: params.modelId,
+        })
+      : undefined;
     const bundleMcpSessionRuntime = bundleMcpEnabled
       ? await getOrCreateSessionMcpRuntime({
           sessionId: params.sessionId,
           sessionKey: params.sessionKey,
           workspaceDir: effectiveWorkspace,
           cfg: params.config,
+          allowedServerNames: bundleMcpAllowedServerNames,
         })
       : undefined;
     bundleMcpRuntime = bundleMcpSessionRuntime

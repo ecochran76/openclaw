@@ -2,6 +2,7 @@
 import { describe, expect, it } from "vitest";
 import {
   applyEmbeddedAttemptToolsAllow,
+  collectSpecificBundleMcpServerAllowlist,
   mergeForcedEmbeddedAttemptToolsAllow,
   resolveEmbeddedAttemptToolConstructionPlan,
   shouldCreateBundleLspRuntimeForAttempt,
@@ -500,6 +501,34 @@ describe("shouldCreateBundleMcpRuntimeForAttempt", () => {
         },
       }),
     ).toBe(false);
+  });
+});
+
+describe("collectSpecificBundleMcpServerAllowlist", () => {
+  it("extracts specific MCP server prefixes from explicit runtime allowlists", () => {
+    expect(
+      collectSpecificBundleMcpServerAllowlist({
+        toolsAllow: ["imcli__*", "graphiti__get_status", "group:memory"],
+      }),
+    ).toEqual(["graphiti", "imcli"]);
+  });
+
+  it("does not narrow broad bundle MCP allowances", () => {
+    expect(
+      collectSpecificBundleMcpServerAllowlist({
+        toolsAllow: ["bundle-mcp"],
+      }),
+    ).toBeUndefined();
+    expect(
+      collectSpecificBundleMcpServerAllowlist({
+        toolsAllow: ["group:plugins"],
+      }),
+    ).toBeUndefined();
+    expect(
+      collectSpecificBundleMcpServerAllowlist({
+        toolsAllow: ["*"],
+      }),
+    ).toBeUndefined();
   });
 });
 
