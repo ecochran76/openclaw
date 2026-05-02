@@ -213,6 +213,39 @@ stdio MCP startup failures in operator diagnostics. The runtime behavior was
 correct to drop the failing MCP server, but `Connection closed` hid the native
 module ABI mismatch until the configured child launch was reproduced manually.
 
+## Runtime Follow-Up Check - 2026-05-02
+
+The `~/.openclaw` runtime agent handled the local note by updating the
+`mcp.servers.imcli.env.PATH` entry. A follow-up check confirmed the fix is still
+active:
+
+```text
+openclaw gateway status --deep --require-rpc
+Read probe: ok
+Capability: admin-capable
+Runtime: running
+```
+
+The user systemd gateway service has an `imcli` MCP child process running under
+the gateway, and recent logs include:
+
+```text
+IMCLI_MCP_OK account keys: google-messages-main, sms-primary, whatsapp-on-demand-test, whatsapp-primary
+```
+
+A non-delivered read-only `odollo-soylei` agent smoke completed through the
+current runtime and called the MCP tool:
+
+```text
+IMCLI_MCP_OK google-messages-main,sms-primary,whatsapp-on-demand-test,whatsapp-primary
+toolSummary: imcli__list_accounts, failures: 0
+durationMs: 15053
+```
+
+The runtime note at
+`/home/ecochran76/.openclaw/docs/dev/notes/0002-2026-05-02-odollo-imcli-tool-exposure-handoff.md`
+has been updated from `OPEN` to `RESOLVED`.
+
 ## Recommended Fix Direction
 
 - Add a deterministic OpenClaw-side smoke that proves a configured stdio MCP
