@@ -9,7 +9,12 @@ const dispatchPreparedSlackMessageMock = vi.fn(async () => {});
 const resolveThreadTsMock = vi.fn(async ({ message }: { message: Record<string, unknown> }) => ({
   ...message,
 }));
+const reactSlackMessageMock = vi.hoisted(() => vi.fn(async () => {}));
 const { createSlackMessageHandler } = await import("./message-handler.js");
+
+vi.mock("../actions.js", () => ({
+  reactSlackMessage: reactSlackMessageMock,
+}));
 
 vi.mock("openclaw/plugin-sdk/channel-inbound", async () => {
   const actual = await vi.importActual<typeof import("openclaw/plugin-sdk/channel-inbound")>(
@@ -52,14 +57,19 @@ vi.mock("./inbound-delivery-state.js", () => ({
 function createContext(overrides?: {
   markMessageSeen?: (channel: string | undefined, ts: string | undefined) => boolean;
   releaseSeenMessage?: (channel: string | undefined, ts: string | undefined) => void;
+  isChannelAllowed?: () => boolean;
 }) {
   return {
     cfg: {},
     accountId: "default",
+    botToken: "xoxb-test",
     app: {
       client: {},
     },
     runtime: {},
+    ackReactionScope: "group-mentions",
+    logger: {},
+    isChannelAllowed: () => overrides?.isChannelAllowed?.() ?? true,
     markMessageSeen: (channel: string | undefined, ts: string | undefined) =>
       overrides?.markMessageSeen?.(channel, ts) ?? false,
     releaseSeenMessage: (channel: string | undefined, ts: string | undefined) =>
@@ -70,6 +80,7 @@ function createContext(overrides?: {
 function createHandlerWithTracker(overrides?: {
   markMessageSeen?: (channel: string | undefined, ts: string | undefined) => boolean;
   releaseSeenMessage?: (channel: string | undefined, ts: string | undefined) => void;
+  isChannelAllowed?: () => boolean;
 }) {
   const trackEvent = vi.fn();
   const handler = createSlackMessageHandler({
@@ -102,6 +113,7 @@ describe("createSlackMessageHandler", () => {
     prepareSlackMessageMock.mockClear();
     dispatchPreparedSlackMessageMock.mockClear();
     resolveThreadTsMock.mockClear();
+    reactSlackMessageMock.mockClear();
   });
 
   it("does not track invalid non-message events from the message stream", async () => {
@@ -144,6 +156,52 @@ describe("createSlackMessageHandler", () => {
     await handleDirectMessage(handler);
 
     expect(trackEvent).toHaveBeenCalledTimes(1);
+    expect(resolveThreadTsMock).toHaveBeenCalledTimes(1);
+    expect(enqueueMock).toHaveBeenCalledTimes(1);
+  });
+
+  it("starts an app mention ack before thread resolution and pipeline work", async () => {
+    const { handler } = createHandlerWithTracker();
+
+    await handler(
+      {
+        type: "app_mention",
+        channel: "C111",
+        channel_type: "channel",
+        user: "U111",
+        ts: "1709000000.000100",
+        text: "<@UOPENCLAW> hello",
+      } as never,
+      { source: "app_mention", wasMentioned: true },
+    );
+
+    expect(reactSlackMessageMock).toHaveBeenCalledWith("C111", "1709000000.000100", "👀", {
+      token: "xoxb-test",
+      client: {},
+    });
+    expect(reactSlackMessageMock.mock.invocationCallOrder[0]).toBeLessThan(
+      resolveThreadTsMock.mock.invocationCallOrder[0],
+    );
+    expect(resolveThreadTsMock).toHaveBeenCalledTimes(1);
+    expect(enqueueMock).toHaveBeenCalledTimes(1);
+  });
+
+  it("does not pre-ack app mentions in disallowed channels", async () => {
+    const { handler } = createHandlerWithTracker({ isChannelAllowed: () => false });
+
+    await handler(
+      {
+        type: "app_mention",
+        channel: "C111",
+        channel_type: "channel",
+        user: "U111",
+        ts: "1709000000.000100",
+        text: "<@UOPENCLAW> hello",
+      } as never,
+      { source: "app_mention", wasMentioned: true },
+    );
+
+    expect(reactSlackMessageMock).not.toHaveBeenCalled();
     expect(resolveThreadTsMock).toHaveBeenCalledTimes(1);
     expect(enqueueMock).toHaveBeenCalledTimes(1);
   });

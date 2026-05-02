@@ -1,4 +1,6 @@
 // Slack plugin module implements message handler behavior.
+import { resolveDefaultAgentId } from "openclaw/plugin-sdk/agent-runtime";
+import { resolveAckReaction } from "openclaw/plugin-sdk/channel-feedback";
 import {
   createChannelInboundDebouncer,
   shouldDebounceTextInbound,
@@ -9,6 +11,7 @@ import {
   resolveExpiresAtMsFromDurationMs,
 } from "openclaw/plugin-sdk/number-runtime";
 import type { ResolvedSlackAccount } from "../accounts.js";
+import { reactSlackMessage } from "../actions.js";
 import type { SlackSendIdentity } from "../send.js";
 import type { SlackMessageEvent } from "../types.js";
 import { stripSlackMentionsForCommandDetection } from "./commands.js";
@@ -87,6 +90,62 @@ function buildSeenMessageKey(channelId: string | undefined, ts: string | undefin
     return null;
   }
   return `${channelId}:${ts}`;
+}
+
+function shouldAttemptPrePipelineAck(params: {
+  ctx: SlackMonitorContext;
+  message: SlackMessageEvent;
+  opts: { source: "message" | "app_mention"; wasMentioned?: boolean };
+}): boolean {
+  const { ctx, message, opts } = params;
+  if (!message.channel || !message.ts) {
+    return false;
+  }
+  if (opts.source !== "app_mention" && opts.wasMentioned !== true) {
+    return false;
+  }
+  const scope = ctx.ackReactionScope?.trim().toLowerCase() ?? "";
+  if (scope === "off" || scope === "none") {
+    return false;
+  }
+  return ctx.isChannelAllowed({
+    channelId: message.channel,
+    channelType: message.channel_type,
+  });
+}
+
+function startPrePipelineAck(params: {
+  ctx: SlackMonitorContext;
+  account: ResolvedSlackAccount;
+  message: SlackMessageEvent;
+  opts: { source: "message" | "app_mention"; wasMentioned?: boolean };
+}) {
+  const { ctx, account, message, opts } = params;
+  if (!shouldAttemptPrePipelineAck({ ctx, message, opts })) {
+    return;
+  }
+  const defaultAgentId = resolveDefaultAgentId(ctx.cfg);
+  const reaction = resolveAckReaction(ctx.cfg, defaultAgentId, {
+    channel: "slack",
+    accountId: account.accountId,
+  });
+  if (!reaction) {
+    return;
+  }
+  void reactSlackMessage(message.channel, message.ts ?? "", reaction, {
+    token: ctx.botToken,
+    client: ctx.app.client,
+  }).catch((err) => {
+    ctx.logger?.debug?.(
+      {
+        accountId: account.accountId,
+        channel: message.channel,
+        ts: message.ts,
+        error: formatErrorMessage(err),
+      },
+      "slack pre-pipeline ack failed",
+    );
+  });
 }
 
 export function createSlackMessageHandler(params: {
@@ -313,6 +372,7 @@ export function createSlackMessageHandler(params: {
       }
     }
     trackEvent?.();
+    startPrePipelineAck({ ctx, account, message, opts });
     const resolvedMessage = await threadTsResolver.resolve({ message, source: opts.source });
     const debounceKey = buildSlackDebounceKey(resolvedMessage, ctx.accountId);
     const conversationKey = buildTopLevelSlackConversationKey(resolvedMessage, ctx.accountId);
