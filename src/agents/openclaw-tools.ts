@@ -78,6 +78,40 @@ type OpenClawToolsDeps = {
   config?: OpenClawConfig;
 };
 
+const OPENCLAW_TOOLS_STAGE_WARN_MS = 2_000;
+
+function createOpenClawToolsStageTracker(agentSessionKey?: string) {
+  const startedAt = performance.now();
+  let previousAt = startedAt;
+  const stages: Array<{ name: string; durationMs: number; elapsedMs: number }> = [];
+  return {
+    mark(name: string) {
+      const now = performance.now();
+      stages.push({
+        name,
+        durationMs: Math.max(0, Math.round(now - previousAt)),
+        elapsedMs: Math.max(0, Math.round(now - startedAt)),
+      });
+      previousAt = now;
+    },
+    warnIfSlow() {
+      const totalMs = Math.max(0, Math.round(performance.now() - startedAt));
+      if (
+        totalMs < OPENCLAW_TOOLS_STAGE_WARN_MS &&
+        !stages.some((stage) => stage.durationMs >= OPENCLAW_TOOLS_STAGE_WARN_MS)
+      ) {
+        return;
+      }
+      const stageText = stages
+        .map((stage) => `${stage.name}:${stage.durationMs}ms@${stage.elapsedMs}ms`)
+        .join(",");
+      console.warn(
+        `[openclaw-tools-startup] totalMs=${totalMs} sessionKey=${agentSessionKey ?? "unknown"} stages=${stageText || "none"}`,
+      );
+    },
+  };
+}
+
 const defaultOpenClawToolsDeps: OpenClawToolsDeps = {
   callGateway,
 };
@@ -188,6 +222,7 @@ export function createOpenClawTools(
     allowGatewaySubagentBinding?: boolean;
   } & SpawnedToolContext,
 ): AnyAgentTool[] {
+  const stages = createOpenClawToolsStageTracker(options?.agentSessionKey);
   const resolvedConfig = options?.config ?? openClawToolsDeps.config;
   const runtimeSnapshot = getActiveSecretsRuntimeConfigSnapshot();
   const availabilityConfig = selectApplicableRuntimeConfig({
@@ -222,6 +257,7 @@ export function createOpenClawTools(
     options?.sandboxRoot && options?.sandboxFsBridge
       ? { root: options.sandboxRoot, bridge: options.sandboxFsBridge }
       : undefined;
+  stages.mark("context");
   const optionalMediaTools = resolveOptionalMediaToolFactoryPlan({
     config: availabilityConfig ?? resolvedConfig,
     workspaceDir,
@@ -269,6 +305,7 @@ export function createOpenClawTools(
       })
     : null;
   options?.recordToolPrepStage?.("openclaw-tools:image-tool");
+  stages.mark("image-tool");
   const imageGenerateTool = optionalMediaTools.imageGenerate
     ? createImageGenerateTool({
         config: options?.config,
@@ -283,6 +320,7 @@ export function createOpenClawTools(
       })
     : null;
   options?.recordToolPrepStage?.("openclaw-tools:image-generate-tool");
+  stages.mark("image-generate");
   const videoGenerateTool = optionalMediaTools.videoGenerate
     ? createVideoGenerateTool({
         config: options?.config,
@@ -297,6 +335,7 @@ export function createOpenClawTools(
       })
     : null;
   options?.recordToolPrepStage?.("openclaw-tools:video-generate-tool");
+  stages.mark("video-generate");
   const musicGenerateTool = optionalMediaTools.musicGenerate
     ? createMusicGenerateTool({
         config: options?.config,
@@ -311,6 +350,7 @@ export function createOpenClawTools(
       })
     : null;
   options?.recordToolPrepStage?.("openclaw-tools:music-generate-tool");
+  stages.mark("music-generate");
   const pdfTool =
     optionalMediaTools.pdf && options?.agentDir?.trim()
       ? createPdfTool({
@@ -324,6 +364,7 @@ export function createOpenClawTools(
         })
       : null;
   options?.recordToolPrepStage?.("openclaw-tools:pdf-tool");
+  stages.mark("pdf-tool");
   const webSearchTool = createWebSearchTool({
     config: options?.config,
     agentDir: options?.agentDir,
@@ -332,6 +373,7 @@ export function createOpenClawTools(
     lateBindRuntimeConfig: true,
   });
   options?.recordToolPrepStage?.("openclaw-tools:web-search-tool");
+  stages.mark("web-search");
   const webFetchTool = createWebFetchTool({
     config: options?.config,
     sandboxed: options?.sandboxed,
@@ -339,6 +381,7 @@ export function createOpenClawTools(
     lateBindRuntimeConfig: true,
   });
   options?.recordToolPrepStage?.("openclaw-tools:web-fetch-tool");
+  stages.mark("web-fetch");
   const messageTool = options?.disableMessageTool
     ? null
     : createMessageTool({
@@ -367,6 +410,7 @@ export function createOpenClawTools(
       });
   const heartbeatTool = options?.enableHeartbeatTool ? createHeartbeatResponseTool() : null;
   options?.recordToolPrepStage?.("openclaw-tools:message-tool");
+  stages.mark("message-tool");
   const nodesToolBase = createNodesTool({
     agentSessionKey: options?.agentSessionKey,
     agentChannel: options?.agentChannel,
@@ -377,6 +421,7 @@ export function createOpenClawTools(
     modelHasVision: options?.modelHasVision,
     allowMediaInvokeCommands: options?.allowMediaInvokeCommands,
   });
+  stages.mark("nodes-tool");
   const nodesTool = applyNodesToolWorkspaceGuard(nodesToolBase, {
     fsPolicy: options?.fsPolicy,
     sandboxContainerWorkdir: options?.sandboxContainerWorkdir,
@@ -384,6 +429,7 @@ export function createOpenClawTools(
     workspaceDir,
   });
   options?.recordToolPrepStage?.("openclaw-tools:nodes-tool");
+  stages.mark("nodes-guard");
   const embedded = isEmbeddedMode();
   const explicitFactoryAllowlist = mergeFactoryPolicyList(
     resolvedConfig?.tools?.allow,
@@ -571,22 +617,21 @@ export function createOpenClawTools(
     ...collectPresentOpenClawTools([webSearchTool, webFetchTool, imageTool, pdfTool]),
   ];
   options?.recordToolPrepStage?.("openclaw-tools:core-tool-list");
+  stages.mark("core-tools");
   let allTools = tools;
   if (!options?.disablePluginTools) {
-    const existingToolNames = new Set<string>();
-    for (const tool of tools) {
-      existingToolNames.add(tool.name);
-    }
     allTools = [
       ...tools,
       ...resolveOpenClawPluginToolsForOptions({
         options,
         resolvedConfig,
-        existingToolNames,
+        existingToolNames: new Set(tools.map((tool) => tool.name)),
       }),
     ];
     options?.recordToolPrepStage?.("openclaw-tools:plugin-tools");
+    stages.mark("plugin-tools");
   }
+  stages.warnIfSlow();
 
   const hookAgentId = options?.requesterAgentIdOverride ?? sessionAgentId;
   const gatewayCallerIdentity =
