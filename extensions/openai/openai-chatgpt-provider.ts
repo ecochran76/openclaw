@@ -5,6 +5,7 @@ import type {
   ProviderAuthMethod,
   ProviderAuthResult,
   ProviderResolveDynamicModelContext,
+  ProviderResolveUsageAuthContext,
   ProviderRuntimeModel,
 } from "openclaw/plugin-sdk/plugin-entry";
 import { CODEX_CLI_PROFILE_ID, type OAuthCredential } from "openclaw/plugin-sdk/provider-auth";
@@ -602,6 +603,26 @@ function formatOpenAICodexApiKey(cred: OAuthCredential): string {
   });
 }
 
+function normalizeOpenAICodexUsageAuth(
+  auth: Awaited<ReturnType<ProviderResolveUsageAuthContext["resolveOAuthToken"]>>,
+): Awaited<ReturnType<ProviderResolveUsageAuthContext["resolveOAuthToken"]>> {
+  if (!auth) {
+    return auth;
+  }
+  try {
+    const parsed = JSON.parse(auth.token) as { token?: unknown; accountId?: unknown };
+    if (typeof parsed.token === "string" && parsed.token.trim()) {
+      return {
+        token: parsed.token,
+        accountId: readStringValue(parsed.accountId) ?? auth.accountId,
+      };
+    }
+  } catch {
+    // Plain OAuth tokens do not need transport-format unwrapping.
+  }
+  return auth;
+}
+
 export function buildOpenAICodexProviderHooks(): Pick<
   ProviderPlugin,
   | "resolveDynamicModel"
@@ -661,7 +682,7 @@ export function buildOpenAICodexProviderHooks(): Pick<
       }
       return normalized;
     },
-    resolveUsageAuth: async (ctx) => await ctx.resolveOAuthToken(),
+    resolveUsageAuth: async (ctx) => normalizeOpenAICodexUsageAuth(await ctx.resolveOAuthToken()),
     fetchUsageSnapshot: async (ctx) =>
       await fetchCodexUsage(ctx.token, ctx.accountId, ctx.timeoutMs, ctx.fetchFn),
     formatApiKey: (cred) =>

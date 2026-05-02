@@ -277,4 +277,23 @@ describe("OpenAI provider Codex transport hooks", () => {
       }),
     ).toBe(JSON.stringify({ token: "chatgpt-access-token", accountId: "acct-123" }));
   });
+
+  it("unwraps Codex transport auth before usage fetches", async () => {
+    const provider = buildOpenAIProvider();
+
+    await expect(
+      provider.resolveUsageAuth?.({
+        provider: "openai",
+        config: {},
+        env: {},
+        resolveApiKeyFromConfigAndStore: () => undefined,
+        resolveOAuthToken: async () => ({
+          token: JSON.stringify({ token: "codex-access-token", accountId: "acct-123" }),
+        }),
+      }),
+    ).resolves.toEqual({
+      token: "codex-access-token",
+      accountId: "acct-123",
+    });
+  });
 });
