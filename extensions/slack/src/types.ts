@@ -52,6 +52,7 @@ export type SlackMessageEvent = {
    */
   _ambiguousThreadReply?: boolean;
   __openclawPrePipelineAckStarted?: boolean;
+  __openclawPrePipelineTypingStarted?: boolean;
 };
 
 export type SlackAppMentionEvent = {

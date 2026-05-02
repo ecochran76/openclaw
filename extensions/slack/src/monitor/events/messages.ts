@@ -16,7 +16,11 @@ import type { ResolvedSlackAccount } from "../../accounts.js";
 import type { SlackAppMentionEvent, SlackMessageEvent } from "../../types.js";
 import { normalizeSlackChannelType } from "../channel-type.js";
 import type { SlackMonitorContext } from "../context.js";
-import { startPrePipelineAck, type SlackMessageHandler } from "../message-handler.js";
+import {
+  startPrePipelineAck,
+  startPrePipelineTypingReaction,
+  type SlackMessageHandler,
+} from "../message-handler.js";
 import type { SlackMessageChangedEvent } from "../types.js";
 import { resolveSlackMessageSubtypeHandler } from "./message-subtype-handlers.js";
 import { authorizeAndResolveSlackSystemEventContext } from "./system-event-context.js";
@@ -209,8 +213,10 @@ export function registerSlackMessageEvents(params: {
         return;
       }
 
-      startPrePipelineAck({ ctx, account, message, opts: { source: "message" } });
-      await handleSlackMessage(message, { source: "message" });
+      const opts = { source: "message" } as const;
+      startPrePipelineTypingReaction({ ctx, account, message, opts });
+      startPrePipelineAck({ ctx, account, message, opts });
+      await handleSlackMessage(message, opts);
     } catch (err) {
       ctx.runtime.error?.(danger(`slack handler failed: ${formatErrorMessage(err)}`));
     }
@@ -261,6 +267,7 @@ export function registerSlackMessageEvents(params: {
         source: "app_mention",
         wasMentioned: true,
       } as const;
+      startPrePipelineTypingReaction({ ctx, account, message, opts });
       startPrePipelineAck({ ctx, account, message, opts });
       await handleSlackMessage(message, opts);
     } catch (err) {

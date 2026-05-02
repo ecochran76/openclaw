@@ -58,7 +58,11 @@ function createContext(overrides?: {
   markMessageSeen?: (channel: string | undefined, ts: string | undefined) => boolean;
   releaseSeenMessage?: (channel: string | undefined, ts: string | undefined) => void;
   isChannelAllowed?: () => boolean;
+  channelsConfig?: Record<string, { enabled?: boolean; requireMention?: boolean }>;
+  defaultRequireMention?: boolean;
+  typingReaction?: string;
 }) {
+  const channelsConfig = overrides?.channelsConfig ?? {};
   return {
     cfg: {},
     accountId: "default",
@@ -69,6 +73,10 @@ function createContext(overrides?: {
     },
     runtime: {},
     ackReactionScope: "group-mentions",
+    typingReaction: overrides?.typingReaction ?? "",
+    channelsConfig,
+    channelsConfigKeys: Object.keys(channelsConfig),
+    defaultRequireMention: overrides?.defaultRequireMention ?? true,
     logger: {},
     isChannelAllowed: () => overrides?.isChannelAllowed?.() ?? true,
     markMessageSeen: (channel: string | undefined, ts: string | undefined) =>
@@ -82,6 +90,9 @@ function createHandlerWithTracker(overrides?: {
   markMessageSeen?: (channel: string | undefined, ts: string | undefined) => boolean;
   releaseSeenMessage?: (channel: string | undefined, ts: string | undefined) => void;
   isChannelAllowed?: () => boolean;
+  channelsConfig?: Record<string, { enabled?: boolean; requireMention?: boolean }>;
+  defaultRequireMention?: boolean;
+  typingReaction?: string;
 }) {
   const trackEvent = vi.fn();
   const handler = createSlackMessageHandler({
@@ -209,6 +220,64 @@ describe("createSlackMessageHandler", () => {
     expect(reactSlackMessageMock.mock.invocationCallOrder[0]).toBeLessThan(
       resolveThreadTsMock.mock.invocationCallOrder[0],
     );
+  });
+
+  it("starts a typing reaction for accepted non-mention channel messages before thread resolution", async () => {
+    const { handler } = createHandlerWithTracker({
+      channelsConfig: { C111: { enabled: true, requireMention: false } },
+      typingReaction: "hourglass_flowing_sand",
+    });
+
+    await handler(
+      {
+        type: "message",
+        channel: "C111",
+        channel_type: "channel",
+        user: "U111",
+        ts: "1709000000.000100",
+        text: "hello",
+      } as never,
+      { source: "message" },
+    );
+
+    expect(reactSlackMessageMock).toHaveBeenCalledWith(
+      "C111",
+      "1709000000.000100",
+      "hourglass_flowing_sand",
+      {
+        token: "xoxb-test",
+        client: {},
+      },
+    );
+    expect(reactSlackMessageMock).not.toHaveBeenCalledWith("C111", "1709000000.000100", "👀", {
+      token: "xoxb-test",
+      client: {},
+    });
+    expect(reactSlackMessageMock.mock.invocationCallOrder[0]).toBeLessThan(
+      resolveThreadTsMock.mock.invocationCallOrder[0],
+    );
+  });
+
+  it("does not start a typing reaction for unmentioned mention-required channel messages", async () => {
+    const { handler } = createHandlerWithTracker({
+      channelsConfig: { C111: { enabled: true, requireMention: true } },
+      typingReaction: "hourglass_flowing_sand",
+    });
+
+    await handler(
+      {
+        type: "message",
+        channel: "C111",
+        channel_type: "channel",
+        user: "U111",
+        ts: "1709000000.000100",
+        text: "ambient channel chatter",
+      } as never,
+      { source: "message" },
+    );
+
+    expect(reactSlackMessageMock).not.toHaveBeenCalled();
+    expect(resolveThreadTsMock).toHaveBeenCalledTimes(1);
   });
 
   it("does not pre-ack app mentions in disallowed channels", async () => {

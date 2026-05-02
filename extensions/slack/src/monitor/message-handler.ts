@@ -14,6 +14,7 @@ import type { ResolvedSlackAccount } from "../accounts.js";
 import { reactSlackMessage } from "../actions.js";
 import type { SlackSendIdentity } from "../send.js";
 import type { SlackMessageEvent } from "../types.js";
+import { resolveSlackChannelConfig } from "./channel-config.js";
 import { stripSlackMentionsForCommandDetection } from "./commands.js";
 import type { SlackMonitorContext } from "./context.js";
 import {
@@ -132,6 +133,113 @@ function shouldAttemptPrePipelineAck(params: {
   });
 }
 
+function isSlackDirectConversation(message: SlackMessageEvent): boolean {
+  return (
+    message.channel_type === "im" ||
+    message.channel_type === "mpim" ||
+    message.channel.startsWith("D")
+  );
+}
+
+function isSlackMessageAddressed(params: {
+  ctx: SlackMonitorContext;
+  message: SlackMessageEvent;
+  opts: { source: "message" | "app_mention"; wasMentioned?: boolean };
+}): boolean {
+  const { ctx, message, opts } = params;
+  if (opts.source === "app_mention" || opts.wasMentioned === true) {
+    return true;
+  }
+  return Boolean(ctx.botUserId) && typeof message.text === "string"
+    ? message.text.includes(`<@${ctx.botUserId}>`)
+    : false;
+}
+
+function shouldAttemptPrePipelineTypingReaction(params: {
+  ctx: SlackMonitorContext;
+  message: SlackMessageEvent;
+  opts: { source: "message" | "app_mention"; wasMentioned?: boolean };
+}): boolean {
+  const { ctx, message, opts } = params;
+  if (!message.channel || !message.ts || !ctx.typingReaction) {
+    return false;
+  }
+  if (!ctx.cfg || typeof ctx.isChannelAllowed !== "function") {
+    return false;
+  }
+  if (
+    !ctx.isChannelAllowed({
+      channelId: message.channel,
+      channelType: message.channel_type,
+    })
+  ) {
+    return false;
+  }
+  if (isSlackMessageAddressed({ ctx, message, opts })) {
+    return true;
+  }
+  if (isSlackDirectConversation(message)) {
+    return true;
+  }
+
+  const channelConfig = resolveSlackChannelConfig({
+    channelId: message.channel,
+    channels: ctx.channelsConfig,
+    channelKeys: ctx.channelsConfigKeys,
+    defaultRequireMention: ctx.defaultRequireMention,
+    allowNameMatching: ctx.allowNameMatching,
+  });
+  return channelConfig?.allowed === true && channelConfig.requireMention === false;
+}
+
+export function startPrePipelineTypingReaction(params: {
+  ctx: SlackMonitorContext;
+  account: ResolvedSlackAccount;
+  message: SlackMessageEvent;
+  opts: { source: "message" | "app_mention"; wasMentioned?: boolean };
+}): boolean {
+  const { ctx, account, message, opts } = params;
+  if (message.__openclawPrePipelineTypingStarted) {
+    return true;
+  }
+  if (!shouldAttemptPrePipelineTypingReaction({ ctx, message, opts })) {
+    return false;
+  }
+  const startedAt = Date.now();
+  void reactSlackMessage(message.channel, message.ts ?? "", ctx.typingReaction, {
+    token: ctx.botToken,
+    client: ctx.app.client,
+  })
+    .then(() => {
+      const elapsedMs = Date.now() - startedAt;
+      if (elapsedMs >= 1000) {
+        ctx.logger?.info?.(
+          {
+            accountId: account.accountId,
+            channel: message.channel,
+            ts: message.ts,
+            elapsedMs,
+            reaction: ctx.typingReaction,
+          },
+          "slack pre-pipeline typing reaction was slow",
+        );
+      }
+    })
+    .catch((err) => {
+      ctx.logger?.info?.(
+        {
+          accountId: account.accountId,
+          channel: message.channel,
+          ts: message.ts,
+          error: formatErrorMessage(err),
+        },
+        "slack pre-pipeline typing reaction failed",
+      );
+    });
+  message.__openclawPrePipelineTypingStarted = true;
+  return true;
+}
+
 export function startPrePipelineAck(params: {
   ctx: SlackMonitorContext;
   account: ResolvedSlackAccount;
@@ -157,6 +265,7 @@ export function startPrePipelineAck(params: {
   const reactions = [reaction];
   if (
     ctx.typingReaction &&
+    !message.__openclawPrePipelineTypingStarted &&
     toSlackReactionName(ctx.typingReaction) !== toSlackReactionName(reaction)
   ) {
     reactions.push(ctx.typingReaction);
@@ -423,6 +532,7 @@ export function createSlackMessageHandler(params: {
       }
     }
     trackEvent?.();
+    startPrePipelineTypingReaction({ ctx, account, message, opts });
     const prePipelineAckStarted = startPrePipelineAck({ ctx, account, message, opts });
     const resolvedMessage = await threadTsResolver.resolve({ message, source: opts.source });
     if (prePipelineAckStarted) {
