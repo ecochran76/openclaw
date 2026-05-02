@@ -206,7 +206,7 @@ export function startPrePipelineTypingReaction(params: {
     return false;
   }
   const startedAt = Date.now();
-  void reactSlackMessage(message.channel, message.ts ?? "", ctx.typingReaction, {
+  const typingPromise = reactSlackMessage(message.channel, message.ts ?? "", ctx.typingReaction, {
     token: ctx.botToken,
     client: ctx.app.client,
   })
@@ -224,6 +224,7 @@ export function startPrePipelineTypingReaction(params: {
           "slack pre-pipeline typing reaction was slow",
         );
       }
+      return true;
     })
     .catch((err) => {
       ctx.logger?.info?.(
@@ -235,8 +236,10 @@ export function startPrePipelineTypingReaction(params: {
         },
         "slack pre-pipeline typing reaction failed",
       );
+      return false;
     });
   message.__openclawPrePipelineTypingStarted = true;
+  message.__openclawPrePipelineTypingPromise = typingPromise;
   return true;
 }
 

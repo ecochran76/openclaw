@@ -654,7 +654,11 @@ export async function dispatchPreparedSlackMessage(prepared: PreparedSlackMessag
               threadTs: statusThreadTs,
               status: "is typing...",
             });
-            if (typingReaction && message.ts) {
+            if (
+              typingReaction &&
+              message.ts &&
+              message.__openclawPrePipelineTypingStarted !== true
+            ) {
               await reactSlackMessage(message.channel, message.ts, typingReaction, {
                 token: ctx.botToken,
                 client: ctx.app.client,
@@ -671,6 +675,7 @@ export async function dispatchPreparedSlackMessage(prepared: PreparedSlackMessag
               });
             }
             if (typingReaction && message.ts) {
+              await message.__openclawPrePipelineTypingPromise?.catch(() => false);
               await removeSlackReaction(message.channel, message.ts, typingReaction, {
                 token: ctx.botToken,
                 client: ctx.app.client,
