@@ -38,7 +38,6 @@ import { enqueueSystemEvent } from "openclaw/plugin-sdk/system-event-runtime";
 import { resolveSlackReplyToMode } from "../../account-reply-mode.js";
 import type { ResolvedSlackAccount } from "../../accounts.js";
 import { reactSlackMessage } from "../../actions.js";
-import { formatSlackError } from "../../errors.js";
 import { formatSlackFileReference } from "../../file-reference.js";
 import type { SlackSendIdentity } from "../../send.js";
 import { hasSlackThreadParticipationWithPersistence } from "../../sent-thread-cache.js";
@@ -1229,23 +1228,24 @@ export async function prepareSlackMessage(params: {
     Boolean(ackReactionMessageTs) &&
     cfg.messages?.statusReactions?.enabled !== false &&
     shouldSendAckReaction;
-  const ackReactionPromise =
-    !statusReactionsWillHandle && shouldSendAckReaction && ackReactionMessageTs && ackReactionValue
-      ? reactSlackMessage(message.channel, ackReactionMessageTs, ackReactionValue, {
-          token: ctx.botToken,
-          client: ctx.app.client,
-        }).then(
-          () => true,
-          (err: unknown) => {
-            logVerbose(
-              `slack react failed for channel ${message.channel}: ${formatSlackError(err)}`,
-            );
-            return false;
-          },
-        )
-      : statusReactionsWillHandle
-        ? Promise.resolve(true)
-        : null;
+  const shouldStartInitialReaction =
+    shouldSendAckReaction && Boolean(ackReactionMessageTs) && Boolean(ackReactionValue);
+  const ackReactionPromise = shouldStartInitialReaction
+    ? reactSlackMessage(message.channel, ackReactionMessageTs ?? "", ackReactionValue, {
+        token: ctx.botToken,
+        client: ctx.app.client,
+      }).then(
+        () => true,
+        (err) => {
+          const formattedError = formatErrorMessage(err);
+          if (statusReactionsWillHandle && formattedError.includes("already_reacted")) {
+            return true;
+          }
+        logVerbose(`slack react failed for channel ${message.channel}: ${formattedError}`);
+        return false;
+      },
+    )
+    : null;
 
   const roomLabel = channelName ? `#${channelName}` : `#${message.channel}`;
   const senderName = await resolveSenderName();

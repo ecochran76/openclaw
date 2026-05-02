@@ -786,6 +786,7 @@ describe("slack prepareSlackMessage inbound contract", () => {
   });
 
   it("primes Slack status reactions when channel replies are message-tool-only", async () => {
+    const reactionsAdd = vi.fn(async () => ({}));
     const slackCtx = createInboundSlackCtx({
       cfg: {
         messages: {
@@ -802,6 +803,11 @@ describe("slack prepareSlackMessage inbound contract", () => {
         },
       } as OpenClawConfig,
       replyToMode: "all",
+      appClient: {
+        reactions: {
+          add: reactionsAdd,
+        },
+      } as unknown as App["client"],
     });
     slackCtx.resolveUserName = async () => ({ name: "Alice" }) as any;
     slackCtx.resolveChannelName = async () => ({ name: "general", type: "channel" });
@@ -819,6 +825,11 @@ describe("slack prepareSlackMessage inbound contract", () => {
     expect(prepared?.ackReactionValue).toBe("eyes");
     expect(prepared.ackReactionPromise).toBeInstanceOf(Promise);
     expect(await prepared.ackReactionPromise).toBe(true);
+    expect(reactionsAdd).toHaveBeenCalledWith({
+      channel: "C123",
+      timestamp: "1.000",
+      name: "eyes",
+    });
   });
 
   it("keeps unmentioned room events quiet even when group replies are automatic", async () => {

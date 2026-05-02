@@ -710,12 +710,10 @@ describe("monitorSlackProvider tool results", () => {
     await runMentionGatedChannelMessageAndFlush();
 
     expect(sendMock).not.toHaveBeenCalled();
-    expect(reactMock).toHaveBeenCalledTimes(1);
-    expect(reactMock).toHaveBeenCalledWith({
-      channel: "C1",
-      timestamp: "456",
-      name: "eyes",
-    });
+    expect(reactionAddMock.mock.calls.map(([args]) => (args as { name: string }).name)).toEqual([
+      "👀",
+      "eyes",
+    ]);
   });
 
   it("keeps status reactions for mentioned message-tool-only channel turns", async () => {
@@ -759,7 +757,7 @@ describe("monitorSlackProvider tool results", () => {
 
     expect(sendMock).not.toHaveBeenCalled();
     expectReactionFlow({
-      startsWith: ["eyes", "x"],
+      startsWith: ["👀", "eyes"],
       includes: "x",
       endsWith: "x",
     });
