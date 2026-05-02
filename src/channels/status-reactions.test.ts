@@ -209,8 +209,7 @@ describe("createStatusReactionController", () => {
   it("should call setReaction with initialEmoji for setQueued immediately", async () => {
     const { calls, controller } = createEnabledController();
 
-    void controller.setQueued();
-    await vi.runAllTimersAsync();
+    await controller.setQueued();
 
     expectSetEmojiCall(calls, "👀");
   });

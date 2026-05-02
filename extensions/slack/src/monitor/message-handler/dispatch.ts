@@ -614,7 +614,7 @@ export async function dispatchPreparedSlackMessage(prepared: PreparedSlackMessag
   });
 
   if (statusReactionsEnabled) {
-    void statusReactions.setQueued();
+    await statusReactions.setQueued();
   }
 
   // Shared mutable ref for "replyToMode=first". Both tool + auto-reply flows

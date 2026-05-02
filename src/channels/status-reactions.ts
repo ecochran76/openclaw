@@ -316,7 +316,7 @@ export function createStatusReactionController(params: {
   function scheduleEmoji(
     emoji: string,
     options: { immediate?: boolean; skipStallReset?: boolean } = {},
-  ): void {
+  ): Promise<void> | void {
     if (!enabled || finished) {
       return;
     }
@@ -332,11 +332,16 @@ export function createStatusReactionController(params: {
     pendingEmoji = emoji;
     clearDebounceTimer();
 
+    if (!options.skipStallReset) {
+      resetStallTimers();
+    }
+
     if (options.immediate) {
-      void enqueue(async () => {
+      const immediatePromise = enqueue(async () => {
         await applyEmoji(emoji);
         pendingEmoji = "";
       });
+      return immediatePromise;
     } else {
       debounceTimer = setTimeout(() => {
         debounceTimer = null;
@@ -346,14 +351,10 @@ export function createStatusReactionController(params: {
         });
       }, timing.debounceMs);
     }
-
-    if (!options.skipStallReset) {
-      resetStallTimers();
-    }
   }
 
-  function setQueued(): void {
-    scheduleEmoji(emojis.queued, { immediate: true });
+  function setQueued(): Promise<void> | void {
+    return scheduleEmoji(emojis.queued, { immediate: true });
   }
 
   function setThinking(): void {
