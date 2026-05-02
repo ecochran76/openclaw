@@ -85,7 +85,6 @@ export function createWebSearchTool(options?: {
   if (isWebSearchDisabled(options?.config)) {
     return null;
   }
-
   return {
     label: "Web Search",
     name: "web_search",

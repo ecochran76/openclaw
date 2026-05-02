@@ -1,4 +1,5 @@
 // Resolves plugin root directories for bundled and installed plugins.
+import fs from "node:fs";
 import path from "node:path";
 import { normalizeStringEntries } from "@openclaw/normalization-core/string-normalization";
 import { resolveConfigDir, resolveUserPath } from "../utils.js";
@@ -38,9 +39,15 @@ export function resolvePluginCacheInputs(params: {
     workspaceDir: params.workspaceDir,
     env,
   });
+  const cacheRoots = {
+    ...roots,
+    // Missing workspace plugin roots cannot contribute plugins. Omitting them keeps
+    // agent workspaces without local plugins on the same runtime registry cache key.
+    workspace: roots.workspace && fs.existsSync(roots.workspace) ? roots.workspace : undefined,
+  };
   // Preserve caller order because load-path precedence follows input order.
   const loadPaths = normalizeStringEntries(
     (params.loadPaths ?? []).filter((entry): entry is string => typeof entry === "string"),
   ).map((entry) => resolveUserPath(entry, env));
-  return { roots, loadPaths };
+  return { roots: cacheRoots, loadPaths };
 }

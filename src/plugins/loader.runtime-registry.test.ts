@@ -99,6 +99,11 @@ function makeOpenClawDevSourceRoot(): string {
 describe("getCompatibleActivePluginRegistry", () => {
   it("reuses the active registry only when the load context cache key matches", () => {
     const registry = createEmptyPluginRegistry();
+    const tempRoot = fs.mkdtempSync(path.join(os.tmpdir(), "openclaw-loader-registry-"));
+    const workspaceA = path.join(tempRoot, "workspace-a");
+    const workspaceB = path.join(tempRoot, "workspace-b");
+    fs.mkdirSync(path.join(workspaceA, ".openclaw", "extensions"), { recursive: true });
+    fs.mkdirSync(path.join(workspaceB, ".openclaw", "extensions"), { recursive: true });
     const loadOptions = {
       config: {
         plugins: {
@@ -106,47 +111,51 @@ describe("getCompatibleActivePluginRegistry", () => {
           load: { paths: ["/tmp/demo.js"] },
         },
       },
-      workspaceDir: "/tmp/workspace-a",
+      workspaceDir: workspaceA,
       runtimeOptions: {
         allowGatewaySubagentBinding: true,
       },
     };
-    const { cacheKey } = testing.resolvePluginLoadCacheContext(loadOptions);
-    setActivePluginRegistry(registry, cacheKey, "gateway-bindable");
+    try {
+      const { cacheKey } = testing.resolvePluginLoadCacheContext(loadOptions);
+      setActivePluginRegistry(registry, cacheKey, "gateway-bindable");
 
-    expect(testing.getCompatibleActivePluginRegistry(loadOptions)).toBe(registry);
-    expect(
-      testing.getCompatibleActivePluginRegistry({
-        ...loadOptions,
-        workspaceDir: "/tmp/workspace-b",
-      }),
-    ).toBeUndefined();
-    expect(
-      testing.getCompatibleActivePluginRegistry({
-        ...loadOptions,
-        onlyPluginIds: ["demo"],
-      }),
-    ).toBeUndefined();
-    expect(
-      testing.getCompatibleActivePluginRegistry({
-        ...loadOptions,
-        onlyPluginIds: [],
-      }),
-    ).toBeUndefined();
-    expect(
-      testing.getCompatibleActivePluginRegistry({
-        ...loadOptions,
-        runtimeOptions: undefined,
-      }),
-    ).toBe(registry);
-    expect(
-      testing.getCompatibleActivePluginRegistry({
-        ...loadOptions,
-        runtimeOptions: {
-          subagent: {} as CreatePluginRuntimeOptions["subagent"],
-        },
-      }),
-    ).toBeUndefined();
+      expect(testing.getCompatibleActivePluginRegistry(loadOptions)).toBe(registry);
+      expect(
+        testing.getCompatibleActivePluginRegistry({
+          ...loadOptions,
+          workspaceDir: workspaceB,
+        }),
+      ).toBeUndefined();
+      expect(
+        testing.getCompatibleActivePluginRegistry({
+          ...loadOptions,
+          onlyPluginIds: ["demo"],
+        }),
+      ).toBeUndefined();
+      expect(
+        testing.getCompatibleActivePluginRegistry({
+          ...loadOptions,
+          onlyPluginIds: [],
+        }),
+      ).toBeUndefined();
+      expect(
+        testing.getCompatibleActivePluginRegistry({
+          ...loadOptions,
+          runtimeOptions: undefined,
+        }),
+      ).toBe(registry);
+      expect(
+        testing.getCompatibleActivePluginRegistry({
+          ...loadOptions,
+          runtimeOptions: {
+            subagent: {} as CreatePluginRuntimeOptions["subagent"],
+          },
+        }),
+      ).toBeUndefined();
+    } finally {
+      fs.rmSync(tempRoot, { recursive: true, force: true });
+    }
   });
 
   it("does not treat a default-mode active registry as compatible with gateway binding", () => {
@@ -225,6 +234,11 @@ describe("getCompatibleActivePluginRegistry", () => {
   it("does not reuse a wider registry for scoped loads when the load context changes", () => {
     const registry = createEmptyPluginRegistry();
     registry.plugins.push(createLoadedPluginRecord("demo"), createLoadedPluginRecord("other"));
+    const tempRoot = fs.mkdtempSync(path.join(os.tmpdir(), "openclaw-loader-registry-"));
+    const workspaceA = path.join(tempRoot, "workspace-a");
+    const workspaceB = path.join(tempRoot, "workspace-b");
+    fs.mkdirSync(path.join(workspaceA, ".openclaw", "extensions"), { recursive: true });
+    fs.mkdirSync(path.join(workspaceB, ".openclaw", "extensions"), { recursive: true });
     const loadOptions = {
       config: {
         plugins: {
@@ -232,39 +246,43 @@ describe("getCompatibleActivePluginRegistry", () => {
           load: { paths: ["/tmp/demo.js"] },
         },
       },
-      workspaceDir: "/tmp/workspace-a",
+      workspaceDir: workspaceA,
       runtimeOptions: {
         allowGatewaySubagentBinding: true,
       },
     };
-    const { cacheKey } = testing.resolvePluginLoadCacheContext(loadOptions);
-    setActivePluginRegistry(registry, cacheKey, "gateway-bindable");
+    try {
+      const { cacheKey } = testing.resolvePluginLoadCacheContext(loadOptions);
+      setActivePluginRegistry(registry, cacheKey, "gateway-bindable");
 
-    expect(
-      testing.getCompatibleActivePluginRegistry({
-        ...loadOptions,
-        workspaceDir: "/tmp/workspace-b",
-        onlyPluginIds: ["demo"],
-      }),
-    ).toBeUndefined();
-    expect(
-      testing.getCompatibleActivePluginRegistry({
-        ...loadOptions,
-        config: {
-          plugins: {
-            allow: ["demo"],
-            load: { paths: ["/tmp/changed.js"] },
+      expect(
+        testing.getCompatibleActivePluginRegistry({
+          ...loadOptions,
+          workspaceDir: workspaceB,
+          onlyPluginIds: ["demo"],
+        }),
+      ).toBeUndefined();
+      expect(
+        testing.getCompatibleActivePluginRegistry({
+          ...loadOptions,
+          config: {
+            plugins: {
+              allow: ["demo"],
+              load: { paths: ["/tmp/changed.js"] },
+            },
           },
-        },
-        onlyPluginIds: ["demo"],
-      }),
-    ).toBeUndefined();
-    expect(
-      testing.getCompatibleActivePluginRegistry({
-        ...loadOptions,
-        onlyPluginIds: ["missing"],
-      }),
-    ).toBeUndefined();
+          onlyPluginIds: ["demo"],
+        }),
+      ).toBeUndefined();
+      expect(
+        testing.getCompatibleActivePluginRegistry({
+          ...loadOptions,
+          onlyPluginIds: ["missing"],
+        }),
+      ).toBeUndefined();
+    } finally {
+      fs.rmSync(tempRoot, { recursive: true, force: true });
+    }
   });
 
   it("does not reuse a default-mode active registry for gateway-bindable tool discovery", () => {
