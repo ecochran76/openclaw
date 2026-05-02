@@ -63,6 +63,7 @@ function createContext(overrides?: {
     cfg: {},
     accountId: "default",
     botToken: "xoxb-test",
+    botUserId: "UOPENCLAW",
     app: {
       client: {},
     },
@@ -184,6 +185,30 @@ describe("createSlackMessageHandler", () => {
     );
     expect(resolveThreadTsMock).toHaveBeenCalledTimes(1);
     expect(enqueueMock).toHaveBeenCalledTimes(1);
+  });
+
+  it("starts an ack for message events that directly mention the bot", async () => {
+    const { handler } = createHandlerWithTracker();
+
+    await handler(
+      {
+        type: "message",
+        channel: "C111",
+        channel_type: "channel",
+        user: "U111",
+        ts: "1709000000.000100",
+        text: "<@UOPENCLAW> hello",
+      } as never,
+      { source: "message" },
+    );
+
+    expect(reactSlackMessageMock).toHaveBeenCalledWith("C111", "1709000000.000100", "👀", {
+      token: "xoxb-test",
+      client: {},
+    });
+    expect(reactSlackMessageMock.mock.invocationCallOrder[0]).toBeLessThan(
+      resolveThreadTsMock.mock.invocationCallOrder[0],
+    );
   });
 
   it("does not pre-ack app mentions in disallowed channels", async () => {

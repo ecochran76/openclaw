@@ -101,7 +101,11 @@ function shouldAttemptPrePipelineAck(params: {
   if (!message.channel || !message.ts) {
     return false;
   }
-  if (opts.source !== "app_mention" && opts.wasMentioned !== true) {
+  const textMentionsBot =
+    Boolean(ctx.botUserId) && typeof message.text === "string"
+      ? message.text.includes(`<@${ctx.botUserId}>`)
+      : false;
+  if (opts.source !== "app_mention" && opts.wasMentioned !== true && !textMentionsBot) {
     return false;
   }
   const scope = ctx.ackReactionScope?.trim().toLowerCase() ?? "";
@@ -132,20 +136,36 @@ function startPrePipelineAck(params: {
   if (!reaction) {
     return;
   }
+  const startedAt = Date.now();
   void reactSlackMessage(message.channel, message.ts ?? "", reaction, {
     token: ctx.botToken,
     client: ctx.app.client,
-  }).catch((err) => {
-    ctx.logger?.debug?.(
-      {
-        accountId: account.accountId,
-        channel: message.channel,
-        ts: message.ts,
-        error: formatErrorMessage(err),
-      },
-      "slack pre-pipeline ack failed",
-    );
-  });
+  })
+    .then(() => {
+      const elapsedMs = Date.now() - startedAt;
+      if (elapsedMs >= 1000) {
+        ctx.logger?.info?.(
+          {
+            accountId: account.accountId,
+            channel: message.channel,
+            ts: message.ts,
+            elapsedMs,
+          },
+          "slack pre-pipeline ack was slow",
+        );
+      }
+    })
+    .catch((err) => {
+      ctx.logger?.info?.(
+        {
+          accountId: account.accountId,
+          channel: message.channel,
+          ts: message.ts,
+          error: formatErrorMessage(err),
+        },
+        "slack pre-pipeline ack failed",
+      );
+    });
 }
 
 export function createSlackMessageHandler(params: {
