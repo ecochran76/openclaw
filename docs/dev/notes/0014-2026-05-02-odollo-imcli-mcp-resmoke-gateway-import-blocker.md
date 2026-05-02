@@ -1,6 +1,6 @@
 # 0014 - 2026-05-02 - Odollo imcli MCP Re-Smoke And Gateway Import Blocker
 
-State: OPEN
+State: RESOLVED
 Created: 2026-05-02
 Reviewed: 2026-05-02
 
@@ -157,13 +157,61 @@ Config observations from the same review:
 - Treat `imcli` MCP as fixed.
 - Treat the original live OpenClaw global-package import/runtime readiness
   blocker as stale unless it reappears in a fresh smoke.
-- Treat live OpenClaw MCP tool exposure for `odollo-soylei` as still open.
+- Treat live OpenClaw MCP tool exposure for `odollo-soylei` as fixed by local
+  runtime config as of the 2026-05-02 follow-up below.
 - The remaining failure looks like bundle MCP activation/materialization or MCP
   handshake timing in OpenClaw, not an Odollo workflow issue and not an `imcli`
   service/protocol issue.
 - The gateway can become healthy enough for `openclaw health` and Slack startup
   while still failing to expose a configured MCP server's tools to a target
   agent.
+
+## Resolution Update - 2026-05-02
+
+Root cause was service-environment Node skew, not `imcli` protocol handling or
+OpenClaw bundle MCP policy.
+
+The user systemd gateway service starts OpenClaw with `/usr/bin/node`, but the
+gateway service `PATH` also caused the `/home/ecochran76/.local/share/pnpm/imcli`
+shim to resolve `node` as `/usr/bin/node` v25.8.0. `imcli`'s local
+`better-sqlite3` native module was built for Node ABI 137, while Node v25.8.0
+requires ABI 141, so the MCP child exited immediately. OpenClaw surfaced that as:
+
+```text
+bundle-mcp: failed to start server "imcli" ... McpError: MCP error -32000: Connection closed
+```
+
+Reproducing the configured launch with the gateway service `PATH` produced:
+
+```text
+better_sqlite3.node was compiled against a different Node.js version using
+NODE_MODULE_VERSION 137. This version of Node.js requires NODE_MODULE_VERSION 141.
+```
+
+The local runtime fix was to pin `mcp.servers.imcli.env.PATH` in
+`~/.openclaw/openclaw.json` so the `imcli` shim resolves Node from
+`/home/ecochran76/.nvm/versions/node/v24.13.0/bin` before `/usr/bin`.
+
+Validation after restart:
+
+```text
+openclaw config validate
+openclaw gateway restart
+openclaw gateway status --deep --require-rpc
+openclaw agent --agent odollo-soylei --session-key agent:odollo-soylei:imcli-smoke-fixed ...
+```
+
+The live agent smoke completed without fallback and reported:
+
+```text
+IMCLI_MCP_OK account keys: google-messages-main, sms-primary, whatsapp-on-demand-test, whatsapp-primary
+toolSummary: imcli__list_accounts, failures: 0
+```
+
+Residual product hardening opportunity: OpenClaw should expose child stderr for
+stdio MCP startup failures in operator diagnostics. The runtime behavior was
+correct to drop the failing MCP server, but `Connection closed` hid the native
+module ABI mismatch until the configured child launch was reproduced manually.
 
 ## Recommended Fix Direction
 
