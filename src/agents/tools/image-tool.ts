@@ -46,6 +46,7 @@ import {
   resolveBundledStaticCatalogModel,
 } from "../embedded-agent-runner/model.static-catalog.js";
 import { isMinimaxVlmProvider } from "../minimax-vlm.js";
+import { ToolInputError } from "./common.js";
 import {
   resolveImageFallbackCandidates,
   resolveImageFallbackDefaultProvider,
@@ -781,19 +782,7 @@ export function createImageTool(options?: {
         imageModelConfig: explicit,
       })
     : null;
-  const shouldResolveAutoImageModel =
-    !explicitImageModelConfig && !options?.deferAutoModelResolution;
-  const resolvedImageModelConfig = shouldResolveAutoImageModel
-    ? resolveImageModelConfigForTool({
-        cfg: options?.config,
-        agentDir,
-        workspaceDir: options?.workspaceDir,
-        authStore: options?.authProfileStore,
-      })
-    : explicitImageModelConfig;
-  if (!resolvedImageModelConfig && !options?.deferAutoModelResolution) {
-    return null;
-  }
+  const resolvedImageModelConfig = explicitImageModelConfig;
   const remoteMediaSsrfPolicy = resolveRemoteMediaSsrfPolicy(options?.config);
 
   // If model has native vision, images in the prompt are auto-injected

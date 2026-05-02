@@ -21,7 +21,10 @@ import type { Model } from "../../llm/types.js";
 import { resolveChannelInboundAttachmentRootsForChannel } from "../../media/channel-inbound-roots.js";
 import { getDefaultLocalRoots } from "../../media/local-media-access.js";
 import { readSnakeCaseParamRaw } from "../../param-key.js";
-import { loadCapabilityManifestSnapshot } from "../../plugins/capability-provider-runtime.js";
+import {
+  loadCapabilityManifestSnapshot,
+  resolveBundledCapabilityProviderIds,
+} from "../../plugins/capability-provider-runtime.js";
 import { listAvailableManifestContractValues } from "../../plugins/manifest-contract-eligibility.js";
 import type { AuthProfileStore } from "../auth-profiles/types.js";
 import { normalizeModelRef } from "../model-selection.js";
@@ -32,10 +35,7 @@ import {
   readStringParam,
 } from "./common.js";
 import type { ImageModelConfig } from "./image-tool.helpers.js";
-import {
-  getCurrentCapabilityMetadataSnapshot,
-  hasSnapshotCapabilityAvailability,
-} from "./manifest-capability-availability.js";
+import { getCurrentCapabilityMetadataSnapshot } from "./manifest-capability-availability.js";
 import {
   buildToolModelConfigFromCandidates,
   coerceToolModelConfig,
@@ -384,18 +384,12 @@ export function hasGenerationToolAvailability(params: {
   if (hasToolModelConfig(coerceToolModelConfig(params.modelConfig))) {
     return true;
   }
-  const providers = typeof params.providers === "function" ? params.providers() : params.providers;
+  if (typeof params.providers === "function") {
+    return true;
+  }
+  const providers = params.providers;
   if (providers) {
-    return providers.some((provider) =>
-      isCapabilityProviderConfigured({
-        providers,
-        provider,
-        cfg: params.cfg,
-        workspaceDir: params.workspaceDir,
-        agentDir: params.agentDir,
-        authStore: params.authStore,
-      }),
-    );
+    return providers.length > 0;
   }
   const snapshot =
     getCurrentCapabilityMetadataSnapshot({
@@ -407,27 +401,19 @@ export function hasGenerationToolAvailability(params: {
       workspaceDir: params.workspaceDir,
     });
   if (
-    hasSnapshotCapabilityAvailability({
+    listAvailableManifestContractValues({
       snapshot,
-      key: params.providerKey,
+      contract: params.providerKey,
       config: params.cfg,
-      authStore: params.authStore,
-    })
+    }).length > 0
   ) {
     return true;
   }
-  return listAvailableManifestContractValues({
-    snapshot,
-    contract: params.providerKey,
-    config: params.cfg,
-  }).some((providerId) =>
-    hasProviderAuthForTool({
-      provider: providerId,
+  return (
+    resolveBundledCapabilityProviderIds({
+      key: params.providerKey,
       cfg: params.cfg,
-      workspaceDir: params.workspaceDir,
-      agentDir: params.agentDir,
-      authStore: params.authStore,
-    }),
+    }).length > 0
   );
 }
 

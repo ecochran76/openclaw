@@ -240,6 +240,11 @@ describe("createMusicGenerateTool", () => {
     ).toBeNull();
   });
 
+  it("registers and defers provider discovery when no music-generation config is available", () => {
+    vi.spyOn(musicGenerationRuntime, "listRuntimeMusicGenerationProviders").mockReturnValue([]);
+    expect(createMusicGenerateTool({ config: asConfig({}) })).not.toBeNull();
+  });
+
   it("registers when music-generation config is present", () => {
     expectMusicGenerateTool(
       createMusicGenerateTool({

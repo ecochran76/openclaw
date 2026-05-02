@@ -295,20 +295,14 @@ export function createPdfTool(options?: {
     return null;
   }
 
-  const shouldDeferAutoModelResolution =
-    options?.deferAutoModelResolution === true && !hasExplicitModelConfig;
-  const registrationPdfModelConfig = shouldDeferAutoModelResolution
-    ? null
-    : resolvePdfModelConfigForTool({
+  const registrationPdfModelConfig = hasExplicitModelConfig
+    ? resolvePdfModelConfigForTool({
         cfg: options?.config,
         agentDir,
         workspaceDir: options?.workspaceDir,
         authStore: options?.authProfileStore,
-      });
-  if (!registrationPdfModelConfig && !shouldDeferAutoModelResolution) {
-    return null;
-  }
-
+      })
+    : null;
   const maxBytesMbDefault = (
     options?.config?.agents?.defaults as Record<string, unknown> | undefined
   )?.pdfMaxBytesMb;

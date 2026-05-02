@@ -343,21 +343,27 @@ describe("createVideoGenerateTool", () => {
     vi.unstubAllEnvs();
   });
 
-  it("returns null when no video-generation config or auth-backed provider is available", () => {
+  it("registers and defers provider discovery when no video-generation config is available", () => {
     vi.spyOn(videoGenerationRuntime, "listRuntimeVideoGenerationProviders").mockReturnValue([]);
 
-    expect(emptyConfigTool).toBeNull();
+    expect(emptyConfigTool).not.toBeNull();
   });
 
-  it("treats legacy OpenAI-Codex auth profiles as canonical OpenAI video auth", () => {
+  it("does not treat legacy OpenAI-Codex auth profiles as canonical OpenAI video auth", () => {
     vi.spyOn(videoGenerationRuntime, "listRuntimeVideoGenerationProviders").mockReturnValue([]);
 
-    expectVideoGenerateTool(
+    expect(
+      resolveVideoGenerationModelConfigForTool({
+        cfg: asConfig({}),
+        authStore: createAuthStore(["openai-codex"]),
+      }),
+    ).toBeNull();
+    expect(
       createVideoGenerateTool({
         config: asConfig({}),
         authProfileStore: createAuthStore(["openai"]),
       }),
-    );
+    ).not.toBeNull();
   });
 
   it("registers when video-generation config is present", () => {

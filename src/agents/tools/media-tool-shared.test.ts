@@ -243,7 +243,7 @@ describe("hasGenerationToolAvailability", () => {
     ).toBe(true);
   });
 
-  it("omits generation tools when runtime providers are not configured", () => {
+  it("keeps generation tools registered when runtime providers are present but not ready", () => {
     expect(
       hasGenerationToolAvailability({
         providerKey: "imageGenerationProviders",
@@ -255,7 +255,7 @@ describe("hasGenerationToolAvailability", () => {
           },
         ],
       }),
-    ).toBe(false);
+    ).toBe(true);
   });
 
   it("keeps explicit model config sufficient for generation tool registration", () => {
@@ -288,5 +288,17 @@ describe("hasGenerationToolAvailability", () => {
         providers: [{ id: "local-image", defaultModel: "workflow" }],
       }),
     ).toBe(true);
+  });
+
+  it("does not invoke lazy provider callbacks during tool registration", () => {
+    const loadProviders = vi.fn(() => []);
+
+    expect(
+      hasGenerationToolAvailability({
+        providerKey: "imageGenerationProviders",
+        providers: loadProviders,
+      }),
+    ).toBe(true);
+    expect(loadProviders).not.toHaveBeenCalled();
   });
 });

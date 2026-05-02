@@ -342,9 +342,9 @@ describe("createImageGenerateTool", () => {
     vi.unstubAllEnvs();
   });
 
-  it("returns null when no image-generation model can be inferred", () => {
+  it("registers and defers provider discovery when no image-generation model can be inferred", () => {
     stubImageGenerationProviders();
-    expect(createImageGenerateTool({ config: {} })).toBeNull();
+    expect(createImageGenerateTool({ config: {} })).not.toBeNull();
   });
 
   it("tells agents how to request transparent OpenAI backgrounds", () => {

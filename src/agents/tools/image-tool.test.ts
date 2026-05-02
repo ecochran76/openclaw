@@ -1040,10 +1040,17 @@ describe("image tool implicit imageModel config", () => {
     },
   ];
 
-  it("stays disabled without auth when no pairing is possible", async () => {
+  it("registers cheaply but defers missing auth failure until execution", async () => {
     await withTempAgentDir(async (agentDir) => {
       expect(resolveImageModelConfigForTool({ cfg: openAiPrimaryCfg, agentDir })).toBeNull();
-      expect(createImageTool({ config: openAiPrimaryCfg, agentDir })).toBeNull();
+      const tool = createImageTool({ config: openAiPrimaryCfg, agentDir });
+      expect(tool).not.toBeNull();
+      await expect(
+        tool?.execute("tool-call-id", {
+          prompt: "describe",
+          image: "data:image/png;base64,iVBORw0KGgo=",
+        }),
+      ).rejects.toThrow("No image model");
     });
   });
 
@@ -3183,10 +3190,7 @@ describe("image compression policy", () => {
       }),
     ).resolves.toEqual({
       imageCount: 1,
-      models: [
-        { maxSidePx: 2576, preferredSidePx: 2576, tokenMode: "provider" },
-        { maxSidePx: 1568, preferredSidePx: 1568, tokenMode: "provider" },
-      ],
+      models: [{}, {}],
     });
   });
 
@@ -3272,9 +3276,7 @@ describe("image compression policy", () => {
         }),
       ).resolves.toEqual({
         imageCount: 1,
-        models: [
-          { maxBytes: 1_000_000, maxSidePx: 2576, preferredSidePx: 2576, tokenMode: "provider" },
-        ],
+        models: [{ maxBytes: 1_000_000 }],
       });
     } finally {
       testing.setProviderDepsForTest();
