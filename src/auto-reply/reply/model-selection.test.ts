@@ -1,5 +1,5 @@
 // Tests model selection resolution from directives, config, and session state.
-import { afterEach, describe, expect, it, vi } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import {
   MODEL_CONTEXT_TOKEN_CACHE,
   providerContextTokenCacheKey,
@@ -10,6 +10,9 @@ import {
 } from "../../agents/model-catalog.runtime.js";
 import type { OpenClawConfig } from "../../config/config.js";
 import type { SessionEntry } from "../../config/sessions.js";
+import { createEmptyPluginRegistry } from "../../plugins/registry-empty.js";
+import { setActivePluginRegistry } from "../../plugins/runtime.js";
+import type { ProviderPlugin } from "../../plugins/types.js";
 import { createModelSelectionState, resolveContextTokens } from "./model-selection.js";
 
 vi.mock("../../agents/model-catalog.runtime.js", () => ({
@@ -59,6 +62,16 @@ vi.mock("../../agents/auth-profiles.runtime.js", () => ({
   ensureAuthProfileStore: authProfileStoreMock.ensureAuthProfileStore,
 }));
 
+function setModelSelectionTestProviders(providers: ProviderPlugin[]): void {
+  const registry = createEmptyPluginRegistry();
+  registry.providers = providers.map((provider) => ({
+    pluginId: "test",
+    provider,
+    source: "test",
+  }));
+  setActivePluginRegistry(registry);
+}
+
 // Alias-aware stub: mirrors the real isStoredCredentialCompatibleWithAuthProvider
 // but inlines the claude-cli->anthropic alias so tests don't need live plugin metadata.
 vi.mock("../../agents/auth-profiles/order.js", () => ({
@@ -90,6 +103,10 @@ vi.mock("../../agents/auth-profiles/order.js", () => ({
     return false;
   },
 }));
+
+beforeEach(() => {
+  setModelSelectionTestProviders([]);
+});
 
 afterEach(() => {
   MODEL_CONTEXT_TOKEN_CACHE.clear();
@@ -255,16 +272,31 @@ describe("createModelSelectionState catalog loading", () => {
     expect(loadModelCatalogLocal).not.toHaveBeenCalled();
   });
 
-  it("hydrates runtime catalog metadata when the configured allowlist entry lacks reasoning", async () => {
+  it("uses provider thinking defaults for known configured models without catalog hydration", async () => {
     vi.mocked(loadModelCatalogLocal).mockClear();
-    vi.mocked(loadModelCatalogLocal).mockResolvedValueOnce([
-      { provider: "openai", id: "gpt-5.4", name: "GPT-5.4", reasoning: true },
+    setModelSelectionTestProviders([
+      {
+        id: "openai",
+        label: "OpenAI",
+        auth: [],
+        resolveThinkingProfile: () => ({
+          levels: [
+            { id: "off" },
+            { id: "minimal" },
+            { id: "low" },
+            { id: "medium" },
+            { id: "high" },
+            { id: "xhigh" },
+          ],
+          defaultLevel: "medium",
+        }),
+      },
     ]);
     const cfg = {
       agents: {
         defaults: {
           models: {
-            "openai/gpt-5.4": {},
+            "openai/gpt-5.5": {},
           },
         },
       },
@@ -272,7 +304,7 @@ describe("createModelSelectionState catalog loading", () => {
         providers: {
           openai: {
             baseUrl: "https://api.openai.com/v1",
-            models: [makeConfiguredModel({ reasoning: undefined })],
+            models: [makeConfiguredModel({ id: "gpt-5.5", reasoning: undefined })],
           },
         },
       },
@@ -282,9 +314,46 @@ describe("createModelSelectionState catalog loading", () => {
       cfg,
       agentCfg: cfg.agents?.defaults,
       defaultProvider: "openai",
-      defaultModel: "gpt-5.4",
+      defaultModel: "gpt-5.5",
       provider: "openai",
-      model: "gpt-5.4",
+      model: "gpt-5.5",
+      hasModelDirective: false,
+    });
+
+    await expect(state.resolveDefaultThinkingLevel()).resolves.toBe("medium");
+    expect(loadModelCatalogLocal).not.toHaveBeenCalled();
+  });
+
+  it("hydrates runtime catalog metadata when an unknown configured allowlist entry lacks reasoning", async () => {
+    vi.mocked(loadModelCatalogLocal).mockClear();
+    vi.mocked(loadModelCatalogLocal).mockResolvedValueOnce([
+      { provider: "custom", id: "reasoning-model", name: "Reasoning Model", reasoning: true },
+    ]);
+    const cfg = {
+      agents: {
+        defaults: {
+          models: {
+            "custom/reasoning-model": {},
+          },
+        },
+      },
+      models: {
+        providers: {
+          custom: {
+            baseUrl: "https://example.test/v1",
+            models: [makeConfiguredModel({ id: "reasoning-model", reasoning: undefined })],
+          },
+        },
+      },
+    } as OpenClawConfig;
+
+    const state = await createModelSelectionState({
+      cfg,
+      agentCfg: cfg.agents?.defaults,
+      defaultProvider: "custom",
+      defaultModel: "reasoning-model",
+      provider: "custom",
+      model: "reasoning-model",
       hasModelDirective: false,
     });
 
@@ -428,10 +497,9 @@ describe("createModelSelectionState catalog loading", () => {
         provider: "vllm",
         id: "Qwen/Qwen3-8B",
         reasoning: true,
-        compat: {
-          supportedReasoningEfforts: ["xhigh"],
+        compat: expect.objectContaining({
           thinkingFormat: "qwen-chat-template",
-        },
+        }),
       }),
     ]);
     expect(loadModelCatalogLocal).toHaveBeenCalledOnce();

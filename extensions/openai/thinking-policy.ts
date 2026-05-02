@@ -39,6 +39,9 @@ function buildOpenAIThinkingProfile(params: {
   modelId: string;
   xhighModelIds: readonly string[];
 }): ProviderThinkingProfile {
+  const defaultLevel = matchesExactOrPrefix(params.modelId, params.xhighModelIds)
+    ? ("medium" as const)
+    : undefined;
   return {
     levels: [
       ...OPENAI_THINKING_BASE_LEVELS,
@@ -46,6 +49,7 @@ function buildOpenAIThinkingProfile(params: {
         ? [{ id: "xhigh" as const }]
         : []),
     ],
+    defaultLevel,
   };
 }
 

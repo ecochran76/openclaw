@@ -546,6 +546,15 @@ export async function createModelSelectionState(params: {
       defaultThinkingLevel = configuredThinkingDefault;
       return defaultThinkingLevel;
     }
+    const resolvedWithoutCatalog = resolveThinkingDefault({
+      cfg,
+      provider,
+      model,
+    });
+    if (resolvedWithoutCatalog !== "off") {
+      defaultThinkingLevel = resolvedWithoutCatalog;
+      return defaultThinkingLevel;
+    }
     const catalogForThinking = await resolveThinkingCatalog();
     const resolved = resolveThinkingDefault({
       cfg,

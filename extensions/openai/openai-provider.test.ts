@@ -1048,14 +1048,12 @@ describe("buildOpenAIProvider", () => {
   it("keeps chat-latest and gpt-5.5 out of synthetic catalog metadata", () => {
     const provider = buildOpenAIProvider();
 
-    expect(
-      provider
-        .resolveThinkingProfile?.({
-          provider: "openai",
-          modelId: "gpt-5.5",
-        } as never)
-        ?.levels.map((level) => level.id),
-    ).toContain("xhigh");
+    const thinkingProfile = provider.resolveThinkingProfile?.({
+      provider: "openai",
+      modelId: "gpt-5.5",
+    } as never);
+    expect(thinkingProfile?.levels.some((level) => level.id === "xhigh")).toBe(true);
+    expect(thinkingProfile?.defaultLevel).toBe("medium");
 
     const entries = provider.augmentModelCatalog?.({
       env: process.env,
