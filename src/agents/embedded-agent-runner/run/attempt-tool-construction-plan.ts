@@ -2,9 +2,11 @@
  * Plans which core, bundle MCP, and bundle LSP tools an attempt should build.
  */
 import type { OpenClawConfig } from "../../../config/types.openclaw.js";
+import { setPluginToolMeta } from "../../../plugins/tools.js";
 import { TOOL_NAME_SEPARATOR } from "../../agent-bundle-mcp-names.js";
 import type { OpenClawCodingToolConstructionPlan } from "../../agent-tools.js";
 import { resolveEffectiveToolPolicy } from "../../agent-tools.policy.js";
+import type { AnyAgentTool } from "../../agent-tools.types.js";
 import { isToolAllowedByPolicyName } from "../../tool-policy-match.js";
 import {
   buildPluginToolGroups,
@@ -13,6 +15,7 @@ import {
   normalizeToolList,
   normalizeToolName,
 } from "../../tool-policy.js";
+import { applyFinalEffectiveToolPolicy } from "../effective-tool-policy.js";
 
 const BASE_CODING_TOOL_FACTORY_NAMES = new Set(["edit", "read", "write"]);
 
@@ -83,26 +86,33 @@ function isPluginGroupAllowlistName(normalized: string): boolean {
   return normalized === "group:plugins";
 }
 
-function isBundleMcpDeniedByEffectivePolicy(params: {
+function selectBundleMcpPolicyProbeName(params: {
+  toolsAllow?: string[];
   config?: OpenClawConfig;
   sessionKey?: string;
   agentId?: string;
   modelProvider?: string;
   modelId?: string;
-}): boolean {
-  const { globalPolicy, globalProviderPolicy, agentPolicy, agentProviderPolicy } =
-    resolveEffectiveToolPolicy({
-      config: params.config,
-      sessionKey: params.sessionKey,
-      agentId: params.agentId,
-      modelProvider: params.modelProvider,
-      modelId: params.modelId,
-    });
-  return [globalPolicy, globalProviderPolicy, agentPolicy, agentProviderPolicy].some((policy) =>
-    (policy?.deny ?? [])
-      .map((entry) => normalizeToolName(entry))
-      .some((entry) => entry === "bundle-mcp" || entry === "group:plugins"),
-  );
+}): string | undefined {
+  const explicitPolicy = resolveEffectiveToolPolicy({
+    config: params.config,
+    sessionKey: params.sessionKey,
+    agentId: params.agentId,
+    modelProvider: params.modelProvider,
+    modelId: params.modelId,
+  });
+  const candidates = [
+    ...(params.toolsAllow ?? []),
+    ...(explicitPolicy.profileAlsoAllow ?? []),
+    ...(explicitPolicy.providerProfileAlsoAllow ?? []),
+    ...(explicitPolicy.globalPolicy?.allow ?? []),
+    ...(explicitPolicy.globalProviderPolicy?.allow ?? []),
+    ...(explicitPolicy.agentPolicy?.allow ?? []),
+    ...(explicitPolicy.agentProviderPolicy?.allow ?? []),
+  ];
+  return candidates
+    .map((toolName) => normalizeToolName(toolName))
+    .find((toolName) => toolName.includes(TOOL_NAME_SEPARATOR));
 }
 
 function hasWildcardToolAllowlist(toolsAllow: string[]): boolean {
@@ -291,12 +301,38 @@ export function shouldCreateBundleMcpRuntimeForAttempt(params: {
   modelProvider?: string;
   modelId?: string;
 }): boolean {
-  if (isBundleMcpDeniedByEffectivePolicy(params)) {
+  if (!params.toolsEnabled || params.disableTools === true) {
     return false;
   }
-  return shouldCreateBundleRuntimeForAttempt(params, (normalized) => {
+  if (!shouldCreateBundleRuntimeForAttempt(params, (normalized) => {
     return isBundleMcpAllowlistName(normalized) || isPluginGroupAllowlistName(normalized);
-  });
+  })) {
+    return false;
+  }
+  const probeName =
+    selectBundleMcpPolicyProbeName(params) ?? `${TOOL_NAME_SEPARATOR}bundle_mcp_policy_probe`;
+  const sentinelTool = {
+    name: probeName,
+    label: "Bundle MCP policy probe",
+    description: "Internal bundle MCP policy probe.",
+    parameters: { type: "object", properties: {} },
+    execute: async () => ({
+      content: [{ type: "text", text: "bundle-mcp-policy-probe" }],
+      details: undefined,
+    }),
+  } as unknown as AnyAgentTool;
+  setPluginToolMeta(sentinelTool, { pluginId: "bundle-mcp", optional: false });
+  return (
+    applyFinalEffectiveToolPolicy({
+      bundledTools: [sentinelTool],
+      config: params.config,
+      sessionKey: params.sessionKey,
+      agentId: params.agentId,
+      modelProvider: params.modelProvider,
+      modelId: params.modelId,
+      warn: () => {},
+    }).length > 0
+  );
 }
 
 /**

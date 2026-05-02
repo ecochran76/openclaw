@@ -719,6 +719,43 @@ function removeTrailingMidTurnPrecheckAssistantError(params: {
   }
 }
 
+const TURN_STARTUP_PHASE_WARN_MS = 2_000;
+
+function createAttemptStartupPhaseLogger(params: {
+  runId: string;
+  sessionId: string;
+  sessionKey?: string;
+  agentId?: string;
+}) {
+  const start = performance.now();
+  let previous = start;
+  return (phase: string, details?: Record<string, string | number | boolean | undefined>) => {
+    const now = performance.now();
+    const deltaMs = Math.round(now - previous);
+    const totalMs = Math.round(now - start);
+    previous = now;
+    const enabled = process.env.OPENCLAW_TURN_STARTUP_TIMING === "1";
+    if (!enabled && deltaMs < TURN_STARTUP_PHASE_WARN_MS) {
+      return;
+    }
+    const detailText = Object.entries(details ?? {})
+      .filter((entry): entry is [string, string | number | boolean] => entry[1] !== undefined)
+      .map(([key, value]) => `${key}=${String(value)}`)
+      .join(" ");
+    const message =
+      `[turn-startup] phase=${phase} deltaMs=${deltaMs} totalMs=${totalMs}` +
+      ` runId=${params.runId} sessionId=${params.sessionId}` +
+      (params.sessionKey ? ` sessionKey=${params.sessionKey}` : "") +
+      (params.agentId ? ` agentId=${params.agentId}` : "") +
+      (detailText ? ` ${detailText}` : "");
+    if (deltaMs >= TURN_STARTUP_PHASE_WARN_MS) {
+      log.warn(message);
+    } else {
+      log.debug(message);
+    }
+  };
+}
+
 function collectAttemptExplicitToolAllowlistSources(params: {
   config?: EmbeddedRunAttemptParams["config"];
   sessionKey?: string;

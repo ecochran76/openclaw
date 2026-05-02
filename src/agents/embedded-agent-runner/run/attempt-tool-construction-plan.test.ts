@@ -459,6 +459,48 @@ describe("shouldCreateBundleMcpRuntimeForAttempt", () => {
       }),
     ).toBe(false);
   });
+
+  it("creates bundle MCP for specific MCP tools added through profile alsoAllow", () => {
+    expect(
+      shouldCreateBundleMcpRuntimeForAttempt({
+        toolsEnabled: true,
+        agentId: "graphiti",
+        config: {
+          agents: {
+            list: [
+              {
+                id: "graphiti",
+                tools: { profile: "minimal", alsoAllow: ["graphiti__get_status"] },
+              },
+            ],
+          },
+        },
+      }),
+    ).toBe(true);
+  });
+
+  it("still skips specific MCP tools when bundle MCP is denied", () => {
+    expect(
+      shouldCreateBundleMcpRuntimeForAttempt({
+        toolsEnabled: true,
+        agentId: "graphiti",
+        config: {
+          agents: {
+            list: [
+              {
+                id: "graphiti",
+                tools: {
+                  profile: "minimal",
+                  alsoAllow: ["graphiti__get_status"],
+                  deny: ["bundle-mcp"],
+                },
+              },
+            ],
+          },
+        },
+      }),
+    ).toBe(false);
+  });
 });
 
 describe("shouldCreateBundleLspRuntimeForAttempt", () => {
