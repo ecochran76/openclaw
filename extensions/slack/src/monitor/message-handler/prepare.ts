@@ -1230,22 +1230,24 @@ export async function prepareSlackMessage(params: {
     shouldSendAckReaction;
   const shouldStartInitialReaction =
     shouldSendAckReaction && Boolean(ackReactionMessageTs) && Boolean(ackReactionValue);
-  const ackReactionPromise = shouldStartInitialReaction
-    ? reactSlackMessage(message.channel, ackReactionMessageTs ?? "", ackReactionValue, {
-        token: ctx.botToken,
-        client: ctx.app.client,
-      }).then(
-        () => true,
-        (err) => {
-          const formattedError = formatErrorMessage(err);
-          if (statusReactionsWillHandle && formattedError.includes("already_reacted")) {
-            return true;
-          }
-        logVerbose(`slack react failed for channel ${message.channel}: ${formattedError}`);
-        return false;
-      },
-    )
-    : null;
+  const ackReactionPromise = message.__openclawPrePipelineAckStarted
+    ? Promise.resolve(true)
+    : shouldStartInitialReaction
+      ? reactSlackMessage(message.channel, ackReactionMessageTs ?? "", ackReactionValue, {
+          token: ctx.botToken,
+          client: ctx.app.client,
+        }).then(
+          () => true,
+          (err) => {
+            const formattedError = formatErrorMessage(err);
+            if (statusReactionsWillHandle && formattedError.includes("already_reacted")) {
+              return true;
+            }
+            logVerbose(`slack react failed for channel ${message.channel}: ${formattedError}`);
+            return false;
+          },
+        )
+      : null;
 
   const roomLabel = channelName ? `#${channelName}` : `#${message.channel}`;
   const senderName = await resolveSenderName();
@@ -1597,5 +1599,6 @@ export async function prepareSlackMessage(params: {
     ackReactionMessageTs,
     ackReactionValue,
     ackReactionPromise,
+    prePipelineAckStarted: message.__openclawPrePipelineAckStarted === true,
   };
 }

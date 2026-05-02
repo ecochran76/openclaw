@@ -51,6 +51,7 @@ export type SlackMessageEvent = {
    * parent thread timestamp could not be recovered.
    */
   _ambiguousThreadReply?: boolean;
+  __openclawPrePipelineAckStarted?: boolean;
 };
 
 export type SlackAppMentionEvent = {

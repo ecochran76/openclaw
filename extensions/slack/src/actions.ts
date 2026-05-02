@@ -76,7 +76,14 @@ function normalizeEmoji(raw: string) {
   if (!trimmed) {
     throw new Error("Emoji is required for Slack reactions");
   }
-  return trimmed.replace(/^:+|:+$/g, "");
+  const normalized = trimmed.replace(/^:+|:+$/g, "");
+  if (normalized === "👀") {
+    return "eyes";
+  }
+  if (normalized === "⏳") {
+    return "hourglass_flowing_sand";
+  }
+  return normalized;
 }
 
 const SLACK_TIMESTAMP_RE = /^\d+(?:\.\d+)?$/;

@@ -203,6 +203,7 @@ export function createStatusReactionController(params: {
   enabled: boolean;
   adapter: StatusReactionAdapter;
   initialEmoji: string;
+  initialActive?: boolean;
   emojis?: StatusReactionEmojis;
   timing?: StatusReactionTiming;
   onError?: (err: unknown) => void;
@@ -220,14 +221,15 @@ export function createStatusReactionController(params: {
     ...params.timing,
   };
 
-  let currentEmoji = "";
+  // State
+  let currentEmoji = params.initialActive ? initialEmoji : "";
   let pendingEmoji = "";
   let debounceTimer: NodeJS.Timeout | null = null;
   let stallSoftTimer: NodeJS.Timeout | null = null;
   let stallHardTimer: NodeJS.Timeout | null = null;
   let finished = false;
   let chainPromise = Promise.resolve();
-  const activeEmojis = new Set<string>();
+  const activeEmojis = new Set<string>(params.initialActive ? [initialEmoji] : []);
 
   function enqueue(fn: () => Promise<void>): Promise<void> {
     chainPromise = chainPromise.then(fn, fn);
@@ -332,6 +334,7 @@ export function createStatusReactionController(params: {
     pendingEmoji = emoji;
     clearDebounceTimer();
 
+    // Reset stall timers on phase change (unless triggered by stall timer itself).
     if (!options.skipStallReset) {
       resetStallTimers();
     }

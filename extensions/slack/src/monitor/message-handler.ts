@@ -92,6 +92,17 @@ function buildSeenMessageKey(channelId: string | undefined, ts: string | undefin
   return `${channelId}:${ts}`;
 }
 
+function toSlackReactionName(emoji: string): string {
+  const trimmed = emoji.trim().replace(/^:+|:+$/g, "");
+  if (trimmed === "👀") {
+    return "eyes";
+  }
+  if (trimmed === "⏳") {
+    return "hourglass_flowing_sand";
+  }
+  return trimmed;
+}
+
 function shouldAttemptPrePipelineAck(params: {
   ctx: SlackMonitorContext;
   message: SlackMessageEvent;
@@ -99,6 +110,9 @@ function shouldAttemptPrePipelineAck(params: {
 }): boolean {
   const { ctx, message, opts } = params;
   if (!message.channel || !message.ts) {
+    return false;
+  }
+  if (!ctx.cfg || typeof ctx.isChannelAllowed !== "function") {
     return false;
   }
   const textMentionsBot =
@@ -118,15 +132,18 @@ function shouldAttemptPrePipelineAck(params: {
   });
 }
 
-function startPrePipelineAck(params: {
+export function startPrePipelineAck(params: {
   ctx: SlackMonitorContext;
   account: ResolvedSlackAccount;
   message: SlackMessageEvent;
   opts: { source: "message" | "app_mention"; wasMentioned?: boolean };
-}) {
+}): boolean {
   const { ctx, account, message, opts } = params;
+  if (message.__openclawPrePipelineAckStarted) {
+    return true;
+  }
   if (!shouldAttemptPrePipelineAck({ ctx, message, opts })) {
-    return;
+    return false;
   }
   const defaultAgentId = resolveDefaultAgentId(ctx.cfg);
   const reaction = resolveAckReaction(ctx.cfg, defaultAgentId, {
@@ -134,13 +151,24 @@ function startPrePipelineAck(params: {
     accountId: account.accountId,
   });
   if (!reaction) {
-    return;
+    return false;
   }
   const startedAt = Date.now();
-  void reactSlackMessage(message.channel, message.ts ?? "", reaction, {
-    token: ctx.botToken,
-    client: ctx.app.client,
-  })
+  const reactions = [reaction];
+  if (
+    ctx.typingReaction &&
+    toSlackReactionName(ctx.typingReaction) !== toSlackReactionName(reaction)
+  ) {
+    reactions.push(ctx.typingReaction);
+  }
+  void Promise.all(
+    reactions.map((emoji) =>
+      reactSlackMessage(message.channel, message.ts ?? "", emoji, {
+        token: ctx.botToken,
+        client: ctx.app.client,
+      }),
+    ),
+  )
     .then(() => {
       const elapsedMs = Date.now() - startedAt;
       if (elapsedMs >= 1000) {
@@ -150,6 +178,7 @@ function startPrePipelineAck(params: {
             channel: message.channel,
             ts: message.ts,
             elapsedMs,
+            reactions,
           },
           "slack pre-pipeline ack was slow",
         );
@@ -166,6 +195,8 @@ function startPrePipelineAck(params: {
         "slack pre-pipeline ack failed",
       );
     });
+  message.__openclawPrePipelineAckStarted = true;
+  return true;
 }
 
 export function createSlackMessageHandler(params: {
@@ -392,8 +423,11 @@ export function createSlackMessageHandler(params: {
       }
     }
     trackEvent?.();
-    startPrePipelineAck({ ctx, account, message, opts });
+    const prePipelineAckStarted = startPrePipelineAck({ ctx, account, message, opts });
     const resolvedMessage = await threadTsResolver.resolve({ message, source: opts.source });
+    if (prePipelineAckStarted) {
+      resolvedMessage.__openclawPrePipelineAckStarted = true;
+    }
     const debounceKey = buildSlackDebounceKey(resolvedMessage, ctx.accountId);
     const conversationKey = buildTopLevelSlackConversationKey(resolvedMessage, ctx.accountId);
     const canDebounce = debounceMs > 0 && shouldDebounceSlackMessage(resolvedMessage, ctx.cfg);

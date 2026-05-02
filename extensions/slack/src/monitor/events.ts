@@ -20,6 +20,7 @@ export function registerSlackMonitorEvents(params: {
 }) {
   registerSlackMessageEvents({
     ctx: params.ctx,
+    account: params.account,
     handleSlackMessage: params.handleSlackMessage,
   });
   registerSlackReactionEvents({ ctx: params.ctx, trackEvent: params.trackEvent });

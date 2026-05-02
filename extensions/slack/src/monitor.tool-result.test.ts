@@ -699,7 +699,7 @@ describe("monitorSlackProvider tool results", () => {
     expect(reactMock).toHaveBeenCalledWith({
       channel: "C1",
       timestamp: "456",
-      name: "👀",
+      name: "eyes",
     });
   });
 
@@ -711,7 +711,6 @@ describe("monitorSlackProvider tool results", () => {
 
     expect(sendMock).not.toHaveBeenCalled();
     expect(reactionAddMock.mock.calls.map(([args]) => (args as { name: string }).name)).toEqual([
-      "👀",
       "eyes",
     ]);
   });
@@ -757,7 +756,7 @@ describe("monitorSlackProvider tool results", () => {
 
     expect(sendMock).not.toHaveBeenCalled();
     expectReactionFlow({
-      startsWith: ["👀", "eyes"],
+      startsWith: ["eyes"],
       includes: "x",
       endsWith: "x",
     });

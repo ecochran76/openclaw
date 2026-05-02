@@ -1717,7 +1717,7 @@ describe("dispatchPreparedSlackMessage preview fallback", () => {
     expect(capturedReplyOptions?.disableBlockStreaming).toBe(true);
   });
 
-  it("keeps Slack typing callbacks when channel replies are message-tool-only", async () => {
+  it("skips Slack typing callbacks when channel replies are message-tool-only", async () => {
     const setSlackThreadStatus = vi.fn(async () => undefined);
 
     await dispatchPreparedSlackMessage(
@@ -1729,33 +1729,20 @@ describe("dispatchPreparedSlackMessage preview fallback", () => {
       }),
     );
 
-    const typing = requireCapturedTyping();
+    expect(capturedTyping).toBeUndefined();
     expect(capturedReplyOptions?.disableBlockStreaming).toBe(true);
-
-    await typing.start();
-    await typing.stop?.();
-
-    expect(setSlackThreadStatus).toHaveBeenCalledWith({
-      channelId: "C123",
-      threadTs: THREAD_TS,
-      status: "is typing...",
-    });
-    expect(setSlackThreadStatus).toHaveBeenCalledWith({
-      channelId: "C123",
-      threadTs: THREAD_TS,
-      status: "",
-    });
-    const reactCall = requireMockCall(reactSlackMessageMock, 0, "react Slack message");
-    expect(reactCall[0]).toBe("C123");
-    expect(reactCall[1]).toBe("171234.111");
-    expect(reactCall[2]).toBe("hourglass_flowing_sand");
-    expect(requireRecord(reactCall[3], "react Slack message options").token).toBe("xoxb-test");
-    const removeReactionCall = requireMockCall(removeSlackReactionMock, 0, "remove Slack reaction");
-    expect(removeReactionCall[0]).toBe("C123");
-    expect(removeReactionCall[1]).toBe("171234.111");
-    expect(removeReactionCall[2]).toBe("hourglass_flowing_sand");
-    expect(requireRecord(removeReactionCall[3], "remove Slack reaction options").token).toBe(
-      "xoxb-test",
+    expect(setSlackThreadStatus).not.toHaveBeenCalled();
+    expect(reactSlackMessageMock).not.toHaveBeenCalledWith(
+      "C123",
+      "171234.111",
+      "hourglass_flowing_sand",
+      expect.objectContaining({ token: "xoxb-test" }),
+    );
+    expect(removeSlackReactionMock).not.toHaveBeenCalledWith(
+      "C123",
+      "171234.111",
+      "hourglass_flowing_sand",
+      expect.objectContaining({ token: "xoxb-test" }),
     );
   });
 
@@ -2921,7 +2908,7 @@ describe("dispatchPreparedSlackMessage preview fallback", () => {
       }),
     );
 
-    expect(draftStream.update).toHaveBeenCalledWith("Shelling\n🛠️ Exec\n• done");
+    expect(draftStream.update).toHaveBeenLastCalledWith("Shelling\n🛠️ Exec\n• done");
     expect(draftStream.update.mock.calls.flat().join("\n")).not.toContain("pnpm test");
   });
 

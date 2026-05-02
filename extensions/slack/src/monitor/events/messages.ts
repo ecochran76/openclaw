@@ -12,10 +12,11 @@ import {
   normalizeOptionalString as asString,
 } from "openclaw/plugin-sdk/string-coerce-runtime";
 import { enqueueSystemEvent } from "openclaw/plugin-sdk/system-event-runtime";
+import type { ResolvedSlackAccount } from "../../accounts.js";
 import type { SlackAppMentionEvent, SlackMessageEvent } from "../../types.js";
 import { normalizeSlackChannelType } from "../channel-type.js";
 import type { SlackMonitorContext } from "../context.js";
-import type { SlackMessageHandler } from "../message-handler.js";
+import { startPrePipelineAck, type SlackMessageHandler } from "../message-handler.js";
 import type { SlackMessageChangedEvent } from "../types.js";
 import { resolveSlackMessageSubtypeHandler } from "./message-subtype-handlers.js";
 import { authorizeAndResolveSlackSystemEventContext } from "./system-event-context.js";
@@ -154,9 +155,10 @@ function resolveAssistantMessageChangedInbound(params: {
 
 export function registerSlackMessageEvents(params: {
   ctx: SlackMonitorContext;
+  account: ResolvedSlackAccount;
   handleSlackMessage: SlackMessageHandler;
 }) {
-  const { ctx, handleSlackMessage } = params;
+  const { ctx, account, handleSlackMessage } = params;
 
   const handleIncomingMessageEvent = async ({ event, body }: { event: unknown; body: unknown }) => {
     try {
@@ -207,6 +209,7 @@ export function registerSlackMessageEvents(params: {
         return;
       }
 
+      startPrePipelineAck({ ctx, account, message, opts: { source: "message" } });
       await handleSlackMessage(message, { source: "message" });
     } catch (err) {
       ctx.runtime.error?.(danger(`slack handler failed: ${formatErrorMessage(err)}`));
@@ -253,10 +256,13 @@ export function registerSlackMessageEvents(params: {
         }),
       );
 
-      await handleSlackMessage(mention as unknown as SlackMessageEvent, {
+      const message = mention as unknown as SlackMessageEvent;
+      const opts = {
         source: "app_mention",
         wasMentioned: true,
-      });
+      } as const;
+      startPrePipelineAck({ ctx, account, message, opts });
+      await handleSlackMessage(message, opts);
     } catch (err) {
       ctx.runtime.error?.(danger(`slack mention handler failed: ${formatErrorMessage(err)}`));
     }
