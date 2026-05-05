@@ -63,6 +63,7 @@ describe("slack socket reconnect helpers", () => {
     const status = statusCallAt(setStatus, 0);
     expect(status?.connected).toBe(true);
     expect(status?.lastConnectedAt).toBe(1_711_406_400_000);
+    expect(status?.lastTransportActivityAt).toBe(1_711_406_400_000);
     expect(status?.healthState).toBe("healthy");
     expect(status?.lastError).toBeNull();
     expect(status).not.toHaveProperty("lastEventAt");

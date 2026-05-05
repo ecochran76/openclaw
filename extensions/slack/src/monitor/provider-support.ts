@@ -194,6 +194,7 @@ export function publishSlackConnectedStatus(setStatus?: (next: Record<string, un
   setStatus({
     connected: true,
     lastConnectedAt: now,
+    lastTransportActivityAt: now,
     healthState: "healthy",
     lastError: null,
   });
