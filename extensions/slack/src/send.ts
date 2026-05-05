@@ -554,6 +554,19 @@ function resolvePostedMessageChannelId(response: { channel?: unknown }, fallback
   );
 }
 
+function recordSlackSendThreadParticipation(params: {
+  accountId: string;
+  channelId: string;
+  threadTs?: string;
+  messageId?: string;
+}): void {
+  const threadTs = normalizeSlackThreadTsCandidate(params.threadTs);
+  if (!threadTs || !params.channelId || !params.messageId || params.messageId === "unknown") {
+    return;
+  }
+  recordSlackThreadParticipation(params.accountId, params.channelId, threadTs);
+}
+
 async function resolveChannelId(
   client: WebClient,
   recipient: SlackRecipient,
@@ -723,10 +736,12 @@ export async function sendMessageSlack(
       blocks,
     }),
   );
-  const threadTs = result.threadTs ?? normalizeSlackThreadTsCandidate(opts.threadTs);
-  if (threadTs && result.channelId && account.accountId) {
-    recordSlackThreadParticipation(account.accountId, result.channelId, threadTs);
-  }
+  recordSlackSendThreadParticipation({
+    accountId: account.accountId,
+    channelId: result.channelId,
+    threadTs: result.threadTs ?? opts.threadTs,
+    messageId: result.messageId,
+  });
   return result;
 }
 

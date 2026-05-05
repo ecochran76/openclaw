@@ -3,6 +3,29 @@
 State: OPEN
 Created: 2026-04-28
 
+## 2026-05-05 Slack Responsiveness Review
+
+Reviewed during the ec-main Slack response reliability pass. The stale-task
+reload blocker is not the active cause of the SoyLei human-root thread drop
+tracked in `0020-2026-05-05-soylei-slack-thread-participation-gap.md`, and the
+Socket Mode transport liveness gap is now resolved in
+`0017-2026-05-04-soylei-slack-socket-stale-ingress.md`.
+
+Current source already covers the highest-risk reload blocker items recorded in
+this note:
+
+- channel hot reload deferral uses `gateway.reload.deferralTimeoutMs` and
+  proceeds after the bounded timeout when work does not drain;
+- task-registry maintenance reconciles generic stale CLI task rows after the
+  stale grace period when no active run context backs them;
+- channel health monitor can restart stale connected Slack sockets when
+  `lastTransportActivityAt` ages past the stale threshold.
+
+Keep this note open for the remaining diagnostics surface, not for the current
+Slack response-drop bug. Remaining work is to make pending reload blockers and
+per-account Slack lifecycle/reconnect churn visible from status/diagnostic CLI
+surfaces without log correlation.
+
 ## 2026-05-01 Review
 
 This note is partially acted on but should remain open as a Slack operations

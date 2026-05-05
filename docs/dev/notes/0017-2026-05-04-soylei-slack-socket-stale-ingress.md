@@ -1,6 +1,6 @@
 # SoyLei Slack Socket Stale Ingress
 
-State: OPEN
+State: RESOLVED
 Created: 2026-05-04
 
 ## Observation
@@ -25,3 +25,17 @@ Slack app events are not equivalent to transport liveness, but a successful Sock
 ## 2026-05-04 Update
 
 Added `openclaw channels why-silent` to read recent channel history through the normal channel action path and compare the newest message timestamp with the gateway's account-level `lastInboundAt` and `lastTransportActivityAt` fields. This does not replace turn-level `/why-silent`; it covers the lower-level case where Slack saw the message but OpenClaw may not have ingested it.
+
+## 2026-05-05 Source Verification
+
+The Slack Socket Mode liveness gap is addressed in current source:
+
+- `publishSlackConnectedStatus` seeds `lastTransportActivityAt` on successful Socket Mode connect without seeding `lastEventAt`.
+- `provider.ts` calls `publishSlackConnectedStatus` from the Socket Mode `onStarted` path.
+- `provider.reconnect.test.ts` covers the connect-time status update and verifies event liveness remains app-event scoped.
+
+Validation:
+
+```text
+pnpm test extensions/slack/src/monitor/provider.reconnect.test.ts
+```

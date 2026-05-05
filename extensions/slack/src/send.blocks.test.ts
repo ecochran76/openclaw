@@ -1,5 +1,5 @@
 // Slack tests cover send.blocks plugin behavior.
-import { describe, expect, it } from "vitest";
+import { afterEach, describe, expect, it } from "vitest";
 import { createSlackSendTestClient } from "./blocks.test-helpers.js";
 import {
   clearSlackThreadParticipationCache,
@@ -43,6 +43,10 @@ function slackDnsRequestError(): Error {
     }),
   });
 }
+
+afterEach(() => {
+  clearSlackThreadParticipationCache();
+});
 
 describe("sendMessageSlack NO_REPLY guard", () => {
   it("suppresses NO_REPLY text before any Slack API call", async () => {
@@ -167,6 +171,19 @@ describe("sendMessageSlack thread participation", () => {
 });
 
 describe("sendMessageSlack chunking", () => {
+  it("records thread participation after a threaded text post succeeds", async () => {
+    const client = createSlackSendTestClient();
+
+    await sendMessageSlack("channel:C123", "hello", {
+      token: "xoxb-test",
+      cfg: SLACK_TEST_CFG,
+      client,
+      threadTs: "1777985437.317799",
+    });
+
+    expect(hasSlackThreadParticipation("default", "C123", "1777985437.317799")).toBe(true);
+  });
+
   it("keeps 4205-character text in a single Slack post by default", async () => {
     const client = createSlackSendTestClient();
     const message = "a".repeat(4205);
@@ -253,6 +270,20 @@ describe("sendMessageSlack chunking", () => {
 });
 
 describe("sendMessageSlack blocks", () => {
+  it("records thread participation after a threaded block post succeeds", async () => {
+    const client = createSlackSendTestClient();
+
+    await sendMessageSlack("channel:C123", "", {
+      token: "xoxb-test",
+      cfg: SLACK_TEST_CFG,
+      client,
+      threadTs: "1777985437.317799",
+      blocks: [{ type: "section", text: { type: "mrkdwn", text: "status update" } }],
+    });
+
+    expect(hasSlackThreadParticipation("default", "C123", "1777985437.317799")).toBe(true);
+  });
+
   it("posts blocks with fallback text when message is empty", async () => {
     const client = createSlackSendTestClient();
     const result = await sendMessageSlack("channel:C123", "", {

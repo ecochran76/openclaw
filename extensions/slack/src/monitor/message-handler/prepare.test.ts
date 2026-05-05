@@ -802,6 +802,11 @@ describe("slack prepareSlackMessage inbound contract", () => {
           },
         },
       } as OpenClawConfig,
+      appClient: {
+        reactions: {
+          add: vi.fn().mockResolvedValue({ ok: true }),
+        },
+      } as unknown as App["client"],
       replyToMode: "all",
       appClient: {
         reactions: {
@@ -3479,5 +3484,65 @@ describe("slack thread.requireExplicitMention", () => {
     if (!result) {
       throw new Error("expected Slack thread reply message");
     }
+  });
+
+  it("drops unseeded human-root thread replies without explicit mention", async () => {
+    const ctx = createCtxWithExplicitMention(false);
+    const { storePath } = storeFixture.makeTmpStorePath();
+    vi.spyOn(
+      await import("openclaw/plugin-sdk/session-store-runtime"),
+      "resolveStorePath",
+    ).mockReturnValue(storePath);
+    const account = createSlackTestAccount();
+    const message: SlackMessageEvent = {
+      type: "message",
+      channel: "C123",
+      channel_type: "channel",
+      user: "U1",
+      text: "following up after Lei replied",
+      ts: "1700000001.000004",
+      thread_ts: "1700000000.000000",
+      parent_user_id: "U_ROOT",
+    };
+
+    const result = await prepareSlackMessage({
+      ctx,
+      account,
+      message,
+      opts: { source: "message" },
+    });
+
+    expect(result).toBeNull();
+  });
+
+  it("allows human-root thread replies after recorded bot participation", async () => {
+    const ctx = createCtxWithExplicitMention(false);
+    const { storePath } = storeFixture.makeTmpStorePath();
+    vi.spyOn(
+      await import("openclaw/plugin-sdk/session-store-runtime"),
+      "resolveStorePath",
+    ).mockReturnValue(storePath);
+    const account = createSlackTestAccount();
+    recordSlackThreadParticipation("default", "C123", "1700000000.000000");
+    const message: SlackMessageEvent = {
+      type: "message",
+      channel: "C123",
+      channel_type: "channel",
+      user: "U1",
+      text: "following up after Lei replied",
+      ts: "1700000001.000005",
+      thread_ts: "1700000000.000000",
+      parent_user_id: "U_ROOT",
+    };
+
+    const result = await prepareSlackMessage({
+      ctx,
+      account,
+      message,
+      opts: { source: "message" },
+    });
+
+    expect(result).not.toBeNull();
+    expect(result?.ctxPayload.WasMentioned).toBe(true);
   });
 });

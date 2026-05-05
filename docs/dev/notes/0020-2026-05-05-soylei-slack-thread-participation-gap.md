@@ -167,3 +167,27 @@ The live repair is a runtime-state seed, not a product fix. It should make the
 current affected threads respond immediately, but new threads can still miss
 participation until the Slack plugin records participation on every relevant
 delivery path.
+
+## 2026-05-05 Source Fix
+
+Patched the Slack send primitive so every successful bot-authored Slack post
+with a `thread_ts` records `slack.thread-participation` for the resolved account,
+channel, and thread. This covers standard text sends, block/status sends, media
+caption follow-ups, and preview/status messages that route through
+`sendMessageSlack`, instead of relying only on the inbound monitor's final
+delivery bookkeeping.
+
+Added regression coverage for:
+
+- successful threaded text and block sends seeding participation;
+- human-root thread replies still dropping when no explicit mention and no
+  participation record exists;
+- human-root thread replies passing after recorded bot participation.
+
+Validation:
+
+```text
+pnpm test extensions/slack/src/send.blocks.test.ts extensions/slack/src/monitor/message-handler/prepare.test.ts extensions/slack/src/sent-thread-cache.test.ts
+scripts/ec-main-rebase-gate.sh --family slack-responsiveness
+git diff --check
+```
