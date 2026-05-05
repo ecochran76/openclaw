@@ -14,6 +14,13 @@ miss threads where the bot visibly posted, so later no-mention replies in that
 thread are treated as ordinary group messages and skipped when
 `requireMention=true`.
 
+A second nuance matters for diagnosis: Slack thread replies keep
+`parent_user_id` set to the root message author. In the affected thread, the
+root author was a human, so replies that visually appeared to be "to Lei" still
+had `parent_user_id` equal to the human root author. OpenClaw therefore cannot
+depend on `reply_to_bot` semantics for non-bot-root threads; durable
+thread-participation state is the right primitive.
+
 ## Live Evidence
 
 Runtime:
@@ -50,6 +57,11 @@ already present before the drops:
 - bot reply at `1777990108.602579`
 - later human replies in the same thread were still dropped.
 
+The same Slack history showed every threaded human reply carrying
+`parent_user_id=U012M8NDV3K`, the human root author, including replies after Lei
+had posted. That explains why the UI can feel like a direct reply to Lei while
+the OpenClaw `reply_to_bot` signal remains false.
+
 The persistent plugin state did not contain:
 
 ```text
@@ -76,6 +88,18 @@ soylei:C0B1SPSEDL1:1777989651.666679 -> soylei-marketing
 
 These expire after 24 hours, matching the plugin's current participation TTL.
 
+At `2026-05-05 09:41:36 CDT`, the gateway health monitor also restarted both
+Slack sockets:
+
+```text
+[slack:default] health-monitor: restarting (reason: stale-socket)
+[slack:soylei] health-monitor: restarting (reason: stale-socket)
+```
+
+The sockets reconnected and SoyLei channels re-resolved by `09:41:38 CDT`. This
+is separate from the mention-gate bug, but it likely contributed to the
+operator's broader "flaky responsiveness" observation.
+
 ## Suspected Product Gap
 
 The Slack plugin already has `sent-thread-cache` and persistent
@@ -88,6 +112,11 @@ The Slack plugin already has `sent-thread-cache` and persistent
   bot-authored thread posts;
 - status/progress messages in a thread do not establish participation, even
   though users reasonably interpret them as Lei joining the thread.
+- Slack `parent_user_id` only identifies the root author, not the message a user
+  visually replied beneath in the thread UI, so `reply_to_bot` is insufficient
+  for non-bot-root threads.
+- stale Slack sockets can overlap with thread-participation misses and make
+  operator-visible behavior hard to explain without a single diagnostic surface.
 
 The product behavior should be deterministic:
 
@@ -97,6 +126,8 @@ The product behavior should be deterministic:
   should satisfy mention gating unless `threadRequireExplicitMention=true`;
 - `/why-silent` or equivalent diagnostics should say when a thread reply was
   dropped because participation was missing.
+- `/why-silent` should also report stale socket restarts and whether a relevant
+  thread participation key existed at decision time.
 
 ## Suggested Tests
 
@@ -109,6 +140,10 @@ Add or extend Slack plugin tests around:
   post;
 - persistent participation lookup works after gateway restart and does not
   require in-memory cache state.
+- `parent_user_id` on a human-root thread does not satisfy `reply_to_bot`, and
+  the thread still passes after recorded bot participation.
+- health-monitor stale-socket restarts are visible in channel diagnostics near
+  dropped inbound events.
 
 Likely test files:
 
