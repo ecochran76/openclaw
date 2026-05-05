@@ -191,6 +191,7 @@ afterEach(() => {
   vi.doUnmock("../../plugins/channel-catalog-registry.js");
   vi.doUnmock("../../infra/boundary-file-read.js");
   vi.doUnmock("./bundled-root.js");
+  vi.doUnmock("../../plugins/native-module-require.js");
   vi.doUnmock("jiti");
 });
 
@@ -1188,6 +1189,149 @@ module.exports = {
 
     expect(bundled.listBundledChannelPlugins()).toHaveLength(1);
     expect(reentered).toBe(true);
+  });
+
+  it("retries bundled channel plugin loading with runtime deps after missing dependency fast-path failure", async () => {
+    const pluginDir = fs.mkdtempSync(path.join(os.tmpdir(), "openclaw-bundled-deps-fallback-"));
+    const modulePath = path.join(pluginDir, "index.js");
+    fs.writeFileSync(
+      modulePath,
+      `
+export default {
+  kind: "bundled-channel-entry",
+  id: "alpha",
+  name: "Alpha",
+  description: "Alpha",
+  configSchema: {},
+  register() {},
+  loadChannelPlugin(options) {
+    globalThis.__openclawBundledChannelLoadOptions.push(options);
+    if (options && typeof options === "object" && options.installRuntimeDeps === false) {
+      throw new Error("Cannot find module '@runtime/example'");
+    }
+    return {
+      id: "alpha",
+      meta: {},
+      capabilities: {},
+      config: {},
+    };
+  },
+};
+`,
+      "utf8",
+    );
+
+    vi.doMock("../../plugins/bundled-channel-runtime.js", async (importOriginal) => {
+      const actual =
+        await importOriginal<typeof import("../../plugins/bundled-channel-runtime.js")>();
+      return {
+        ...actual,
+        listBundledChannelPluginMetadata: () => [
+          {
+            dirName: "alpha",
+            idHint: "alpha",
+            source: {
+              source: "./index.js",
+              built: "./index.js",
+            },
+            manifest: {
+              id: "alpha",
+              channels: ["alpha"],
+            },
+          },
+        ],
+        resolveBundledChannelGeneratedPath: () => modulePath,
+      };
+    });
+    vi.doMock("../../infra/boundary-file-read.js", async (importOriginal) => {
+      const actual = await importOriginal<typeof import("../../infra/boundary-file-read.js")>();
+      return {
+        ...actual,
+        openBoundaryFileSync: ({ absolutePath }: { absolutePath: string }) => ({
+          ok: true,
+          path: absolutePath,
+          fd: fs.openSync(absolutePath, "r"),
+        }),
+      };
+    });
+    vi.doMock("../../plugins/channel-catalog-registry.js", () => ({
+      listChannelCatalogEntries: () => [],
+    }));
+    vi.doMock("../../plugins/native-module-require.js", () => ({
+      isJavaScriptModulePath: () => false,
+      tryNativeRequireJavaScriptModule: () => ({ ok: false }),
+    }));
+
+    const loadOptions: unknown[] = [];
+    (
+      globalThis as { __openclawBundledChannelLoadOptions?: unknown[] }
+    ).__openclawBundledChannelLoadOptions = loadOptions;
+    vi.doMock("./module-loader.js", () => ({
+      loadChannelPluginModule: () => ({
+        default: {
+          kind: "bundled-channel-entry",
+          id: "alpha",
+          name: "Alpha",
+          description: "Alpha",
+          configSchema: {},
+          register() {},
+          loadChannelPlugin(options?: unknown) {
+            loadOptions.push(options);
+            if (
+              options &&
+              typeof options === "object" &&
+              (options as { installRuntimeDeps?: unknown }).installRuntimeDeps === false
+            ) {
+              throw new Error("Cannot find module '@runtime/example'");
+            }
+            return {
+              id: "alpha",
+              meta: {},
+              capabilities: {},
+              config: {},
+            };
+          },
+        },
+      }),
+    }));
+    vi.doMock("jiti", () => ({
+      createJiti: () => {
+        return () => ({
+          default: {
+            kind: "bundled-channel-entry",
+            id: "alpha",
+            name: "Alpha",
+            description: "Alpha",
+            configSchema: {},
+            register() {},
+            loadChannelPlugin(options?: unknown) {
+              loadOptions.push(options);
+              if (
+                options &&
+                typeof options === "object" &&
+                (options as { installRuntimeDeps?: unknown }).installRuntimeDeps === false
+              ) {
+                throw new Error("Cannot find module '@runtime/example'");
+              }
+              return {
+                id: "alpha",
+                meta: {},
+                capabilities: {},
+                config: {},
+              };
+            },
+          },
+        });
+      },
+    }));
+
+    const bundled = await importFreshModule<typeof import("./bundled.js")>(
+      import.meta.url,
+      "./bundled.js?scope=runtime-deps-fallback",
+    );
+
+    expect(bundled.listBundledChannelPlugins()).toHaveLength(1);
+    expect(loadOptions).toEqual([{ installRuntimeDeps: false }, undefined]);
   });
 
   it("keeps private src runtime barrels from forwarding to parent runtime barrels that export local plugins", () => {

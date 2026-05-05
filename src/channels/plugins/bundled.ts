@@ -172,6 +172,28 @@ function hasSetupEntryFeature(
   return entry?.features?.[feature] === true;
 }
 
+function shouldRetryBundledChannelLoadWithRuntimeDeps(error: unknown): boolean {
+  const message = formatErrorMessage(error).toLowerCase();
+  return (
+    message.includes("cannot find module") ||
+    message.includes("cannot find package") ||
+    message.includes("bundled runtime dependencies missing")
+  );
+}
+
+function loadBundledChannelPluginWithRuntimeDepsFallback(
+  entry: BundledChannelEntryRuntimeContract,
+): ChannelPlugin {
+  try {
+    return entry.loadChannelPlugin({ installRuntimeDeps: false });
+  } catch (error) {
+    if (!shouldRetryBundledChannelLoadWithRuntimeDeps(error)) {
+      throw error;
+    }
+    return entry.loadChannelPlugin();
+  }
+}
+
 function resolveBundledChannelBoundaryRoot(params: {
   packageRoot: string;
   pluginsDir?: string;
@@ -661,7 +683,9 @@ function getBundledChannelPluginForRoot(
   loadContext.pluginLoadInProgressIds.add(id);
   try {
     const metadata = resolveBundledChannelMetadata(id, rootScope, loadContext);
-    const plugin = entry.loadChannelPlugin() as ChannelPlugin | undefined;
+    const plugin = loadBundledChannelPluginWithRuntimeDepsFallback(entry) as
+      | ChannelPlugin
+      | undefined;
     if (!plugin) {
       loadContext.lazyPluginsById.set(id, null);
       return undefined;
