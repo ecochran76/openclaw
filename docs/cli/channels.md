@@ -21,6 +21,7 @@ Related docs:
 openclaw channels list
 openclaw channels list --all
 openclaw channels status
+openclaw channels why-silent --channel slack --account default --target channel:C123
 openclaw channels capabilities
 openclaw channels capabilities --channel discord --target channel:123
 openclaw channels capabilities --channel discord --target channel:<voice-channel-id>
@@ -33,6 +34,7 @@ openclaw channels logs --channel all
 ## Status / capabilities / resolve / logs
 
 - `channels status`: `--channel <name>`, `--probe`, `--timeout <ms>`, `--json`
+- `channels why-silent`: `--channel <name>`, `--account <id>`, `--target <dest>`, `--limit <n>`, `--timeout <ms>`, `--json`
 - `channels capabilities`: `--channel <name>`, `--account <id>` (only with `--channel`), `--target <dest>`, `--timeout <ms>`, `--json`
 - `channels resolve`: `<entries...>`, `--channel <name>`, `--account <id>`, `--kind <auto|user|group>`, `--json`
 - `channels logs`: `--channel <name|all>`, `--lines <n>`, `--json`
@@ -48,6 +50,14 @@ Do not use `openclaw sessions`, Gateway `sessions.list`, or the agent
 stored conversation rows, not provider runtime state. After a Discord provider
 restart, a connected but quiet account may be healthy while no Discord session
 row appears until the next inbound or outbound conversation event.
+
+`channels why-silent` is for lower-level ingress debugging: it reads recent
+channel history through the normal channel action path and compares the newest
+message timestamp against the gateway account's `lastInboundAt` and
+`lastTransportActivityAt` fields. Use it when the provider shows a message, but
+OpenClaw appears not to have started a turn. It complements chat-level
+`/why-silent`, which explains active or recent OpenClaw turns after ingress has
+already happened.
 
 ## Add / remove accounts
 

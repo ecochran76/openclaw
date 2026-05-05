@@ -13,3 +13,5 @@ export type { ChannelsResolveOptions } from "./channels/resolve.js";
 export { channelsResolveCommand } from "./channels/resolve.js";
 export type { ChannelsStatusOptions } from "./channels/status.js";
 export { channelsStatusCommand, formatGatewayChannelsStatusLines } from "./channels/status.js";
+export type { ChannelsWhySilentOptions } from "./channels/why-silent.js";
+export { channelsWhySilentCommand } from "./channels/why-silent.js";

@@ -107,6 +107,10 @@ export async function registerChannelsCli(
           ["openclaw channels add", "Open guided channel setup."],
           ["openclaw channels status --probe", "Run channel status checks and probes."],
           [
+            "openclaw channels why-silent --channel slack --account soylei --target channel:C123",
+            "Compare recent channel history with OpenClaw inbound activity.",
+          ],
+          [
             "openclaw channels add --channel telegram --token <token>",
             "Add or update a channel account non-interactively.",
           ],
@@ -140,6 +144,22 @@ export async function registerChannelsCli(
       await runChannelsCommand(async () => {
         const { channelsStatusCommand } = await import("../commands/channels/status.js");
         await channelsStatusCommand(opts, defaultRuntime);
+      });
+    });
+
+  channels
+    .command("why-silent")
+    .description("Diagnose why a channel message did not produce an OpenClaw reply")
+    .option("--channel <name>", `Channel (${channelNames})`, "slack")
+    .option("--account <id>", "Channel account id", "default")
+    .requiredOption("--target <dest>", "Channel target (for example channel:C123)")
+    .option("--limit <n>", "Recent messages to read", "5")
+    .option("--timeout <ms>", "Timeout in ms", "10000")
+    .option("--json", "Output JSON", false)
+    .action(async (opts) => {
+      await runChannelsCommand(async () => {
+        const { channelsWhySilentCommand } = await import("../commands/channels/why-silent.js");
+        await channelsWhySilentCommand(opts, defaultRuntime);
       });
     });
 

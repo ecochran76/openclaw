@@ -21,3 +21,7 @@ Slack app events are not equivalent to transport liveness, but a successful Sock
 - Use `lastTransportActivityAt` for Socket Mode connection liveness and stale-socket restart decisions.
 - Consider adding a richer Slack SDK hook later if upstream exposes ping/pong or lower-level websocket activity as a public event.
 - Add a `why silent` diagnostic that compares newest Slack history for a bound channel against OpenClaw's last inbound event age.
+
+## 2026-05-04 Update
+
+Added `openclaw channels why-silent` to read recent channel history through the normal channel action path and compare the newest message timestamp with the gateway's account-level `lastInboundAt` and `lastTransportActivityAt` fields. This does not replace turn-level `/why-silent`; it covers the lower-level case where Slack saw the message but OpenClaw may not have ingested it.
