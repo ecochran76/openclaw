@@ -22,6 +22,7 @@ openclaw channels list
 openclaw channels list --all
 openclaw channels status
 openclaw channels why-silent --channel slack --account default --target channel:C123
+openclaw channels inspect-link https://example.slack.com/archives/C123/p1778009972917279 --account default
 openclaw channels capabilities
 openclaw channels capabilities --channel discord --target channel:123
 openclaw channels capabilities --channel discord --target channel:<voice-channel-id>
@@ -35,6 +36,7 @@ openclaw channels logs --channel all
 
 - `channels status`: `--channel <name>`, `--probe`, `--timeout <ms>`, `--json`
 - `channels why-silent`: `--channel <name>`, `--account <id>`, `--target <dest>`, `--limit <n>`, `--timeout <ms>`, `--json`
+- `channels inspect-link`: `<slack-permalink>`, `--account <id>`, `--agent <id>`, `--limit <n>`, `--timeout <ms>`, `--json`
 - `channels capabilities`: `--channel <name>`, `--account <id>` (only with `--channel`), `--target <dest>`, `--timeout <ms>`, `--json`
 - `channels resolve`: `<entries...>`, `--channel <name>`, `--account <id>`, `--kind <auto|user|group>`, `--json`
 - `channels logs`: `--channel <name|all>`, `--lines <n>`, `--json`
@@ -58,6 +60,13 @@ message timestamp against the gateway account's `lastInboundAt` and
 OpenClaw appears not to have started a turn. It complements chat-level
 `/why-silent`, which explains active or recent OpenClaw turns after ingress has
 already happened.
+
+`channels inspect-link` is the post-mortem path for Slack permalinks. It parses
+the link, reads the exact Slack message plus nearby channel history, compares
+that evidence with gateway account status, scans session stores, and reports
+likely transcript or trajectory sidecars without dumping raw transcripts. Use
+`--agent <id>` to keep the session scan scoped when you already know the owning
+agent.
 
 ## Add / remove accounts
 

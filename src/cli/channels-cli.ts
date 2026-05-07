@@ -111,6 +111,10 @@ export async function registerChannelsCli(
             "Compare recent channel history with OpenClaw inbound activity.",
           ],
           [
+            "openclaw channels inspect-link https://example.slack.com/archives/C123/p1778009972917279 --account soylei",
+            "Correlate a Slack permalink with OpenClaw sessions and trajectories.",
+          ],
+          [
             "openclaw channels add --channel telegram --token <token>",
             "Add or update a channel account non-interactively.",
           ],
@@ -160,6 +164,22 @@ export async function registerChannelsCli(
       await runChannelsCommand(async () => {
         const { channelsWhySilentCommand } = await import("../commands/channels/why-silent.js");
         await channelsWhySilentCommand(opts, defaultRuntime);
+      });
+    });
+
+  channels
+    .command("inspect-link")
+    .description("Inspect OpenClaw sessions associated with a Slack permalink")
+    .argument("<permalink>", "Slack permalink")
+    .option("--account <id>", "Slack account id", "default")
+    .option("--agent <id>", "Limit session-store scan to one agent")
+    .option("--limit <n>", "Messages to read around the permalink", "10")
+    .option("--timeout <ms>", "Timeout in ms", "10000")
+    .option("--json", "Output JSON", false)
+    .action(async (permalink, opts) => {
+      await runChannelsCommand(async () => {
+        const { channelsInspectLinkCommand } = await loadChannelsCommands();
+        await channelsInspectLinkCommand(String(permalink), opts, defaultRuntime);
       });
     });
 
