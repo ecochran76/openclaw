@@ -83,7 +83,7 @@ Use `--list` to print the command bundle without running it. Use `--live-patch` 
   - `pnpm test -- src/agents/pi-embedded-subscribe.handlers.tools.test.ts`
   - `pnpm test -- src/auto-reply/reply/dispatch-stream-delivery.test.ts`
   - `pnpm test -- extensions/slack/src/monitor/events/interactions.test.ts`
-  - `pnpm test -- src/gateway/server.sessions.gateway-server-sessions-a.test.ts`
+  - `pnpm test -- src/gateway/server.sessions-send.test.ts`
 
 ### 3. Slack / agent responsiveness
 

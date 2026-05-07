@@ -82,7 +82,7 @@ profiles_tests=(
 
 slack_a2a_tests=(
   src/agents/openclaw-tools.sessions.test.ts
-  src/gateway/server.sessions.gateway-server-sessions-a.test.ts
+  src/gateway/server.sessions-send.test.ts
   src/agents/a2a/permission-approval-action.test.ts
   src/agents/pi-embedded-subscribe.handlers.tools.test.ts
   src/auto-reply/reply/dispatch-stream-delivery.test.ts

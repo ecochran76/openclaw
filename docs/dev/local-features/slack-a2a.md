@@ -64,7 +64,7 @@ These files have repeatedly conflicted:
 - `src/agents/tools/sessions-send-tool.a2a.ts`
 - `src/agents/openclaw-tools.sessions.test.ts`
 - `src/gateway/sessions-resolve.ts`
-- `src/gateway/server.sessions.gateway-server-sessions-a.test.ts`
+- `src/gateway/server.sessions-send.test.ts`
 - `src/config/schema.help.ts`
 - `src/config/schema.labels.ts`
 - `src/config/types.base.ts`
@@ -87,7 +87,7 @@ Recommended focused checks:
 
 ```bash
 pnpm test -- src/agents/openclaw-tools.sessions.test.ts
-pnpm test -- src/gateway/server.sessions.gateway-server-sessions-a.test.ts
+pnpm test -- src/gateway/server.sessions-send.test.ts
 pnpm test -- src/agents/a2a/permission-approval-action.test.ts
 pnpm test -- src/agents/pi-embedded-subscribe.handlers.tools.test.ts
 pnpm test -- src/auto-reply/reply/dispatch-stream-delivery.test.ts
