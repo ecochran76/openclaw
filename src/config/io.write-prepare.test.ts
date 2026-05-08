@@ -478,6 +478,44 @@ describe("config io write prepare", () => {
     expect(persisted.agents?.defaults?.models?.["openai/gpt-5.4"]).not.toHaveProperty("params");
   });
 
+  it("does not resurrect deleted authored model params during config repair writes", () => {
+    const sourceConfig: OpenClawConfig = {
+      agents: {
+        defaults: {
+          models: {
+            "openai/gpt-5.5": {
+              params: { thinking: "low" },
+            },
+            "openai-codex/gpt-5.5": {
+              params: { thinking: "low" },
+            },
+          },
+        },
+      },
+    };
+    const persisted = resolvePersistCandidateForWrite({
+      runtimeConfig: sourceConfig,
+      sourceConfig,
+      nextConfig: {
+        agents: {
+          defaults: {
+            models: {
+              "openai/gpt-5.5": {
+                params: { thinking: "low" },
+              },
+            },
+          },
+        },
+      },
+    }) as OpenClawConfig;
+
+    expect(persisted.agents?.defaults?.models).toEqual({
+      "openai/gpt-5.5": {
+        params: { thinking: "low" },
+      },
+    });
+  });
+
   it("preserves untouched include-owned subtrees during unrelated writes", () => {
     const persisted = resolvePersistCandidateForWrite({
       runtimeConfig: {

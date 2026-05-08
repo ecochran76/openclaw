@@ -246,6 +246,17 @@ function pathOverlapsAny(path: string[], candidates: readonly string[][] | undef
   );
 }
 
+function patchDeletesPath(patch: unknown, path: string[]): boolean {
+  let current = patch;
+  for (const segment of path) {
+    if (!isRecord(current) || !Object.prototype.hasOwnProperty.call(current, segment)) {
+      return false;
+    }
+    current = current[segment];
+  }
+  return current === null;
+}
+
 function isIncludeOwnedPath(rootAuthoredConfig: unknown, path: string[]): boolean {
   return collectIncludeOwnedPaths(rootAuthoredConfig).some((includePath) => {
     const overlapsInclude = pathStartsWith(path, includePath) || pathStartsWith(includePath, path);
@@ -318,6 +329,7 @@ function deletePathValue(value: unknown, path: string[]): unknown {
 
 function preserveSourceValueAtPath(params: {
   persistedCandidate: unknown;
+  patch: unknown;
   sourceConfig: unknown;
   nextConfig: unknown;
   rootAuthoredConfig: unknown;
@@ -325,6 +337,9 @@ function preserveSourceValueAtPath(params: {
   path: string[];
   sourceValue?: unknown;
 }): unknown {
+  if (patchDeletesPath(params.patch, params.path)) {
+    return params.persistedCandidate;
+  }
   if (pathOverlapsAny(params.path, params.unsetPaths)) {
     return params.persistedCandidate;
   }
@@ -346,6 +361,7 @@ function preserveSourceValueAtPath(params: {
 
 function preserveAuthoredAgentParams(params: {
   persistedCandidate: unknown;
+  patch: unknown;
   sourceConfig: unknown;
   nextConfig: unknown;
   rootAuthoredConfig: unknown;
@@ -926,6 +942,7 @@ export function resolvePersistCandidateForWrite(params: {
     persistedCandidate: persisted,
   });
   const withAuthoredParams = preserveAuthoredAgentParams({
+    patch,
     sourceConfig: params.sourceConfig,
     nextConfig: params.nextConfig,
     rootAuthoredConfig,
