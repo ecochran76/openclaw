@@ -223,6 +223,7 @@ export type PluginLoadOptions = {
    * entrypoints when both are present in a source checkout.
    */
   preferBuiltPluginArtifacts?: boolean;
+  installBundledRuntimeDeps?: boolean;
   toolDiscovery?: boolean;
   activate?: boolean;
   loadModules?: boolean;
@@ -1015,6 +1016,7 @@ function buildCacheKey(params: {
   forceFullRuntimeForChannelPlugins?: boolean;
   preferBuiltPluginArtifacts?: boolean;
   resolveRawConfigEnvVars?: boolean;
+  installBundledRuntimeDeps?: boolean;
   toolDiscovery?: boolean;
   loadModules?: boolean;
   runtimeSubagentMode?: "default" | "explicit" | "gateway-bindable";
@@ -1064,6 +1066,8 @@ function buildCacheKey(params: {
     params.preferBuiltPluginArtifacts === true ? "prefer-built-artifacts" : "source-default";
   const rawConfigEnvMode =
     params.resolveRawConfigEnvVars === true ? "resolve-raw-env" : "runtime-config";
+  const bundledRuntimeDepsMode =
+    params.installBundledRuntimeDeps === true ? "install-runtime-deps" : "skip-runtime-deps";
   const moduleLoadMode = params.loadModules === false ? "manifest-only" : "load-modules";
   const discoveryMode = params.toolDiscovery === true ? "tool-discovery" : "default-discovery";
   const runtimeSubagentMode = params.runtimeSubagentMode ?? "default";
@@ -1077,7 +1081,7 @@ function buildCacheKey(params: {
     installs,
     loadPaths,
     activationMetadataKey: params.activationMetadataKey ?? "",
-  })}::${scopeKey}::${setupOnlyKey}::${setupOnlyModeKey}::${setupOnlyRequirementKey}::${startupChannelMode}::${bundledArtifactMode}::${rawConfigEnvMode}::${moduleLoadMode}::${discoveryMode}::${runtimeSubagentMode}::${params.pluginSdkResolution ?? "auto"}::${gatewayMethodsKey}::${activationMode}`;
+  })}::${scopeKey}::${setupOnlyKey}::${setupOnlyModeKey}::${setupOnlyRequirementKey}::${startupChannelMode}::${bundledArtifactMode}::${rawConfigEnvMode}::${bundledRuntimeDepsMode}::${moduleLoadMode}::${discoveryMode}::${runtimeSubagentMode}::${params.pluginSdkResolution ?? "auto"}::${gatewayMethodsKey}::${activationMode}`;
 }
 
 function matchesScopedPluginRequest(params: {
@@ -1433,6 +1437,7 @@ function resolvePluginLoadCacheContext(options: PluginLoadOptions = {}) {
     preferSetupRuntimeForChannelPlugins,
     forceFullRuntimeForChannelPlugins,
     preferBuiltPluginArtifacts,
+    installBundledRuntimeDeps: options.installBundledRuntimeDeps === true,
     shouldActivate: options.activate !== false,
     shouldLoadModules: options.loadModules !== false,
     runtimeSubagentMode,

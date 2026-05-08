@@ -333,6 +333,7 @@ export function resolvePluginProviders(params: {
   activate?: boolean;
   cache?: boolean;
   applyAutoEnable?: boolean;
+  installBundledRuntimeDeps?: boolean;
   pluginSdkResolution?: PluginLoadOptions["pluginSdkResolution"];
   mode?: "runtime" | "setup";
   includeUntrustedWorkspacePlugins?: boolean;

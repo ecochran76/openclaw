@@ -20,6 +20,7 @@ import { Compile } from "typebox/compile";
 import type { OpenClawConfig } from "../config/types.openclaw.js";
 import { toErrorObject } from "../infra/errors.js";
 import { logWarn } from "../logger.js";
+import type { BundleMcpServerConfig } from "../plugins/bundle-mcp.js";
 import type { PluginManifestRegistry } from "../plugins/manifest-registry.js";
 import { resolveGlobalSingleton } from "../shared/global-singleton.js";
 import {
@@ -437,14 +438,14 @@ function normalizeMcpServerAllowlist(names?: string[]): Set<string> | undefined 
 }
 
 function filterMcpServersForAllowlist(
-  servers: Record<string, unknown>,
+  servers: Record<string, BundleMcpServerConfig>,
   allowedServerNames?: string[],
-): Record<string, unknown> {
+): Record<string, BundleMcpServerConfig> {
   const allowlist = normalizeMcpServerAllowlist(allowedServerNames);
   if (!allowlist) {
     return servers;
   }
-  const filtered: Record<string, unknown> = {};
+  const filtered: Record<string, BundleMcpServerConfig> = {};
   for (const [serverName, config] of Object.entries(servers)) {
     const rawName = normalizeLowercaseStringOrEmpty(serverName);
     const safeName = normalizeLowercaseStringOrEmpty(sanitizeServerName(serverName, new Set()));
