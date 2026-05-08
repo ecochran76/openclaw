@@ -661,6 +661,31 @@ describe("loadWorkspaceSkillEntries", () => {
   );
 
   it.runIf(process.platform !== "win32")(
+    "allows extra skill root symlinks that resolve inside another configured trusted root",
+    async () => {
+      const workspaceDir = await createTempWorkspaceDir();
+      const sharedRoot = path.join(workspaceDir, "shared-skills");
+      const projectedRoot = path.join(workspaceDir, "projected-skills");
+      const sharedSkillDir = path.join(sharedRoot, "shared-skill");
+      await writeSkill({
+        dir: sharedSkillDir,
+        name: "shared-skill",
+        description: "Shared trusted skill",
+      });
+      await fs.mkdir(projectedRoot, { recursive: true });
+      await fs.symlink(sharedSkillDir, path.join(projectedRoot, "shared-skill"), "dir");
+      const warn = captureWarningLogger();
+
+      const entries = loadTestWorkspaceSkillEntries(workspaceDir, {
+        config: { skills: { load: { extraDirs: [projectedRoot, sharedRoot] } } },
+      });
+
+      expect(entries.map((entry) => entry.skill.name)).toContain("shared-skill");
+      expect(warn).not.toHaveBeenCalled();
+    },
+  );
+
+  it.runIf(process.platform !== "win32")(
     "calls out bundled symlink escapes with compact home-relative paths",
     async () => {
       const { workspaceDir, bundledDir, requestedPath } = await createEscapedBundledSkillFixture();
