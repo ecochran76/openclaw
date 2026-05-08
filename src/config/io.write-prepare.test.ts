@@ -516,6 +516,58 @@ describe("config io write prepare", () => {
     });
   });
 
+  it("does not resurrect runtime-deleted authored model params during unrelated writes", () => {
+    const sourceConfig: OpenClawConfig = {
+      agents: {
+        defaults: {
+          models: {
+            "openai/gpt-5.5": {
+              params: { thinking: "low" },
+            },
+            "openai-codex/gpt-5.5": {
+              params: { thinking: "low" },
+            },
+          },
+        },
+      },
+      commands: {
+        ownerDisplay: "raw",
+      },
+    };
+    const runtimeConfig: OpenClawConfig = {
+      agents: {
+        defaults: {
+          models: {
+            "openai/gpt-5.5": {
+              params: { thinking: "low" },
+            },
+          },
+        },
+      },
+      commands: {
+        ownerDisplay: "raw",
+      },
+    };
+    const persisted = resolvePersistCandidateForWrite({
+      runtimeConfig,
+      sourceConfig,
+      nextConfig: {
+        ...runtimeConfig,
+        commands: {
+          ownerDisplay: "raw",
+          ownerAllowFrom: ["slack:U123"],
+        },
+      },
+    }) as OpenClawConfig;
+
+    expect(persisted.agents?.defaults?.models).toEqual({
+      "openai/gpt-5.5": {
+        params: { thinking: "low" },
+      },
+    });
+    expect(persisted.commands?.ownerAllowFrom).toEqual(["slack:U123"]);
+  });
+
   it("preserves untouched include-owned subtrees during unrelated writes", () => {
     const persisted = resolvePersistCandidateForWrite({
       runtimeConfig: {

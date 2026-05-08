@@ -698,6 +698,35 @@ function projectRootAuthoredIncludeSibling(params: {
   return { ok: true, present: true, value };
 }
 
+function pruneRuntimeDeletedAuthoredAgentModels(params: {
+  persistedCandidate: unknown;
+  sourceConfig: unknown;
+  runtimeConfig: unknown;
+  nextConfig: unknown;
+}): { next: unknown; prunedPaths: string[][] } {
+  const models = getPathValue(params.sourceConfig, ["agents", "defaults", "models"]);
+  if (!isRecord(models)) {
+    return { next: params.persistedCandidate, prunedPaths: [] };
+  }
+  let next = params.persistedCandidate;
+  const prunedPaths: string[][] = [];
+  for (const [modelId, modelEntry] of Object.entries(models)) {
+    if (!isRecord(modelEntry) || !Object.prototype.hasOwnProperty.call(modelEntry, "params")) {
+      continue;
+    }
+    const modelPath = ["agents", "defaults", "models", modelId];
+    if (
+      getPathValue(params.runtimeConfig, modelPath) !== undefined ||
+      getPathValue(params.nextConfig, modelPath) !== undefined
+    ) {
+      continue;
+    }
+    next = unsetPathForWrite(next, modelPath).next;
+    prunedPaths.push(modelPath);
+  }
+  return { next, prunedPaths };
+}
+
 function preserveUntouchedIncludes(params: {
   runtimeConfig: unknown;
   sourceConfig: unknown;
@@ -941,13 +970,20 @@ export function resolvePersistCandidateForWrite(params: {
     nextConfig: params.nextConfig,
     persistedCandidate: persisted,
   });
+  const pruned = pruneRuntimeDeletedAuthoredAgentModels({
+    sourceConfig: params.sourceConfig,
+    runtimeConfig: params.runtimeConfig,
+    nextConfig: params.nextConfig,
+    persistedCandidate: withSchema,
+  });
+  const unsetPaths = [...(params.unsetPaths ?? []), ...pruned.prunedPaths];
   const withAuthoredParams = preserveAuthoredAgentParams({
     patch,
     sourceConfig: params.sourceConfig,
     nextConfig: params.nextConfig,
     rootAuthoredConfig,
-    persistedCandidate: withSchema,
-    unsetPaths: params.unsetPaths,
+    persistedCandidate: pruned.next,
+    unsetPaths,
   });
   return normalizeModelRefsForWrite(withAuthoredParams, params.modelIdNormalizationPolicies);
 }
