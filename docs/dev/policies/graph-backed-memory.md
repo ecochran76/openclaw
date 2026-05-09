@@ -39,9 +39,10 @@ This policy adapts the shared `graph-backed-memory-usage` module for the `ec-mai
 ## Partitioning
 
 - Use a repo/domain-specific group or namespace for OpenClaw `ec-main` operator facts when the Graphiti tool call supports it.
-- Preferred group id: `openclaw-ec-main`.
+- Preferred group id: `openclaw_ec_main`.
+- Do not create a parallel `openclaw-ec-main` group; older references to that hyphenated name should be treated as stale policy text and normalized to `openclaw_ec_main`.
 - Use narrower group ids only when isolation matters, such as tenant/profile-specific runtime facts.
-- Do not mix unrelated repos, tenants, or personal workflows into the `openclaw-ec-main` group.
+- Do not mix unrelated repos, tenants, or personal workflows into the `openclaw_ec_main` group.
 
 ## Maintenance
 
