@@ -1469,7 +1469,7 @@ describe("sessions tools", () => {
   });
 
   it("sessions_send resolves selector inputs via sessions.resolve", async () => {
-    const targetKey = "agent:dev-openclaw:slack:channel:c0ag96mgjtv:thread:1773000000.222222";
+    const targetKey = "agent:dev-openclaw:slack:channel:c0ag96mgjtv";
     callGatewayMock.mockImplementation(async (opts: unknown) => {
       const request = opts as {
         method?: string;
@@ -1482,7 +1482,6 @@ describe("sessions tools", () => {
           deliveryContext: {
             channel: "slack",
             to: "channel:C0AG96MGJTV",
-            threadId: "1773000000.222222",
           },
           resolution: {
             matchedBy: "search",
@@ -1539,7 +1538,6 @@ describe("sessions tools", () => {
       deliveryContext: {
         channel: "slack",
         to: "channel:C0AG96MGJTV",
-        threadId: "1773000000.222222",
       },
       resolution: {
         matchedBy: "search",
@@ -1571,8 +1569,96 @@ describe("sessions tools", () => {
     });
   });
 
+  it("sessions_send resolves agentId-only targets via sessions.resolve", async () => {
+    const targetKey = "agent:odollo-soylei:slack:channel:c09rasaadde";
+    callGatewayMock.mockImplementation(async (opts: unknown) => {
+      const request = opts as {
+        method?: string;
+        params?: Record<string, unknown>;
+      };
+      if (request.method === "sessions.resolve") {
+        return {
+          key: targetKey,
+          agentId: "odollo-soylei",
+          deliveryContext: {
+            channel: "slack",
+            to: "channel:C09RASAADDE",
+            accountId: "soylei",
+          },
+          resolution: {
+            matchedBy: "selector",
+            selection: "most-recent",
+          },
+        };
+      }
+      if (request.method === "agent") {
+        return { runId: "run-agent-id", acceptedAt: 789 };
+      }
+      if (request.method === "chat.history") {
+        return { messages: [] };
+      }
+      return {};
+    });
+
+    const tool = createTestTools({
+      agentSessionKey: "agent:soylei-primary:slack:channel:c0b0ak14b7x",
+      agentChannel: "slack",
+    }).find((candidate) => candidate.name === "sessions_send");
+    expect(tool).toBeDefined();
+    if (!tool) {
+      throw new Error("missing sessions_send tool");
+    }
+
+    const result = await tool.execute("call-agent-id-only", {
+      agentId: "odollo-soylei",
+      message: "handoff",
+      timeoutSeconds: 0,
+    });
+    const details = result.details as {
+      status?: string;
+      sessionKey?: string;
+      resolvedTarget?: {
+        sessionKey?: string;
+        agentId?: string;
+        deliveryContext?: { channel?: string; to?: string; accountId?: string };
+        resolution?: { matchedBy?: string; selection?: string };
+      };
+    };
+    expect(details.status).toBe("accepted");
+    expect(details.sessionKey).toBe(targetKey);
+    expect(details.resolvedTarget).toEqual({
+      sessionKey: targetKey,
+      agentId: "odollo-soylei",
+      deliveryContext: {
+        channel: "slack",
+        to: "channel:C09RASAADDE",
+        accountId: "soylei",
+      },
+      resolution: {
+        matchedBy: "selector",
+        selection: "most-recent",
+      },
+    });
+    const resolveCall = callGatewayMock.mock.calls.find(
+      (call) => (call[0] as { method?: string }).method === "sessions.resolve",
+    );
+    expect(resolveCall?.[0]).toMatchObject({
+      method: "sessions.resolve",
+      params: {
+        agentId: "odollo-soylei",
+      },
+    });
+    const agentCall = callGatewayMock.mock.calls.find(
+      (call) => (call[0] as { method?: string }).method === "agent",
+    );
+    expect(agentCall?.[0]).toMatchObject({
+      method: "agent",
+      params: { sessionKey: targetKey },
+    });
+  });
+
   it("sessions_send translates natural sessionKey selectors into sessions.resolve filters", async () => {
-    const targetKey = "agent:dev-openclaw:slack:channel:c0ag96mgjtv:thread:1773000000.222222";
+    const targetKey = "agent:dev-openclaw:slack:channel:c0ag96mgjtv";
     callGatewayMock.mockImplementation(async (opts: unknown) => {
       const request = opts as {
         method?: string;
@@ -1585,7 +1671,6 @@ describe("sessions tools", () => {
           deliveryContext: {
             channel: "slack",
             to: "channel:C0AG96MGJTV",
-            threadId: "1773000000.222222",
           },
           resolution: {
             matchedBy: "search",

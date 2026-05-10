@@ -210,6 +210,68 @@ describe("resolveSessionKeyFromResolveParams", () => {
     });
   });
 
+  it("resolves agentId-only selectors to the most recent deliverable channel root", async () => {
+    const targetKey = "agent:crm:slack:channel:c09rasaadde";
+    hoisted.listAgentIdsMock.mockReturnValue(["main", "crm"]);
+    hoisted.loadCombinedSessionStoreForGatewayMock.mockReturnValue({
+      storePath,
+      store: {
+        [targetKey]: { sessionId: "sess-crm-root", updatedAt: 10 },
+        "agent:crm:monitor-dispatch:latest": {
+          sessionId: "sess-crm-monitor",
+          updatedAt: 30,
+        },
+      },
+    });
+    hoisted.listSessionsFromStoreMock.mockReturnValue({
+      sessions: [
+        {
+          key: "agent:crm:monitor-dispatch:latest",
+          sessionId: "sess-crm-monitor",
+          updatedAt: 30,
+        },
+        {
+          key: targetKey,
+          sessionId: "sess-crm-root",
+          updatedAt: 10,
+          deliveryContext: {
+            channel: "slack",
+            to: "channel:C09RASAADDE",
+            accountId: "soylei",
+          },
+        },
+      ],
+    });
+
+    const result = await resolveSessionKeyFromResolveParams({
+      cfg: { agents: { list: [{ id: "main" }, { id: "crm" }] } },
+      p: { agentId: "crm" },
+    });
+
+    expect(result).toMatchObject({
+      ok: true,
+      key: targetKey,
+      agentId: "crm",
+      deliveryContext: {
+        channel: "slack",
+        to: "channel:C09RASAADDE",
+        accountId: "soylei",
+      },
+      resolution: {
+        matchedBy: "selector",
+        selection: "most-recent",
+      },
+    });
+    expect(hoisted.listSessionsFromStoreMock).toHaveBeenCalledWith({
+      cfg: { agents: { list: [{ id: "main" }, { id: "crm" }] } },
+      storePath,
+      store: expect.any(Object),
+      opts: expect.objectContaining({
+        agentId: "crm",
+      }),
+    });
+  });
+
   it("rejects non-alias agent:main sessions when main is no longer configured", async () => {
     const staleMainKey = "agent:main:guildchat:direct:u1";
     targetStore = {

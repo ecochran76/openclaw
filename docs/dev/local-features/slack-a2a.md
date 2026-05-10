@@ -39,6 +39,7 @@ That makes this one of the highest-value local docs to maintain.
 ### Target resolution
 
 - selector targeting in `sessions_send`
+- agent-id-only `sessions_send` targeting resolves through `sessions.resolve` and prefers a deliverable channel-root session over internal monitor sessions
 - thread-aware targeting in `sessions.resolve`
 - natural-language selector phrases for recent A2A sessions
 

@@ -493,11 +493,18 @@ export function createSessionsSendTool(opts?: {
       const hasNaturalSelector = Boolean(
         naturalSessionSelector && !hasSelectorParams && !labelParam,
       );
-      const hasExplicitSessionKey = Boolean(sessionKeyParam && !hasNaturalSelector);
+      const hasAgentIdOnlySelector = Boolean(
+        requestedAgentIdParam &&
+        !sessionKeyParam &&
+        !labelParam &&
+        !hasSelectorParams &&
+        !hasNaturalSelector,
+      );
+      const hasSelectorTarget = hasSelectorParams || hasNaturalSelector || hasAgentIdOnlySelector;
       const targetModeCount = [
-        hasExplicitSessionKey,
-        Boolean(labelParam && !hasExplicitSessionKey),
-        hasSelectorParams || hasNaturalSelector,
+        Boolean(sessionKeyParam && !hasNaturalSelector),
+        Boolean(labelParam),
+        hasSelectorTarget,
       ].filter(Boolean).length;
       if (targetModeCount > 1) {
         return jsonResult({
@@ -512,11 +519,7 @@ export function createSessionsSendTool(opts?: {
         ? normalizeAgentId(requestedAgentIdParam)
         : undefined;
       const effectiveRequestedAgentId = requestedAgentId ?? naturalSessionSelector?.agentId;
-      if (
-        (labelParam || hasSelectorParams || hasNaturalSelector) &&
-        restrictToSpawned &&
-        effectiveRequestedAgentId
-      ) {
+      if ((labelParam || hasSelectorTarget) && restrictToSpawned && effectiveRequestedAgentId) {
         if (effectiveRequestedAgentId !== requesterResolutionAgentId) {
           return jsonResult({
             runId: crypto.randomUUID(),
@@ -526,7 +529,7 @@ export function createSessionsSendTool(opts?: {
         }
       }
       if (
-        (labelParam || hasSelectorParams || hasNaturalSelector) &&
+        (labelParam || hasSelectorTarget) &&
         requesterResolutionAgentId &&
         effectiveRequestedAgentId
       ) {
@@ -559,27 +562,6 @@ export function createSessionsSendTool(opts?: {
         selectorThreadPolicyParam ?? naturalSessionSelector?.threadPolicy;
 
       let sessionKey = hasNaturalSelector ? undefined : sessionKeyParam;
-      if (
-        !sessionKey &&
-        !labelParam &&
-        !hasSelectorParams &&
-        !hasNaturalSelector &&
-        requestedAgentIdParam
-      ) {
-        const agentMainKey = resolveConfiguredAgentMainSessionKey({
-          cfg,
-          agentId: requestedAgentIdParam,
-          mainKey,
-        });
-        if (!agentMainKey) {
-          return jsonResult({
-            runId: crypto.randomUUID(),
-            status: "error",
-            error: `agent not found: ${requestedAgentIdParam}`,
-          });
-        }
-        sessionKey = agentMainKey;
-      }
       let resolvedTarget:
         | {
             sessionKey: string;
@@ -600,7 +582,7 @@ export function createSessionsSendTool(opts?: {
             };
           }
         | undefined;
-      if (!sessionKey && (labelParam || hasSelectorParams || hasNaturalSelector)) {
+      if (!sessionKey && (labelParam || hasSelectorTarget)) {
         const resolveParams: Record<string, unknown> = {
           ...(labelParam ? { label: labelParam } : {}),
           ...(effectiveRequestedAgentId ? { agentId: effectiveRequestedAgentId } : {}),

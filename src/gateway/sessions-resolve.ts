@@ -376,9 +376,15 @@ export async function resolveSessionKeyFromResolveParams(params: {
       selection ||
       threadPolicy,
     ) || activeMinutes !== undefined;
-  const selectionCount = [hasKey, hasSessionId, hasLabel, hasSelectorFilters].filter(
-    Boolean,
-  ).length;
+  const hasAgentOnlySelector = Boolean(
+    p.agentId && !hasKey && !hasSessionId && !hasLabel && !hasSelectorFilters,
+  );
+  const selectionCount = [
+    hasKey,
+    hasSessionId,
+    hasLabel,
+    hasSelectorFilters || hasAgentOnlySelector,
+  ].filter(Boolean).length;
   if (selectionCount > 1) {
     return {
       ok: false,
@@ -569,7 +575,7 @@ export async function resolveSessionKeyFromResolveParams(params: {
   }
 
   const hasTargetSelector = Boolean(channel || to || accountId || threadId);
-  if (!hasTargetSelector && !search) {
+  if (!hasTargetSelector && !search && !hasAgentOnlySelector) {
     return {
       ok: false,
       error: errorShape(
@@ -618,6 +624,19 @@ export async function resolveSessionKeyFromResolveParams(params: {
     }
     return matchesSearch(row, search ?? "", resolvedSearchFields);
   });
+  if (hasAgentOnlySelector) {
+    const channelRoots = matches.filter(
+      (row) => resolveRowChannel(row) && resolveRowTo(row) && !resolveRowThreadId(row),
+    );
+    if (channelRoots.length > 0) {
+      matches = channelRoots;
+    } else {
+      const deliverable = matches.filter((row) => resolveRowChannel(row) && resolveRowTo(row));
+      if (deliverable.length > 0) {
+        matches = deliverable;
+      }
+    }
+  }
 
   let fallbackUsed = false;
   if (effectiveThreadPolicy === "channel-root") {
@@ -655,7 +674,8 @@ export async function resolveSessionKeyFromResolveParams(params: {
     });
   }
 
-  const selected = selectRowByOrder(matches, selection);
+  const effectiveSelection = selection ?? (hasAgentOnlySelector ? "most-recent" : undefined);
+  const selected = selectRowByOrder(matches, effectiveSelection);
   if (selected.length > 1) {
     const keys = sortByUpdatedDesc(selected)
       .slice(0, 10)
@@ -675,14 +695,19 @@ export async function resolveSessionKeyFromResolveParams(params: {
     return agentCheckSelected;
   }
 
-  const matchedBy: ResolveMatchedBy =
-    hasTargetSelector && search ? "selector" : hasTargetSelector ? "delivery-target" : "search";
+  const matchedBy: ResolveMatchedBy = hasAgentOnlySelector
+    ? "selector"
+    : hasTargetSelector && search
+      ? "selector"
+      : hasTargetSelector
+        ? "delivery-target"
+        : "search";
 
   return buildSuccessFromRow({
     row: selected[0],
     matchedBy,
     threadPolicy: effectiveThreadPolicy,
-    selection,
+    selection: effectiveSelection,
     fallbackUsed,
     search,
     searchFields: resolvedSearchFields,
