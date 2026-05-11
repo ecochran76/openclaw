@@ -106,7 +106,7 @@ export async function runSessionsSendA2AFlow(params: {
     if (!primaryReply && params.waitRunId) {
       const wait = await waitForAgentRun({
         runId: params.waitRunId,
-        timeoutMs: Math.min(params.announceTimeoutMs, 60_000),
+        timeoutMs: params.announceTimeoutMs,
         callGateway: sessionsSendA2ADeps.callGateway,
       });
       if (wait.status === "ok") {

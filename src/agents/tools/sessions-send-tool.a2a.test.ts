@@ -324,7 +324,7 @@ describe("runSessionsSendA2AFlow announce delivery", () => {
       targetSessionKey: "agent:main:discord:group:dev",
       displayKey: "agent:main:discord:group:dev",
       message: "Test message",
-      announceTimeoutMs: 10_000,
+      announceTimeoutMs: 300_000,
       maxPingPongTurns: 2,
       requesterSessionKey: "agent:main:discord:group:req",
       requesterChannel: "discord",
@@ -336,6 +336,7 @@ describe("runSessionsSendA2AFlow announce delivery", () => {
     });
 
     expect(firstMockArg(vi.mocked(waitForAgentRun), "agent run wait").runId).toBe("run-delayed");
+    expect(firstMockArg(vi.mocked(waitForAgentRun), "agent run wait").timeoutMs).toBe(300_000);
     expect(
       firstMockArg(vi.mocked(readLatestAssistantReplySnapshot), "assistant reply snapshot")
         .sessionKey,

@@ -744,8 +744,7 @@ export function createSessionsSendTool(opts?: {
         clampA2ATimeoutSeconds(
           typeof params.a2aTimeoutSeconds === "number" ? params.a2aTimeoutSeconds : undefined,
         ) * 1000;
-      const a2aStepTimeoutMs =
-        timeoutSeconds === 0 ? a2aTimeoutMs : Math.min(announceTimeoutMs, a2aTimeoutMs);
+      const a2aStepTimeoutMs = a2aTimeoutMs;
       const idempotencyKey = crypto.randomUUID();
       let runId: string = idempotencyKey;
       if (parseSessionThreadInfoFast(resolvedKey).threadId) {

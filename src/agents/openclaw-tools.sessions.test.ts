@@ -2681,6 +2681,7 @@ describe("sessions tools", () => {
       sessionKey: targetKey,
       message: "ping",
       timeoutSeconds: 1,
+      a2aTimeoutSeconds: 7,
     });
     const details = sessionsSendDetails(result.details);
     expect(details.status).toBe("accepted");
@@ -2720,6 +2721,14 @@ describe("sessions tools", () => {
     expect(replyParams?.message).toContain("late director reply");
     expect(replyParams?.extraSystemPrompt).toContain("Agent-to-agent reply step");
     expect(replyParams?.extraSystemPrompt).toContain("Current agent: Agent 1 (requester)");
+    const targetWaitTimeouts = calls
+      .filter(
+        (call) =>
+          call.method === "agent.wait" &&
+          (call.params as { runId?: string } | undefined)?.runId === "run-target",
+      )
+      .map((call) => (call.params as { timeoutMs?: number } | undefined)?.timeoutMs);
+    expect(targetWaitTimeouts).toEqual([1000, 7000]);
     expect(calls.find((call) => call.method === "send")).toBeUndefined();
   });
 
