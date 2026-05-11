@@ -9981,7 +9981,75 @@ describe("sendPolicy deny — suppress delivery, not processing (#53328)", () =>
     expect(dispatcher.sendFinalReply).not.toHaveBeenCalled();
   });
 
-  it("keeps same-provider group/channel final replies private in message-tool-only mode", async () => {
+  it("honors automatic group visible replies for Slack channel-shaped turns without ChatType", async () => {
+    setNoAbort();
+    const dispatcher = createDispatcher();
+    const replyResolver = vi.fn(async (_ctx: MsgContext, opts?: GetReplyOptions) => {
+      expect(opts?.sourceReplyDeliveryMode).toBe("automatic");
+      return { text: "visible Slack channel final" } satisfies ReplyPayload;
+    });
+
+    const result = await dispatchReplyFromConfig({
+      ctx: buildTestCtx({
+        ChatType: undefined,
+        CommandSource: undefined,
+        Provider: "slack",
+        Surface: "slack",
+        OriginatingChannel: "slack",
+        OriginatingTo: "channel:C09RASAADDE",
+        To: "channel:C09RASAADDE",
+        SessionKey: "agent:odollo-soylei:slack:channel:c09rasaadde:thread:1778365852.532279",
+      }),
+      cfg: {
+        messages: {
+          groupChat: {
+            visibleReplies: "automatic",
+          },
+        },
+      } as OpenClawConfig,
+      dispatcher,
+      replyResolver,
+    });
+
+    expect(replyResolver).toHaveBeenCalledTimes(1);
+    expect(result.queuedFinal).toBe(true);
+    expect(dispatcher.sendFinalReply).toHaveBeenCalledWith(
+      expect.objectContaining({ text: "visible Slack channel final" }),
+    );
+  });
+
+  it("keeps inferred Slack channel turns visible when group visible replies are unset", async () => {
+    setNoAbort();
+    const dispatcher = createDispatcher();
+    const replyResolver = vi.fn(async (_ctx: MsgContext, opts?: GetReplyOptions) => {
+      expect(opts?.sourceReplyDeliveryMode).toBe("automatic");
+      return { text: "private Slack channel final" } satisfies ReplyPayload;
+    });
+
+    const result = await dispatchReplyFromConfig({
+      ctx: buildTestCtx({
+        ChatType: undefined,
+        CommandSource: undefined,
+        Provider: "slack",
+        Surface: "slack",
+        OriginatingChannel: "slack",
+        OriginatingTo: "channel:C09RASAADDE",
+        To: "channel:C09RASAADDE",
+        SessionKey: "agent:odollo-soylei:slack:channel:c09rasaadde:thread:1778365852.532279",
+      }),
+      cfg: emptyConfig,
+      dispatcher,
+      replyResolver,
+    });
+
+    expect(replyResolver).toHaveBeenCalledTimes(1);
+    expect(result.queuedFinal).toBe(true);
+    expect(dispatcher.sendFinalReply).toHaveBeenCalledWith(
+      expect.objectContaining({ text: "private Slack channel final" }),
+    );
+  });
+
+  it("does not auto-route same-provider group/channel final replies in message-tool-only mode", async () => {
     setNoAbort();
     mocks.routeReply.mockClear();
     const dispatcher = createDispatcher();

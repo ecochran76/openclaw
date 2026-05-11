@@ -9,6 +9,11 @@ export type CommandSessionMetadataChange = {
 };
 
 const commandSessionMetadataChanges = new WeakMap<object, CommandSessionMetadataChange[]>();
+const commandSessionMetadataChangesKey = Symbol.for("openclaw.commandSessionMetadataChanges");
+
+type CommandSessionMetadataTarget = {
+  [commandSessionMetadataChangesKey]?: CommandSessionMetadataChange[];
+};
 
 function addChange(target: object, change: CommandSessionMetadataChange): void {
   const changes = commandSessionMetadataChanges.get(target) ?? [];
@@ -23,6 +28,10 @@ function addChange(target: object, change: CommandSessionMetadataChange): void {
     changes.push(change);
   }
   commandSessionMetadataChanges.set(target, changes);
+  Object.defineProperty(target, commandSessionMetadataChangesKey, {
+    configurable: true,
+    value: changes,
+  });
 }
 
 export function markCommandSessionMetadataChanged(
@@ -52,8 +61,11 @@ export function markCommandSessionMetadataChanged(
 export function takeCommandSessionMetadataChanges(
   target: object,
 ): CommandSessionMetadataChange[] | undefined {
-  const changes = commandSessionMetadataChanges.get(target);
+  const symbolTarget = target as CommandSessionMetadataTarget;
+  const changes =
+    commandSessionMetadataChanges.get(target) ?? symbolTarget[commandSessionMetadataChangesKey];
   commandSessionMetadataChanges.delete(target);
+  delete symbolTarget[commandSessionMetadataChangesKey];
   return changes && changes.length > 0 ? changes : undefined;
 }
 

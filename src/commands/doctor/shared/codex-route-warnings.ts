@@ -105,8 +105,30 @@ function isProviderlessModelRef(model: unknown): model is string {
   return Boolean(normalized && !normalized.includes("/"));
 }
 
+function toOpenAICodexModelId(model: string | undefined): string | undefined {
+  if (!model) {
+    return undefined;
+  }
+  const normalized = normalizeString(model);
+  if (!normalized) {
+    return undefined;
+  }
+  if (normalized.startsWith("openai-codex/")) {
+    return normalized.slice("openai-codex/".length).trim() || undefined;
+  }
+  return normalized;
+}
+
+function isRetiredOpenAICodexModelId(modelId: string | undefined): boolean {
+  return /^gpt-5\.[123](?:$|[-.])/.test(modelId ?? "");
+}
+
+function isRetiredOpenAICodexModelRef(model: string | undefined): model is string {
+  return isOpenAICodexModelRef(model) && isRetiredOpenAICodexModelId(toOpenAICodexModelId(model));
+}
+
 function toCanonicalOpenAIModelRef(model: string): string | undefined {
-  if (!isOpenAICodexModelRef(model)) {
+  if (!isRetiredOpenAICodexModelRef(model)) {
     return undefined;
   }
   const modelId = model.slice("openai-codex/".length).trim();
@@ -114,7 +136,7 @@ function toCanonicalOpenAIModelRef(model: string): string | undefined {
 }
 
 function toOpenAIModelId(model: string): string | undefined {
-  if (!isOpenAICodexModelRef(model)) {
+  if (!isRetiredOpenAICodexModelRef(model)) {
     return undefined;
   }
   const modelId = model.slice("openai-codex/".length).trim();
@@ -160,7 +182,7 @@ function collectStringModelSlot(params: {
     return false;
   }
   const model = params.value.trim();
-  if (!model || !isOpenAICodexModelRef(model)) {
+  if (!model || !isRetiredOpenAICodexModelRef(model)) {
     return false;
   }
   return Boolean(
@@ -861,7 +883,7 @@ function collectModelsMapRefs(params: {
     return;
   }
   for (const modelRef of Object.keys(record)) {
-    if (!isOpenAICodexModelRef(modelRef)) {
+    if (!isRetiredOpenAICodexModelRef(modelRef)) {
       continue;
     }
     recordCodexModelHit({
@@ -1258,7 +1280,7 @@ function rewriteStringModelSlot(params: {
   }
   const value = params.container[params.key];
   const model = typeof value === "string" ? value.trim() : "";
-  if (!model || !isOpenAICodexModelRef(model)) {
+  if (!model || !isRetiredOpenAICodexModelRef(model)) {
     return false;
   }
   const canonicalModel = recordCodexModelHit({
@@ -2751,7 +2773,7 @@ export function collectCodexRouteWarnings(params: {
   if (hits.length > 0) {
     warnings.push(
       [
-        "- Legacy `openai-codex/*` model refs should be rewritten to `openai/*`.",
+        "- Retired `openai-codex/gpt-5.1*`, `openai-codex/gpt-5.2*`, and `openai-codex/gpt-5.3*` model refs should be rewritten to `openai/*`.",
         ...hits.map(
           (hit) =>
             `- ${hit.path}: ${hit.model} should become ${hit.canonicalModel}${
@@ -2888,7 +2910,7 @@ function rewriteSessionModelPair(params: {
   const provider = normalizeString(params.entry[params.providerKey]);
   const model =
     typeof params.entry[params.modelKey] === "string" ? params.entry[params.modelKey] : undefined;
-  if (provider === "openai-codex") {
+  if (provider === "openai-codex" && isRetiredOpenAICodexModelId(toOpenAICodexModelId(model))) {
     params.entry[params.providerKey] = "openai";
     if (model) {
       const modelId = toOpenAIModelId(model);
@@ -2898,7 +2920,7 @@ function rewriteSessionModelPair(params: {
     }
     return true;
   }
-  if (model && isOpenAICodexModelRef(model)) {
+  if (model && isRetiredOpenAICodexModelRef(model)) {
     const canonicalModel = toCanonicalOpenAIModelRef(model);
     if (canonicalModel) {
       params.entry[params.modelKey] = canonicalModel;
@@ -2910,8 +2932,8 @@ function rewriteSessionModelPair(params: {
 
 function clearStaleCodexFallbackNotice(entry: SessionEntry): boolean {
   if (
-    !isOpenAICodexModelRef(entry.fallbackNoticeSelectedModel) &&
-    !isOpenAICodexModelRef(entry.fallbackNoticeActiveModel)
+    !isRetiredOpenAICodexModelRef(entry.fallbackNoticeSelectedModel) &&
+    !isRetiredOpenAICodexModelRef(entry.fallbackNoticeActiveModel)
   ) {
     return false;
   }
@@ -3006,17 +3028,19 @@ function scanCodexSessionStoreRoutes(store: Record<string, SessionEntry>): strin
       return [];
     }
     const hasLegacyRoute =
-      normalizeString(entry.modelProvider) === "openai-codex" ||
-      normalizeString(entry.providerOverride) === "openai-codex" ||
-      isOpenAICodexModelRef(entry.model) ||
-      isOpenAICodexModelRef(entry.modelOverride) ||
+      (normalizeString(entry.modelProvider) === "openai-codex" &&
+        isRetiredOpenAICodexModelId(toOpenAICodexModelId(entry.model))) ||
+      (normalizeString(entry.providerOverride) === "openai-codex" &&
+        isRetiredOpenAICodexModelId(toOpenAICodexModelId(entry.modelOverride))) ||
+      isRetiredOpenAICodexModelRef(entry.model) ||
+      isRetiredOpenAICodexModelRef(entry.modelOverride) ||
       (isProviderlessModelRef(entry.modelOverride) &&
         isOpenAICodexAuthProfileRef(entry.authProfileOverride) &&
         entry.authProfileOverrideSource === "auto" &&
         entry.modelOverrideSource === "auto" &&
         !normalizeString(entry.providerOverride)) ||
-      isOpenAICodexModelRef(entry.fallbackNoticeSelectedModel) ||
-      isOpenAICodexModelRef(entry.fallbackNoticeActiveModel);
+      isRetiredOpenAICodexModelRef(entry.fallbackNoticeSelectedModel) ||
+      isRetiredOpenAICodexModelRef(entry.fallbackNoticeActiveModel);
     return hasLegacyRoute ? [sessionKey] : [];
   });
 }
@@ -3055,7 +3079,7 @@ export async function maybeRepairCodexSessionRoutes(params: {
         stale.length > 0
           ? [
               [
-                "- Legacy `openai-codex/*` session route state detected.",
+                "- Retired `openai-codex/*` session route state detected.",
                 `- Affected sessions: ${stale.length}.`,
                 "- Run `openclaw doctor --fix` to rewrite stale session model/provider pins across all agent session stores.",
               ].join("\n"),

@@ -686,7 +686,7 @@ describe("doctor repair sequencing", () => {
   it("moves legacy Codex routes to canonical OpenAI before missing plugin install repair", async () => {
     mocks.repairMissingConfiguredPluginInstalls.mockImplementationOnce(
       async (params: { cfg: OpenClawConfig }) => {
-        expect(params.cfg.agents?.defaults?.model).toBe("openai/gpt-5.5");
+        expect(params.cfg.agents?.defaults?.model).toBe("openai/gpt-5.3-codex");
         expect(params.cfg.agents?.defaults?.agentRuntime).toBeUndefined();
         return {
           changes: [],
@@ -700,14 +700,14 @@ describe("doctor repair sequencing", () => {
         cfg: {
           agents: {
             defaults: {
-              model: "openai-codex/gpt-5.5",
+              model: "openai-codex/gpt-5.3-codex",
             },
           },
         } as OpenClawConfig,
         candidate: {
           agents: {
             defaults: {
-              model: "openai-codex/gpt-5.5",
+              model: "openai-codex/gpt-5.3-codex",
             },
           },
         } as OpenClawConfig,
@@ -719,10 +719,10 @@ describe("doctor repair sequencing", () => {
     });
 
     expect(result.state.pendingChanges).toBe(true);
-    expect(result.state.candidate.agents?.defaults?.model).toBe("openai/gpt-5.5");
+    expect(result.state.candidate.agents?.defaults?.model).toBe("openai/gpt-5.3-codex");
     expect(result.state.candidate.agents?.defaults?.agentRuntime).toBeUndefined();
     expect(result.changeNotes).toStrictEqual([
-      'Repaired Codex model routes:- agents.defaults.model: openai-codex/gpt-5.5 -> openai/gpt-5.5.\nSet agents.defaults.models.openai/gpt-5.5.agentRuntime.id to "codex" so repaired OpenAI refs keep Codex auth routing.',
+      'Repaired Codex model routes:- agents.defaults.model: openai-codex/gpt-5.3-codex -> openai/gpt-5.3-codex.\nSet agents.defaults.models.openai/gpt-5.3-codex.agentRuntime.id to "codex" so repaired OpenAI refs keep Codex auth routing.',
     ]);
   });
 
@@ -730,11 +730,11 @@ describe("doctor repair sequencing", () => {
     mocks.repairMissingConfiguredPluginInstalls.mockImplementationOnce(
       async (params: { cfg: OpenClawConfig }) => {
         expect(params.cfg.plugins?.entries?.codex?.enabled).toBe(true);
-        expect(params.cfg.agents?.defaults?.model).toBe("openai/gpt-5.5");
-        expect(params.cfg.agents?.defaults?.models?.["openai/gpt-5.5"]?.agentRuntime).toEqual({
+        expect(params.cfg.agents?.defaults?.model).toBe("openai/gpt-5.3-codex");
+        expect(params.cfg.agents?.defaults?.models?.["openai/gpt-5.3-codex"]?.agentRuntime).toEqual({
           id: "codex",
         });
-        expect(params.cfg.agents?.defaults?.models?.["openai-codex/gpt-5.5"]).toBeUndefined();
+        expect(params.cfg.agents?.defaults?.models?.["openai-codex/gpt-5.3-codex"]).toBeUndefined();
         return {
           changes: [],
           warnings: [],
@@ -751,9 +751,9 @@ describe("doctor repair sequencing", () => {
       },
       agents: {
         defaults: {
-          model: "openai-codex/gpt-5.5",
+          model: "openai-codex/gpt-5.3-codex",
           models: {
-            "openai-codex/gpt-5.5": {
+            "openai-codex/gpt-5.3-codex": {
               params: { reasoning_effort: "high" },
             },
           },
@@ -775,21 +775,21 @@ describe("doctor repair sequencing", () => {
     expect(result.state.pendingChanges).toBe(true);
     expect(result.state.candidate.plugins?.allow).toEqual(["openai", "codex"]);
     expect(result.state.candidate.plugins?.entries?.codex?.enabled).toBe(true);
-    expect(result.state.candidate.agents?.defaults?.model).toBe("openai/gpt-5.5");
+    expect(result.state.candidate.agents?.defaults?.model).toBe("openai/gpt-5.3-codex");
     expect(
-      result.state.candidate.agents?.defaults?.models?.["openai-codex/gpt-5.5"],
+      result.state.candidate.agents?.defaults?.models?.["openai-codex/gpt-5.3-codex"],
     ).toBeUndefined();
-    expect(result.state.candidate.agents?.defaults?.models?.["openai/gpt-5.5"]).toMatchObject({
+    expect(result.state.candidate.agents?.defaults?.models?.["openai/gpt-5.3-codex"]).toMatchObject({
       params: { reasoning_effort: "high" },
       agentRuntime: { id: "codex" },
     });
     const changeNotes = result.changeNotes.join("\n");
-    expect(changeNotes).toContain("agents.defaults.model: openai-codex/gpt-5.5 -> openai/gpt-5.5");
+    expect(changeNotes).toContain("agents.defaults.model: openai-codex/gpt-5.3-codex -> openai/gpt-5.3-codex");
     expect(changeNotes).toContain(
-      "agents.defaults.models.openai-codex/gpt-5.5: openai-codex/gpt-5.5 -> openai/gpt-5.5",
+      "agents.defaults.models.openai-codex/gpt-5.3-codex: openai-codex/gpt-5.3-codex -> openai/gpt-5.3-codex",
     );
     expect(changeNotes).toContain(
-      'Set agents.defaults.models.openai/gpt-5.5.agentRuntime.id to "codex"',
+      'Set agents.defaults.models.openai/gpt-5.3-codex.agentRuntime.id to "codex"',
     );
     expect(changeNotes).toContain("Added codex to plugins.allow");
   });

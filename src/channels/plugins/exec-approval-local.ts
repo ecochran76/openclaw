@@ -32,7 +32,8 @@ export function shouldSuppressLocalExecApprovalPrompt(params: {
     accountId: params.accountId,
     approvalKind: "exec",
   });
-  const pluginDecision = getChannelPlugin(channel)?.outbound?.shouldSuppressLocalPayloadPrompt?.({
+  const pluginSuppressor = getChannelPlugin(channel)?.outbound?.shouldSuppressLocalPayloadPrompt;
+  const pluginDecision = pluginSuppressor?.({
     cfg: params.cfg,
     accountId: params.accountId,
     payload: params.payload,
@@ -42,5 +43,8 @@ export function shouldSuppressLocalExecApprovalPrompt(params: {
       nativeRouteActive,
     },
   });
-  return pluginDecision === true || (nativeRouteActive && hasExecApprovalPrompt(params.payload));
+  if (pluginSuppressor) {
+    return pluginDecision === true;
+  }
+  return nativeRouteActive && hasExecApprovalPrompt(params.payload);
 }

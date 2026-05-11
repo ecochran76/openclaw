@@ -78,6 +78,13 @@ export function resolveSourceReplyDeliveryMode(params: {
     return params.requested;
   }
   if (
+    (normalizeChatType(params.ctx.ChatType) === "group" ||
+      normalizeChatType(params.ctx.ChatType) === "channel") &&
+    isUnauthorizedTextSlashCommand(params.ctx)
+  ) {
+    return "message_tool_only";
+  }
+  if (
     params.ctx.CommandSource === "native" ||
     params.ctx.CommandSource === "text" ||
     isExplicitSourceReplyCommand(params.ctx, params.cfg)
@@ -85,12 +92,6 @@ export function resolveSourceReplyDeliveryMode(params: {
     return "automatic";
   }
   const chatType = normalizeChatType(params.ctx.ChatType);
-  if (
-    (chatType === "group" || chatType === "channel") &&
-    isUnauthorizedTextSlashCommand(params.ctx)
-  ) {
-    return "message_tool_only";
-  }
   let mode: SourceReplyDeliveryMode;
   if (chatType === "group" || chatType === "channel") {
     const configuredMode =
@@ -99,7 +100,8 @@ export function resolveSourceReplyDeliveryMode(params: {
   } else {
     const configuredMode =
       params.cfg.messages?.visibleReplies ??
-      (isInternalSourceReplyChannel(params.ctx) ? "automatic" : params.defaultVisibleReplies);
+      params.defaultVisibleReplies ??
+      (isInternalSourceReplyChannel(params.ctx) ? "automatic" : undefined);
     mode = configuredMode === "message_tool" ? "message_tool_only" : "automatic";
   }
   if (mode === "message_tool_only" && params.messageToolAvailable === false) {

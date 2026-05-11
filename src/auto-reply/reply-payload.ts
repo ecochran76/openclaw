@@ -206,20 +206,35 @@ export type ReplyPayloadMetadata = {
 };
 
 const replyPayloadMetadata = new WeakMap<object, ReplyPayloadMetadata>();
+const replyPayloadMetadataKey = Symbol.for("openclaw.replyPayloadMetadata");
+
+type ReplyPayloadMetadataTarget = {
+  [replyPayloadMetadataKey]?: ReplyPayloadMetadata;
+};
 
 /** Adds internal metadata to a reply payload object. */
 export function setReplyPayloadMetadata<T extends object>(
   payload: T,
   metadata: ReplyPayloadMetadata,
 ): T {
-  const previous = replyPayloadMetadata.get(payload);
-  replyPayloadMetadata.set(payload, { ...previous, ...metadata });
+  const metadataTarget = payload as ReplyPayloadMetadataTarget;
+  const previous =
+    replyPayloadMetadata.get(payload) ?? metadataTarget[replyPayloadMetadataKey];
+  const next = { ...previous, ...metadata };
+  replyPayloadMetadata.set(payload, next);
+  Object.defineProperty(payload, replyPayloadMetadataKey, {
+    configurable: true,
+    value: next,
+  });
   return payload;
 }
 
 /** Reads internal metadata attached to a reply payload object. */
 export function getReplyPayloadMetadata(payload: object): ReplyPayloadMetadata | undefined {
-  return replyPayloadMetadata.get(payload);
+  return (
+    replyPayloadMetadata.get(payload) ??
+    (payload as ReplyPayloadMetadataTarget)[replyPayloadMetadataKey]
+  );
 }
 
 /** Returns true when a payload is the synthesized warning for a non-terminal tool error. */

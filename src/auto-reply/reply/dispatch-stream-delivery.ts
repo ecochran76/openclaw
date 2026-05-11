@@ -3,7 +3,8 @@ import { getA2APermissionApprovalReplyMetadata } from "../../agents/a2a/permissi
 import { shouldSuppressLocalExecApprovalPrompt } from "../../channels/plugins/exec-approval-local.js";
 import type { OpenClawConfig } from "../../config/config.js";
 import { normalizeMessageChannel } from "../../utils/message-channel.js";
-import { getReplyPayloadMetadata, type BlockReplyContext, type ReplyPayload } from "../types.js";
+import { getReplyPayloadMetadata } from "../reply-payload.js";
+import type { BlockReplyContext, ReplyPayload } from "../types.js";
 import type { DeliveryObserver } from "./delivery-observer.js";
 import { deliverObservedPayload } from "./observed-reply-delivery.js";
 import type { ReplyDispatcher } from "./reply-dispatcher.js";

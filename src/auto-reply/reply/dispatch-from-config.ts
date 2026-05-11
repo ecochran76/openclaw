@@ -4,6 +4,7 @@ import fs from "node:fs";
 import { isParentOwnedBackgroundAcpSession } from "@openclaw/acp-core/session-interaction-mode";
 import {
   normalizeLowercaseStringOrEmpty,
+  normalizeOptionalLowercaseString,
   normalizeOptionalString,
 } from "@openclaw/normalization-core/string-coerce";
 import {
@@ -407,6 +408,47 @@ function hasRestrictiveMessageToolConfig(cfg: OpenClawConfig): boolean {
     return Array.isArray(record.allow) || Array.isArray(record.deny) || record.profile !== undefined;
   });
 }
+
+function isRestrictiveToolPolicy(policy: unknown): boolean {
+  if (!policy || typeof policy !== "object") {
+    return false;
+  }
+  const record = policy as { allow?: unknown; deny?: unknown; profile?: unknown };
+  return Array.isArray(record.allow) || Array.isArray(record.deny) || record.profile !== undefined;
+}
+
+const inferSourceChatType = (ctx: FinalizedMsgContext) => {
+  const explicit = normalizeChatType(ctx.ChatType);
+  if (explicit) {
+    return explicit;
+  }
+  const channel = normalizeOptionalLowercaseString(
+    ctx.OriginatingChannel ?? ctx.Surface ?? ctx.Provider,
+  );
+  const targets = [ctx.OriginatingTo, ctx.To, ctx.From, ctx.SessionKey]
+    .map((value) => normalizeOptionalLowercaseString(value))
+    .filter(Boolean) as string[];
+  if (
+    (channel === "slack" || targets.some((value) => value.includes(":slack:"))) &&
+    (targets.some((value) => value.startsWith("channel:") || value.includes(":channel:")) ||
+      normalizeOptionalString(ctx.GroupChannel))
+  ) {
+    return "channel";
+  }
+  if (targets.some((value) => value.includes(":channel:"))) {
+    return "channel";
+  }
+  if (targets.some((value) => value.includes(":group:"))) {
+    return "group";
+  }
+  if (normalizeOptionalString(ctx.GroupChannel)) {
+    return "channel";
+  }
+  if (normalizeOptionalString(ctx.GroupSubject) || normalizeOptionalString(ctx.GroupSpace)) {
+    return "group";
+  }
+  return undefined;
+};
 
 const resolveSessionStoreLookup = (
   ctx: FinalizedMsgContext,
@@ -1847,9 +1889,13 @@ export async function dispatchReplyFromConfig(
     sessionKey: acpDispatchSessionKey,
     agentId: sessionAgentId,
   });
-  const chatType = normalizeChatType(ctx.ChatType);
-  const silentReplyConversationType = resolveRoutedPolicyConversationType(ctx);
-  const silentReplySurface = normalizeLowercaseStringOrEmpty(ctx.Surface ?? ctx.Provider);
+  const chatType = inferSourceChatType(ctx);
+  const sourceReplyPolicyContext =
+    chatType && chatType !== normalizeChatType(ctx.ChatType) ? { ...ctx, ChatType: chatType } : ctx;
+  const silentReplyConversationType = resolveRoutedPolicyConversationType(sourceReplyPolicyContext);
+  const silentReplySurface = normalizeLowercaseStringOrEmpty(
+    sourceReplyPolicyContext.Surface ?? sourceReplyPolicyContext.Provider,
+  );
   const emptyFinalAllowedAsSilent =
     silentReplyConversationType !== undefined &&
     resolveSilentReplyPolicyFromPolicies({
@@ -1937,13 +1983,12 @@ export async function dispatchReplyFromConfig(
     inheritedToolPolicy,
   ]);
   const effectiveMessageToolAvailable =
-    params.replyOptions?.sourceReplyDeliveryMode === "message_tool_only" &&
-    !hasRestrictiveMessageToolConfig(cfg)
+    prefersMessageToolDelivery && !hasRestrictiveMessageToolConfig(cfg)
       ? true
       : messageToolAvailable;
   const sourceReplyPolicy = resolveSourceReplyVisibilityPolicy({
     cfg,
-    ctx,
+    ctx: sourceReplyPolicyContext,
     requested: params.replyOptions?.sourceReplyDeliveryMode,
     strictMessageToolOnly: ctx.InboundEventKind === "room_event" && !isInternalWebchatTurn,
     sendPolicy,
@@ -1953,15 +1998,37 @@ export async function dispatchReplyFromConfig(
     messageToolAvailable: effectiveMessageToolAvailable,
     defaultVisibleReplies: harnessDefaultVisibleReplies,
   });
-  const {
-    sourceReplyDeliveryMode,
-    suppressAutomaticSourceDelivery,
-    suppressDelivery,
-    sendPolicyDenied,
-    deliverySuppressionReason,
-    suppressHookUserDelivery,
-    suppressHookReplyLifecycle,
-  } = sourceReplyPolicy;
+  const hasRestrictiveResolvedMessageToolPolicy = [
+    profilePolicy,
+    providerProfilePolicy,
+    globalProviderPolicy,
+    agentProviderPolicy,
+    globalPolicy,
+    agentPolicy,
+    groupPolicy,
+    subagentPolicy,
+    inheritedToolPolicy,
+  ].some((policy) => isRestrictiveToolPolicy(policy));
+  const configuredMessageToolSourceReply =
+    effectiveVisibleReplies === "message_tool" &&
+    effectiveMessageToolAvailable !== false &&
+    !hasRestrictiveResolvedMessageToolPolicy &&
+    !isExplicitSourceReplyCommand(ctx, cfg);
+  const sourceReplyDeliveryMode =
+    configuredMessageToolSourceReply && sourceReplyPolicy.sourceReplyDeliveryMode === "automatic"
+      ? "message_tool_only"
+      : sourceReplyPolicy.sourceReplyDeliveryMode;
+  const sendPolicyDenied = sourceReplyPolicy.sendPolicyDenied;
+  const suppressAutomaticSourceDelivery = sourceReplyDeliveryMode === "message_tool_only";
+  const suppressDelivery = sendPolicyDenied || suppressAutomaticSourceDelivery;
+  const deliverySuppressionReason = sendPolicyDenied
+    ? "sendPolicy: deny"
+    : suppressAutomaticSourceDelivery
+      ? "sourceReplyDeliveryMode: message_tool_only"
+      : sourceReplyPolicy.deliverySuppressionReason;
+  const suppressHookUserDelivery =
+    suppressAcpChildUserDelivery === true || suppressDelivery;
+  const suppressHookReplyLifecycle = sourceReplyPolicy.suppressHookReplyLifecycle;
   const attachSourceReplyDeliveryMode = (
     result: DispatchFromConfigResult,
   ): DispatchFromConfigResult =>
@@ -3781,11 +3848,17 @@ export async function dispatchReplyFromConfig(
     // suppressed in room_event. sendPolicy: deny still suppresses everything.
     // Uses the same helper as the source-reply visibility policy so the bypass
     // and the policy stay aligned.
-    const shouldDeliverDespiteSourceReplySuppression = (reply: ReplyPayload) =>
-      suppressAutomaticSourceDelivery &&
-      !sendPolicyDenied &&
-      getReplyPayloadMetadata(reply)?.deliverDespiteSourceReplySuppression === true &&
-      (ctx.InboundEventKind !== "room_event" || explicitCommandTurnCtx);
+    const shouldDeliverDespiteSourceReplySuppression = (reply: ReplyPayload) => {
+      if (!suppressAutomaticSourceDelivery || sendPolicyDenied) {
+        return false;
+      }
+      const metadata = getReplyPayloadMetadata(reply);
+      return (
+        (metadata?.deliverDespiteSourceReplySuppression === true &&
+          (ctx.InboundEventKind !== "room_event" || explicitCommandTurnCtx)) ||
+        (ctx.InboundEventKind !== "room_event" && Boolean(metadata?.sourceReplyTranscriptMirror))
+      );
+    };
     for (const [replyIndex, reply] of replies.entries()) {
       throwIfDispatchOperationAborted();
       // Suppress reasoning payloads from channel delivery — channels using this
