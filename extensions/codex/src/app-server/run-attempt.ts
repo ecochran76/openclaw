@@ -274,6 +274,21 @@ import {
 import { createCodexUserInputBridge } from "./user-input-bridge.js";
 import { resolveCodexWebSearchPlan } from "./web-search.js";
 
+const CODEX_DYNAMIC_TOOL_TIMEOUT_MS = 30_000;
+const CODEX_DYNAMIC_TOOL_MAX_TIMEOUT_MS = 600_000;
+const CODEX_DYNAMIC_IMAGE_GENERATION_TOOL_TIMEOUT_MS = 120_000;
+const CODEX_DYNAMIC_IMAGE_TOOL_TIMEOUT_MS = 60_000;
+const CODEX_DYNAMIC_MESSAGE_TOOL_TIMEOUT_MS = 120_000;
+const CODEX_APP_SERVER_STARTUP_CONNECTION_CLOSE_MAX_ATTEMPTS = 3;
+const CODEX_APP_SERVER_STARTUP_TIMEOUT_FLOOR_MS = 100;
+const CODEX_APP_SERVER_INTERRUPT_TIMEOUT_MS = 5_000;
+const CODEX_APP_SERVER_UNSUBSCRIBE_TIMEOUT_MS = 5_000;
+const CODEX_USAGE_LIMIT_RATE_LIMIT_REFRESH_TIMEOUT_MS = 5_000;
+const CODEX_TURN_COMPLETION_IDLE_TIMEOUT_MS = 60_000;
+const CODEX_TURN_ASSISTANT_COMPLETION_IDLE_TIMEOUT_MS = 10_000;
+const CODEX_TURN_TERMINAL_IDLE_TIMEOUT_MS = 120_000;
+const CODEX_NATIVE_HOOK_RELAY_MIN_TTL_MS = 30 * 60_000;
+const CODEX_NATIVE_HOOK_RELAY_TTL_GRACE_MS = 5 * 60_000;
 const CODEX_NATIVE_HOOK_RELAY_RENEW_INTERVAL_MS = 60_000;
 const CODEX_APP_SERVER_PROJECTED_CHARS_PER_TOKEN = 4;
 const CODEX_APP_SERVER_ACTIVE_NATIVE_TURN_WAIT_TIMEOUT_MS = 30_000;
@@ -1571,7 +1586,7 @@ export async function runCodexAppServerAttempt(
       turnAssistantCompletionIdleTimeoutMs,
     );
   const turnTerminalIdleTimeoutMs = resolveCodexTurnTerminalIdleTimeoutMs(
-    options.turnTerminalIdleTimeoutMs,
+    options.turnTerminalIdleTimeoutMs ?? appServer.turnTerminalIdleTimeoutMs,
   );
   const turnAttemptIdleTimeoutMs = Math.max(100, Math.floor(params.timeoutMs));
   let nativeHookRelayLastRenewedAt = 0;

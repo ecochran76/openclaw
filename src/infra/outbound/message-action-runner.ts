@@ -42,7 +42,6 @@ import { resolveAgentScopedOutboundMediaAccess } from "../../media/read-capabili
 import { extractToolPayload } from "../../plugin-sdk/tool-payload.js";
 import { hasPollCreationParams } from "../../poll-params.js";
 import { resolvePollMaxSelections } from "../../polls.js";
-import { buildChannelAccountBindings } from "../../routing/bindings.js";
 import { resolveFirstBoundAccountId } from "../../routing/bound-account-read.js";
 import { normalizeAgentId, resolveAgentIdFromSessionKey } from "../../routing/session-key.js";
 import { stripUnsupportedCitationControlMarkers } from "../../shared/text/citation-control-markers.js";

@@ -83,7 +83,7 @@ function createContext(overrides?: {
       overrides?.markMessageSeen?.(channel, ts) ?? false,
     releaseSeenMessage: (channel: string | undefined, ts: string | undefined) =>
       overrides?.releaseSeenMessage?.(channel, ts),
-  } as Parameters<typeof createSlackMessageHandler>[0]["ctx"];
+  } as unknown as Parameters<typeof createSlackMessageHandler>[0]["ctx"];
 }
 
 function createHandlerWithTracker(overrides?: {

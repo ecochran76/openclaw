@@ -185,6 +185,7 @@ export type CodexAppServerRuntimeOptions = {
   requestTimeoutMs: number;
   turnCompletionIdleTimeoutMs: number;
   postToolRawAssistantCompletionIdleTimeoutMs?: number;
+  turnTerminalIdleTimeoutMs: number;
   approvalPolicy: CodexAppServerEffectiveApprovalPolicy;
   approvalPolicySource?: CodexAppServerApprovalPolicySource;
   sandbox: CodexAppServerSandboxMode;
@@ -225,6 +226,7 @@ export type CodexPluginConfig = {
     requestTimeoutMs?: number;
     turnCompletionIdleTimeoutMs?: number;
     postToolRawAssistantCompletionIdleTimeoutMs?: number;
+    turnTerminalIdleTimeoutMs?: number;
     approvalPolicy?: CodexAppServerApprovalPolicy;
     sandbox?: CodexAppServerSandboxMode;
     approvalsReviewer?: CodexAppServerApprovalsReviewer;
@@ -259,6 +261,7 @@ export const CODEX_APP_SERVER_CONFIG_KEYS = [
   "requestTimeoutMs",
   "turnCompletionIdleTimeoutMs",
   "postToolRawAssistantCompletionIdleTimeoutMs",
+  "turnTerminalIdleTimeoutMs",
   "approvalPolicy",
   "sandbox",
   "approvalsReviewer",
@@ -408,6 +411,7 @@ const codexPluginConfigSchema = z
         requestTimeoutMs: z.number().positive().optional(),
         turnCompletionIdleTimeoutMs: z.number().positive().optional(),
         postToolRawAssistantCompletionIdleTimeoutMs: z.number().positive().optional(),
+        turnTerminalIdleTimeoutMs: z.number().positive().optional(),
         approvalPolicy: codexAppServerApprovalPolicySchema.optional(),
         sandbox: codexAppServerSandboxSchema.optional(),
         approvalsReviewer: codexAppServerApprovalsReviewerSchema.optional(),
@@ -693,6 +697,7 @@ export function resolveCodexAppServerRuntimeOptions(
           ),
         }
       : {}),
+    turnTerminalIdleTimeoutMs: normalizePositiveNumber(config.turnTerminalIdleTimeoutMs, 120_000),
     approvalPolicy: forcedPolicy?.approvalPolicy ?? approvalPolicy,
     approvalPolicySource,
     sandbox: resolvedSandbox,

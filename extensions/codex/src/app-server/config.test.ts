@@ -120,6 +120,7 @@ describe("Codex app-server config", () => {
           codeModeOnly: true,
           turnCompletionIdleTimeoutMs: 120_000,
           postToolRawAssistantCompletionIdleTimeoutMs: 180_000,
+          turnTerminalIdleTimeoutMs: 240_000,
         },
       },
       env: {
@@ -137,6 +138,7 @@ describe("Codex app-server config", () => {
       codeModeOnly: true,
       turnCompletionIdleTimeoutMs: 120_000,
       postToolRawAssistantCompletionIdleTimeoutMs: 180_000,
+      turnTerminalIdleTimeoutMs: 240_000,
     });
     expectFields(runtime.start, "runtime start", {
       transport: "websocket",

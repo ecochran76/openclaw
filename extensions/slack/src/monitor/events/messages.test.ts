@@ -1,5 +1,6 @@
 // Slack tests cover messages plugin behavior.
 import { beforeAll, beforeEach, describe, expect, it, vi } from "vitest";
+import type { ResolvedSlackAccount } from "../../accounts.js";
 import {
   createSlackSystemEventTestHarness,
   type SlackSystemEventTestOverrides,
@@ -59,11 +60,21 @@ type MessageCase = {
   body?: unknown;
 };
 
+const defaultAccount: ResolvedSlackAccount = {
+  accountId: "default",
+  enabled: true,
+  botTokenSource: "config",
+  appTokenSource: "config",
+  userTokenSource: "none",
+  config: {},
+};
+
 function createHandlers(eventName: RegisteredEventName, overrides?: SlackSystemEventTestOverrides) {
   const harness = createSlackSystemEventTestHarness(overrides);
   const handleSlackMessage = vi.fn(async () => {});
   registerSlackMessageEvents({
     ctx: harness.ctx,
+    account: defaultAccount,
     handleSlackMessage,
   });
   return {

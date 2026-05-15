@@ -128,8 +128,8 @@ describe("buildSessionMatches", () => {
       sessionId: "thread-session",
       score: expect.any(Number),
     });
-    expect(matches[0]!.score).toBeGreaterThan(matches[1]!.score);
-    expect(matches[0]!.reasons).toContain("thread id matches");
+    expect(matches[0].score).toBeGreaterThan(matches[1].score);
+    expect(matches[0].reasons).toContain("thread id matches");
   });
 });
 

@@ -189,7 +189,7 @@ function shouldAttemptPrePipelineTypingReaction(params: {
     defaultRequireMention: ctx.defaultRequireMention,
     allowNameMatching: ctx.allowNameMatching,
   });
-  return channelConfig?.allowed === true && channelConfig.requireMention === false;
+  return channelConfig?.allowed === true && !channelConfig.requireMention;
 }
 
 export function startPrePipelineTypingReaction(params: {

@@ -127,7 +127,6 @@ const SLACK_REASONING_TAG_RE =
 const SLACK_REASONING_LABEL_PREFIX_RE = /^\s*(?:>\s*)?Reasoning:\s*/iu;
 const SLACK_THINKING_LABEL_PREFIX_RE = /^\s*(?:>\s*)?Thinking\.{0,3}(?=\s*(?:\n|_))/iu;
 
-const SLACK_PREVIEW_TOOL_PROGRESS_MAX_LINES = 4;
 const SLACK_PREVIEW_TOOL_PROGRESS_MAX_CHARS = 120;
 
 export function normalizeSlackPreviewToolProgressLine(line?: string): string | undefined {

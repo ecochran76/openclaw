@@ -15,7 +15,7 @@ import {
   type SessionScope,
 } from "openclaw/plugin-sdk/session-store-runtime";
 import { z } from "zod";
-import { TtsConfigSchema } from "../api.js";
+import { TtsAutoSchema, TtsConfigSchema, TtsModeSchema, TtsProviderSchema } from "../api.js";
 import { deepMergeDefined } from "./deep-merge.js";
 import { normalizePath } from "./path-utils.js";
 import { DEFAULT_VOICE_CALL_REALTIME_INSTRUCTIONS } from "./realtime-defaults.js";

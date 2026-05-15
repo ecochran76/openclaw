@@ -8,7 +8,10 @@ import type {
   ProviderResolveUsageAuthContext,
   ProviderRuntimeModel,
 } from "openclaw/plugin-sdk/plugin-entry";
-import { CODEX_CLI_PROFILE_ID, type OAuthCredential } from "openclaw/plugin-sdk/provider-auth";
+import {
+  CODEX_CLI_PROFILE_ID,
+  type OAuthCredential,
+} from "openclaw/plugin-sdk/provider-auth";
 import { buildOauthProviderAuthResult } from "openclaw/plugin-sdk/provider-auth";
 import {
   DEFAULT_CONTEXT_TOKENS,

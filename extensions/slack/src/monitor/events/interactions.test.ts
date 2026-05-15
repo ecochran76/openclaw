@@ -129,8 +129,7 @@ vi.mock("../conversation.runtime.js", () => {
       return null;
     }
     const decisionCode = body.slice(separator + 1).trim();
-    const decision =
-      decisionCode === "a" ? "approve" : decisionCode === "d" ? "deny" : null;
+    const decision = decisionCode === "a" ? "approve" : decisionCode === "d" ? "deny" : null;
     if (!decision) {
       return null;
     }
@@ -142,19 +141,15 @@ vi.mock("../conversation.runtime.js", () => {
 
   return {
     buildA2APermissionApprovalResolvedText: (...args: unknown[]) =>
-      (buildA2APermissionApprovalResolvedTextMock as (...innerArgs: unknown[]) => string)(
-        ...args,
-      ),
+      (buildA2APermissionApprovalResolvedTextMock as (...innerArgs: unknown[]) => string)(...args),
     buildPluginBindingResolvedText: (...args: unknown[]) =>
       (buildPluginBindingResolvedTextMock as (...innerArgs: unknown[]) => string)(...args),
     parseA2APermissionApprovalCustomId,
     parsePluginBindingApprovalCustomId,
     resolvePendingA2APermissionApproval: (...args: unknown[]) =>
-      (
-        resolvePendingA2APermissionApprovalMock as (
-          ...innerArgs: unknown[]
-        ) => Promise<unknown>
-      )(...args),
+      (resolvePendingA2APermissionApprovalMock as (...innerArgs: unknown[]) => Promise<unknown>)(
+        ...args,
+      ),
     resolvePluginConversationBindingApproval: (...args: unknown[]) =>
       (
         resolvePluginConversationBindingApprovalMock as (
@@ -1167,7 +1162,7 @@ describe("registerSlackInteractionEvents", () => {
 
     const ack = vi.fn().mockResolvedValue(undefined);
     const respond = vi.fn().mockResolvedValue(undefined);
-    await handler!({
+    await handler({
       ack,
       respond,
       body: {

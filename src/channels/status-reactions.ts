@@ -267,11 +267,11 @@ export function createStatusReactionController(params: {
     }
 
     stallSoftTimer = setTimeout(() => {
-      scheduleEmoji(emojis.stallSoft, { immediate: true, skipStallReset: true });
+      void scheduleEmoji(emojis.stallSoft, { immediate: true, skipStallReset: true });
     }, timing.stallSoftMs);
 
     stallHardTimer = setTimeout(() => {
-      scheduleEmoji(emojis.stallHard, { immediate: true, skipStallReset: true });
+      void scheduleEmoji(emojis.stallHard, { immediate: true, skipStallReset: true });
     }, timing.stallHardMs);
   }
 
@@ -345,15 +345,15 @@ export function createStatusReactionController(params: {
         pendingEmoji = "";
       });
       return immediatePromise;
-    } else {
-      debounceTimer = setTimeout(() => {
-        debounceTimer = null;
-        void enqueue(async () => {
-          await applyEmoji(emoji);
-          pendingEmoji = "";
-        });
-      }, timing.debounceMs);
     }
+    // Debounced execution for intermediate states
+    debounceTimer = setTimeout(() => {
+      debounceTimer = null;
+      void enqueue(async () => {
+        await applyEmoji(emoji);
+        pendingEmoji = "";
+      });
+    }, timing.debounceMs);
   }
 
   function setQueued(): Promise<void> | void {
@@ -361,16 +361,16 @@ export function createStatusReactionController(params: {
   }
 
   function setThinking(): void {
-    scheduleEmoji(emojis.thinking);
+    void scheduleEmoji(emojis.thinking);
   }
 
   function setTool(toolName?: string): void {
     const emoji = resolveToolEmoji(toolName, emojis, params.emojis);
-    scheduleEmoji(emoji);
+    void scheduleEmoji(emoji);
   }
 
   function setCompacting(): void {
-    scheduleEmoji(emojis.compacting);
+    void scheduleEmoji(emojis.compacting);
   }
 
   function cancelPending(): void {

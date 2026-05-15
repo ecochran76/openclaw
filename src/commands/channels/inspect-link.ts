@@ -125,7 +125,7 @@ type InspectLinkReport = {
 };
 
 function parsePositiveInteger(raw: string | undefined, fallback: number): number {
-  const parsed = Number.parseInt(String(raw ?? ""), 10);
+  const parsed = Number.parseInt(raw ?? "", 10);
   if (!Number.isFinite(parsed) || parsed <= 0) {
     return fallback;
   }
@@ -536,10 +536,13 @@ export async function summarizeTrajectoryFile(
     runs: runs.size,
     incompleteRuns: [...runs.entries()]
       .filter(([, state]) => state.started && !state.ended)
-      .map(([runId, state]) => ({
-        runId,
-        ...(state.startedAt ? { startedAt: state.startedAt } : {}),
-      })),
+      .map(([runId, state]) => {
+        const run: { runId: string; startedAt?: string } = { runId };
+        if (state.startedAt) {
+          run.startedAt = state.startedAt;
+        }
+        return run;
+      }),
   };
 }
 
@@ -670,7 +673,7 @@ async function readSlackMessagesViaGateway(params: {
   limit?: number;
   threadId?: string;
 }): Promise<MessageLike[]> {
-  const actionPayload = await callGateway<Record<string, unknown>>({
+  const actionPayload = await callGateway({
     method: "message.action",
     params: {
       channel: "slack",
@@ -702,7 +705,7 @@ export async function channelsInspectLinkCommand(
   const accountId = normalizeOptionalString(opts.account) ?? "default";
   const timeoutMs = parsePositiveInteger(opts.timeout, 10_000);
   const limit = parsePositiveInteger(opts.limit, 10);
-  const statusPayload = await callGateway<Record<string, unknown>>({
+  const statusPayload = await callGateway({
     method: "channels.status",
     params: { probe: false, timeoutMs },
     timeoutMs,

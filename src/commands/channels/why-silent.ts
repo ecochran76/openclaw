@@ -64,7 +64,7 @@ type WhySilentReport = {
 };
 
 function parsePositiveInteger(raw: string | undefined, fallback: number): number {
-  const parsed = Number.parseInt(String(raw ?? ""), 10);
+  const parsed = Number.parseInt(raw ?? "", 10);
   if (!Number.isFinite(parsed) || parsed <= 0) {
     return fallback;
   }
@@ -303,14 +303,14 @@ export async function channelsWhySilentCommand(
 
   const timeoutMs = parsePositiveInteger(opts.timeout, 10_000);
   const limit = parsePositiveInteger(opts.limit, 5);
-  const statusPayload = await callGateway<Record<string, unknown>>({
+  const statusPayload = await callGateway({
     method: "channels.status",
     params: { probe: false, timeoutMs },
     timeoutMs,
     clientName: GATEWAY_CLIENT_NAMES.CLI,
     mode: GATEWAY_CLIENT_MODES.CLI,
   });
-  const actionPayload = await callGateway<Record<string, unknown>>({
+  const actionPayload = await callGateway({
     method: "message.action",
     params: {
       channel,

@@ -802,11 +802,6 @@ describe("slack prepareSlackMessage inbound contract", () => {
           },
         },
       } as OpenClawConfig,
-      appClient: {
-        reactions: {
-          add: vi.fn().mockResolvedValue({ ok: true }),
-        },
-      } as unknown as App["client"],
       replyToMode: "all",
       appClient: {
         reactions: {

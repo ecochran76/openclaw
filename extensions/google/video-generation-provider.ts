@@ -192,6 +192,42 @@ function resolveInputVideo(req: VideoGenerationRequest) {
   };
 }
 
+async function downloadGeneratedVideo(params: {
+  client: GoogleVideoClient;
+  file: unknown;
+  index: number;
+}): Promise<GeneratedVideoAsset> {
+  return await withTempWorkspace(
+    { rootDir: resolvePreferredOpenClawTmpDir(), prefix: "openclaw-google-video-" },
+    async ({ dir: tempDir }) => {
+      const fileName = `video-${params.index + 1}.mp4`;
+      const downloadPath = path.join(tempDir, fileName);
+      await writeExternalFileWithinRoot({
+        rootDir: tempDir,
+        path: fileName,
+        write: async (downloadPath) => {
+          await executeProviderOperationWithRetry({
+            provider: "google",
+            stage: "download",
+            operation: async () => {
+              await params.client.files.download({
+                file: params.file,
+                downloadPath,
+              } as never);
+            },
+          });
+        },
+      });
+      const buffer = await readFile(downloadPath);
+      return {
+        buffer,
+        mimeType: "video/mp4",
+        fileName: `video-${params.index + 1}.mp4`,
+      };
+    },
+  );
+}
+
 function resolveGoogleGeneratedVideoDownloadUrl(params: {
   uri: string | undefined;
   apiKey: string;
@@ -560,7 +596,8 @@ export function buildGoogleVideoGenerationProvider(
           sdkOperation = await executeProviderOperationWithRetry({
             provider: "google",
             stage: "poll",
-            operation: () => client.operations.getVideosOperation({ operation: sdkOperation }),
+            operation: () =>
+              client.operations.getVideosOperation({ operation: sdkOperation } as never),
           });
         }
         operation = sdkOperation;

@@ -46,7 +46,6 @@ import {
   resolveBundledStaticCatalogModel,
 } from "../embedded-agent-runner/model.static-catalog.js";
 import { isMinimaxVlmProvider } from "../minimax-vlm.js";
-import { ToolInputError } from "./common.js";
 import {
   resolveImageFallbackCandidates,
   resolveImageFallbackDefaultProvider,

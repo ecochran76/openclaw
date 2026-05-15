@@ -1,5 +1,6 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import type { OpenClawConfig } from "../../config/config.js";
+import type { ReplyPayload } from "../reply-payload.js";
 
 const hoisted = vi.hoisted(() => {
   const ensureAuthProfileStoreMock = vi.fn();
@@ -341,7 +342,7 @@ describe("/reauth commands", () => {
         );
       }),
     });
-    const onBlockReply = vi.fn(async () => undefined);
+    const onBlockReply = vi.fn(async (_payload: ReplyPayload) => undefined);
 
     const params = buildCommandTestParams("/reauth openai-codex:soylei", cfg);
     params.agentDir = "/tmp/agent";
