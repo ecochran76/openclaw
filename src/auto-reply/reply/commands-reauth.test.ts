@@ -247,6 +247,118 @@ describe("/reauth commands", () => {
     expect(params.sessionEntry.pendingOAuthReauth).toBeUndefined();
   });
 
+  it("falls back to callback OAuth when device-code status hits token exchange user error", async () => {
+    const createPendingAuthorization = vi.fn(async () => ({
+      flow: "callback",
+      state: "state-1",
+      verifier: "verifier-1",
+      authorizationUrl: "https://auth.example.test/oauth",
+      redirectUri: "http://localhost:1455/auth/callback",
+      createdAt: Date.now(),
+      expiresAt: Date.now() + 60_000,
+    }));
+    hoisted.getChatReauthCapabilityMock.mockReturnValue({
+      provider: "openai-codex",
+      looksLikeCallbackInput: vi.fn(() => false),
+      createPendingAuthorization,
+      completePendingAuthorization: vi.fn(),
+      pollPendingAuthorization: vi.fn(async () => {
+        throw new Error(
+          'OpenAI device token exchange failed: HTTP 400 { "error": { "code": "token_exchange_user_error", "type": "invalid_request_error" } }',
+        );
+      }),
+    });
+
+    const params = buildCommandTestParams("/reauth status", cfg);
+    params.agentDir = "/tmp/agent";
+    params.sessionEntry = {
+      sessionId: "s1",
+      updatedAt: 1,
+      pendingOAuthReauth: {
+        kind: "oauth",
+        provider: "openai-codex",
+        profileId: "openai-codex:soylei",
+        flow: "device_code",
+        deviceAuthId: "device-1",
+        userCode: "CODE-123",
+        verificationUrl: "https://auth.example.test/device",
+        intervalMs: 5_000,
+        createdAt: Date.now(),
+        expiresAt: Date.now() + 60_000,
+      },
+    };
+    params.sessionStore = {};
+
+    const result = await handleReauthCommand(params, true);
+
+    expect(createPendingAuthorization).toHaveBeenCalledWith({
+      originator: "pi",
+      preferredFlow: "callback",
+    });
+    expect(result?.reply?.text).toContain("Device-code re-auth failed");
+    expect(result?.reply?.text).toContain("falling back to browser OAuth");
+    expect(result?.reply?.text).toContain("https://auth.example.test/oauth");
+    expect(params.sessionEntry.pendingOAuthReauth?.flow).toBe("callback");
+    expect(params.sessionEntry.pendingOAuthReauth?.profileId).toBe("openai-codex:soylei");
+  });
+
+  it("falls back to callback OAuth when the device-code watcher hits token exchange user error", async () => {
+    vi.useFakeTimers();
+    vi.setSystemTime(new Date("2026-04-30T12:00:00Z"));
+    hoisted.ensureAuthProfileStoreMock.mockReturnValue({
+      profiles: {
+        "openai-codex:soylei": { provider: "openai-codex", type: "oauth", access: "a" },
+      },
+    });
+    const createPendingAuthorization = vi
+      .fn()
+      .mockResolvedValueOnce({
+        flow: "device_code",
+        deviceAuthId: "device-1",
+        userCode: "CODE-123",
+        verificationUrl: "https://auth.example.test/device",
+        intervalMs: 5_000,
+        createdAt: Date.now(),
+        expiresAt: Date.now() + 15 * 60_000,
+      })
+      .mockResolvedValueOnce({
+        flow: "callback",
+        state: "state-1",
+        verifier: "verifier-1",
+        authorizationUrl: "https://auth.example.test/oauth",
+        redirectUri: "http://localhost:1455/auth/callback",
+        createdAt: Date.now(),
+        expiresAt: Date.now() + 15 * 60_000,
+      });
+    hoisted.getChatReauthCapabilityMock.mockReturnValue({
+      provider: "openai-codex",
+      looksLikeCallbackInput: vi.fn(() => false),
+      createPendingAuthorization,
+      completePendingAuthorization: vi.fn(),
+      pollPendingAuthorization: vi.fn(async () => {
+        throw new Error(
+          'OpenAI device token exchange failed: HTTP 400 { "error": { "code": "token_exchange_user_error", "type": "invalid_request_error" } }',
+        );
+      }),
+    });
+    const onBlockReply = vi.fn(async () => undefined);
+
+    const params = buildCommandTestParams("/reauth openai-codex:soylei", cfg);
+    params.agentDir = "/tmp/agent";
+    params.sessionEntry = { sessionId: "s1", updatedAt: 1 };
+    params.sessionStore = {};
+    params.opts = { onBlockReply };
+
+    await handleReauthCommand(params, true);
+    await vi.advanceTimersByTimeAsync(5_000);
+
+    expect(onBlockReply).toHaveBeenCalledWith({
+      text: expect.stringContaining("falling back to browser OAuth"),
+    });
+    expect(onBlockReply.mock.calls[0]?.[0]?.text).toContain("https://auth.example.test/oauth");
+    expect(params.sessionEntry.pendingOAuthReauth?.flow).toBe("callback");
+  });
+
   it("completes a pasted callback flow", async () => {
     hoisted.getChatReauthCapabilityMock.mockReturnValue({
       provider: "openai",

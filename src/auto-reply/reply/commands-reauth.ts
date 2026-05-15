@@ -378,6 +378,43 @@ function formatPostReauthProbeSuccess(probe: PostReauthProbeResult): string {
   return `🔐 Re-auth credentials updated for ${probe.profileId}. Live probe was not run for this conversation context.`;
 }
 
+function isRecoverableDeviceCodeTokenExchangeError(error: unknown): boolean {
+  const message = error instanceof Error ? error.message : String(error);
+  return (
+    message.includes("OpenAI device token exchange failed") &&
+    (message.includes("token_exchange_user_error") ||
+      message.includes("invalid_request_error") ||
+      message.includes("Invalid request"))
+  );
+}
+
+async function replaceDeviceCodePendingWithCallback(params: {
+  commandParams: Parameters<CommandHandler>[0];
+  pending: PendingOAuthReauth;
+  capability: NonNullable<ReturnType<typeof getChatReauthCapability>>;
+}): Promise<PendingOAuthReauth | null> {
+  if (params.pending.flow !== "device_code") {
+    return null;
+  }
+  const authorization = await params.capability.createPendingAuthorization({
+    originator: "pi",
+    preferredFlow: "callback",
+  });
+  if (authorization.flow !== "callback") {
+    return null;
+  }
+  const fallback: PendingOAuthReauth = {
+    kind: "oauth",
+    provider: params.pending.provider,
+    profileId: params.pending.profileId,
+    ...authorization,
+  };
+  stopDeviceCodeReauthWatcher(params.commandParams, params.pending);
+  params.commandParams.sessionEntry!.pendingOAuthReauth = fallback;
+  await persistSessionEntry(params.commandParams);
+  return fallback;
+}
+
 async function probeReauthenticatedProfile(params: {
   commandParams: Parameters<CommandHandler>[0];
   provider: string;
@@ -564,6 +601,26 @@ function startDeviceCodeReauthWatcher(params: {
       }
     } catch (error) {
       finish();
+      if (isRecoverableDeviceCodeTokenExchangeError(error)) {
+        try {
+          const fallback = await replaceDeviceCodePendingWithCallback({
+            commandParams: params.commandParams,
+            pending: params.pending,
+            capability: params.capability,
+          });
+          if (fallback) {
+            await params.commandParams.opts?.onBlockReply?.({
+              text: [
+                `⚠️ Device-code re-auth failed for ${params.pending.profileId}; falling back to browser OAuth.`,
+                formatPendingReauthMessage(fallback),
+              ].join("\n\n"),
+            });
+            return;
+          }
+        } catch {
+          // Report the original device-code failure below.
+        }
+      }
       const message = error instanceof Error ? error.message : String(error);
       await params.commandParams.opts?.onBlockReply?.({
         text: `⚠️ Re-auth failed for ${params.pending.profileId}: ${message}`,
@@ -737,6 +794,24 @@ export const handleReauthCommand: CommandHandler = async (params, allowTextComma
             };
           }
         } catch (error) {
+          if (isRecoverableDeviceCodeTokenExchangeError(error)) {
+            const fallback = await replaceDeviceCodePendingWithCallback({
+              commandParams: params,
+              pending,
+              capability,
+            });
+            if (fallback) {
+              return {
+                shouldContinue: false,
+                reply: {
+                  text: [
+                    `⚠️ Device-code re-auth failed for ${pending.profileId}; falling back to browser OAuth.`,
+                    formatPendingReauthMessage(fallback),
+                  ].join("\n\n"),
+                },
+              };
+            }
+          }
           const message = error instanceof Error ? error.message : String(error);
           return {
             shouldContinue: false,
