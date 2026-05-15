@@ -397,7 +397,7 @@ const resolveRoutedPolicyConversationType = (
 function hasRestrictiveMessageToolConfig(cfg: OpenClawConfig): boolean {
   const policies: Array<unknown> = [
     cfg.tools,
-    cfg.agents?.defaults?.tools,
+    (cfg.agents?.defaults as { tools?: unknown } | undefined)?.tools,
     ...(cfg.agents?.list ?? []).map((agent) => agent.tools),
   ];
   return policies.some((policy) => {
@@ -405,7 +405,9 @@ function hasRestrictiveMessageToolConfig(cfg: OpenClawConfig): boolean {
       return false;
     }
     const record = policy as { allow?: unknown; deny?: unknown; profile?: unknown };
-    return Array.isArray(record.allow) || Array.isArray(record.deny) || record.profile !== undefined;
+    return (
+      Array.isArray(record.allow) || Array.isArray(record.deny) || record.profile !== undefined
+    );
   });
 }
 

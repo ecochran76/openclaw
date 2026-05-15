@@ -721,7 +721,7 @@ function pruneRuntimeDeletedAuthoredAgentModels(params: {
     ) {
       continue;
     }
-    next = unsetPathForWrite(next, modelPath).next;
+    next = unsetPathForWrite(next as OpenClawConfig, modelPath).next;
     prunedPaths.push(modelPath);
   }
   return { next, prunedPaths };
