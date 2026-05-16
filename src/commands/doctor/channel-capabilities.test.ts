@@ -51,6 +51,15 @@ describe("doctor channel capabilities", () => {
     });
   });
 
+  it("returns route semantics for Slack package metadata", () => {
+    expect(getDoctorChannelCapabilities("slack")).toEqual({
+      dmAllowFromMode: "topOnly",
+      groupModel: "route",
+      groupAllowFromFallbackToAllowFrom: false,
+      warnOnEmptyGroupSenderAllowlist: false,
+    });
+  });
+
   it("preserves empty sender allowlist warnings for msteams hybrid routing", () => {
     expect(getDoctorChannelCapabilities("msteams")).toEqual({
       dmAllowFromMode: "topOnly",
