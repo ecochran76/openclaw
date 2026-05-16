@@ -198,6 +198,17 @@ Desired shape after a clean rebase onto the tag:
 
 If unattended upgrade automation reaches `patch-live-openclaw.sh`, the remaining blockers are likely real build/test/install problems rather than branch plumbing.
 
+### External plugin live-patch lesson
+
+When upstream moves a runtime into an external plugin, live patching only the core OpenClaw package can produce a mixed-generation install. After the 2026-05-16 Codex plugin rebase, core was current but the installed Slack plugin was stale, so progress indicators stayed broken until `extensions/slack` was built, packed, installed, the plugin registry refreshed, and the gateway restarted.
+
+Useful checks:
+
+```bash
+openclaw plugins inspect slack --runtime --json
+rg -n "slack turn live trace|starting agent turn|agent turn completed" ~/.openclaw/extensions/slack -g '*.js'
+```
+
 ## When to update this file
 
 Update this index when:
