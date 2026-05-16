@@ -7439,6 +7439,68 @@ describe("runCodexAppServerAttempt", () => {
     expect(result.promptError).toContain("may need re-authentication");
   });
 
+  it("arms the auth-refresh stall guard when Codex refreshes before turn/start returns", async () => {
+    const sessionFile = path.join(tempDir, "session.jsonl");
+    const workspaceDir = path.join(tempDir, "workspace");
+    const agentDir = path.join(tempDir, "agent");
+    const authProfileId = "openai-codex:pcg";
+    await fs.mkdir(agentDir, { recursive: true });
+    await fs.writeFile(
+      path.join(agentDir, "auth-profiles.json"),
+      JSON.stringify({
+        version: 1,
+        profiles: {
+          [authProfileId]: {
+            type: "token",
+            provider: "openai-codex",
+            token: "stale-chatgpt-access-token",
+            email: "pcg@example.test",
+          },
+        },
+      }),
+    );
+
+    let releaseTurnStart: ((value: unknown) => void) | undefined;
+    const turnStart = new Promise<unknown>((resolve) => {
+      releaseTurnStart = resolve;
+    });
+    const harness = createStartedThreadHarness(async (method) => {
+      if (method === "turn/start") {
+        return turnStart;
+      }
+      return undefined;
+    });
+
+    const params = createParams(sessionFile, workspaceDir);
+    params.agentDir = agentDir;
+    params.authProfileId = authProfileId;
+    params.timeoutMs = 10_000;
+    const run = runCodexAppServerAttempt(params, {
+      authRefreshResponseIdleTimeoutMs: 5,
+      turnTerminalIdleTimeoutMs: 60_000,
+    });
+    await harness.waitForMethod("turn/start");
+    const response = await harness.handleServerRequest({
+      id: "auth-refresh-before-turn-start",
+      method: "account/chatgptAuthTokens/refresh",
+      params: {},
+    });
+
+    expect(response).toMatchObject({
+      accessToken: "stale-chatgpt-access-token",
+      chatgptAccountId: "pcg@example.test",
+    });
+    releaseTurnStart?.(turnStartResult());
+
+    await expect(run).resolves.toMatchObject({
+      promptErrorSource: "prompt",
+      timedOut: true,
+    });
+    const result = await run;
+    expect(result.promptError).toContain("did not emit a turn event after refreshing ChatGPT");
+    expect(result.promptError).toContain(authProfileId);
+  });
+
   it("fires llm_output and agent_end when turn/start fails", async () => {
     const llmInput = vi.fn();
     const llmOutput = vi.fn();

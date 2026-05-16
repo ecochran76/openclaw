@@ -1615,6 +1615,7 @@ export async function runCodexAppServerAttempt(
   let turnTerminalIdleWatchArmed = false;
   let authRefreshResponseIdleTimer: ReturnType<typeof setTimeout> | undefined;
   let authRefreshResponseWatchArmed = false;
+  let authRefreshResponseWatchPendingTurnStart = false;
   let authRefreshResponseLastActivityAt = Date.now();
   let turnCompletionLastActivityAt = Date.now();
   let turnCompletionLastActivityReason = "startup";
@@ -2531,8 +2532,12 @@ export async function runCodexAppServerAttempt(
       } else {
         scheduleTurnProgressWatches();
       }
-      if (request.method === "account/chatgptAuthTokens/refresh" && turnId && projector) {
-        armAuthRefreshResponseIdleWatch();
+      if (request.method === "account/chatgptAuthTokens/refresh") {
+        if (turnId && projector) {
+          armAuthRefreshResponseIdleWatch();
+        } else {
+          authRefreshResponseWatchPendingTurnStart = true;
+        }
       }
     }
   });
@@ -2865,6 +2870,10 @@ export async function runCodexAppServerAttempt(
     clearTurnTerminalIdleTimer();
     resolveCompletion?.();
   });
+  if (authRefreshResponseWatchPendingTurnStart) {
+    authRefreshResponseWatchPendingTurnStart = false;
+    armAuthRefreshResponseIdleWatch();
+  }
   emitLifecycleStart();
   const activeProjector = projector;
   turnTerminalIdleWatchArmed = true;
