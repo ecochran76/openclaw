@@ -1344,6 +1344,45 @@ describe("bridgeCodexAppServerStartOptions", () => {
     }
   });
 
+  it("unwraps JSON-formatted Codex OAuth credentials for app-server token refresh", async () => {
+    const agentDir = await fs.mkdtemp(path.join(os.tmpdir(), "openclaw-codex-app-server-"));
+    oauthMocks.refreshOpenAICodexToken.mockResolvedValueOnce({
+      access: "refreshed-access-token",
+      refresh: "refreshed-refresh-token",
+      expires: Date.now() + 60_000,
+      accountId: "account-from-refresh",
+    });
+    providerRuntimeMocks.formatProviderAuthProfileApiKeyWithPlugin.mockResolvedValueOnce(
+      JSON.stringify({
+        token: "json-wrapped-access-token",
+        accountId: "account-from-wrapper",
+      }),
+    );
+    try {
+      upsertAuthProfile({
+        agentDir,
+        profileId: "openai-codex:default",
+        credential: {
+          type: "oauth",
+          provider: "openai-codex",
+          access: "current-access-token",
+          refresh: "refresh-token",
+          expires: Date.now() + 60_000,
+          accountId: "account-before-refresh",
+          email: "codex@example.test",
+        },
+      });
+
+      await expect(refreshCodexAppServerAuthTokens({ agentDir })).resolves.toEqual({
+        accessToken: "json-wrapped-access-token",
+        chatgptAccountId: "account-from-wrapper",
+        chatgptPlanType: null,
+      });
+    } finally {
+      await fs.rm(agentDir, { recursive: true, force: true });
+    }
+  });
+
   it("applies native Codex CLI OAuth when no OpenClaw auth profile exists", async () => {
     const root = await fs.mkdtemp(path.join(os.tmpdir(), "openclaw-codex-app-server-"));
     const agentDir = path.join(root, "agent");

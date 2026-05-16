@@ -1,7 +1,7 @@
 import fs from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
-import { SessionManager } from "@earendil-works/pi-coding-agent";
+import { SessionManager } from "openclaw/plugin-sdk/agent-sessions";
 import {
   abortAgentHarnessRun,
   embeddedAgentLog,
@@ -2989,6 +2989,25 @@ describe("runCodexAppServerAttempt", () => {
       consoleMessage:
         "codex process tool timeout: action=poll sessionId=rapid-crustacean toolTimeoutMs=1 requestedWaitMs=30000; per-tool-call watchdog, not session idle; repeated lines usually mean process-poll retry churn, not model progress",
     });
+  });
+
+  it("bounds stalled Codex auth refresh requests", async () => {
+    vi.useFakeTimers();
+    const onTimeout = vi.fn();
+    const response = testing.withCodexAuthRefreshTimeout({
+      timeoutMs: 1,
+      signal: new AbortController().signal,
+      operation: () => new Promise<never>(() => undefined),
+      onTimeout,
+    });
+    const rejection = expect(response).rejects.toThrow(
+      "codex app-server auth token refresh timed out",
+    );
+
+    await vi.advanceTimersByTimeAsync(1);
+
+    await rejection;
+    expect(onTimeout).toHaveBeenCalledTimes(1);
   });
 
   it("emits normalized tool progress around app-server dynamic tool requests", async () => {
@@ -9152,6 +9171,33 @@ describe("runCodexAppServerAttempt", () => {
 
     await expect(runCodexAppServerAttempt(params)).rejects.toThrow("turn/start timed out");
     expect(queueActiveRunMessageForTest("session-1", "after timeout")).toBe(false);
+  });
+
+  it("fails fast when turn/start does not acknowledge before the response guard", async () => {
+    vi.useFakeTimers();
+    const harness = createStartedThreadHarness(async (method) => {
+      if (method === "turn/start") {
+        return new Promise<never>(() => undefined);
+      }
+      return undefined;
+    });
+    const params = createParams(
+      path.join(tempDir, "session.jsonl"),
+      path.join(tempDir, "workspace"),
+    );
+    params.timeoutMs = 10_000;
+    const run = runCodexAppServerAttempt(params, {
+      turnStartResponseTimeoutMs: 5,
+    });
+
+    await harness.waitForMethod("turn/start");
+    await vi.advanceTimersByTimeAsync(5);
+
+    await expect(run).resolves.toMatchObject({
+      promptError: "Codex app-server did not acknowledge turn/start within 5ms.",
+      promptErrorSource: "prompt",
+      timedOut: true,
+    });
   });
 
   it("keeps extended history enabled when resuming a bound Codex thread", async () => {

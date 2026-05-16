@@ -259,6 +259,11 @@ function resolveExternalCliOverlayOptions(
   };
 }
 
+function markRuntimePersistedProfiles(store: AuthProfileStore): AuthProfileStore {
+  const profileIds = Object.keys(store.profiles).toSorted();
+  return profileIds.length > 0 ? { ...store, runtimePersistedProfileIds: profileIds } : store;
+}
+
 function maybeSyncPersistedExternalCliAuthProfiles(params: {
   store: AuthProfileStore;
   agentDir?: string;
@@ -475,7 +480,7 @@ export function loadAuthProfileStoreForAgentFile(
   });
   if (asStore) {
     const synced = maybeSyncPersistedExternalCliAuthProfiles({
-      store: asStore,
+      store: markRuntimePersistedProfiles(asStore),
       agentDir,
       options,
     });
@@ -524,7 +529,7 @@ export function loadAuthProfileStoreForAgentFile(
   }
 
   const synced = maybeSyncPersistedExternalCliAuthProfiles({
-    store,
+    store: markRuntimePersistedProfiles(store),
     agentDir,
     options,
   });

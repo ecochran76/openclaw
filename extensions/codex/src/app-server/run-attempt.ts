@@ -212,6 +212,7 @@ const CODEX_TURN_COMPLETION_IDLE_TIMEOUT_MS = 60_000;
 const CODEX_TURN_ASSISTANT_COMPLETION_IDLE_TIMEOUT_MS = 10_000;
 const CODEX_TURN_TERMINAL_IDLE_TIMEOUT_MS = 120_000;
 const CODEX_AUTH_REFRESH_RESPONSE_IDLE_TIMEOUT_MS = 15_000;
+const CODEX_TURN_START_RESPONSE_TIMEOUT_MS = Number.POSITIVE_INFINITY;
 const CODEX_NATIVE_HOOK_RELAY_MIN_TTL_MS = 30 * 60_000;
 const CODEX_NATIVE_HOOK_RELAY_TTL_GRACE_MS = 5 * 60_000;
 const CODEX_NATIVE_HOOK_RELAY_RENEW_INTERVAL_MS = 60_000;
@@ -841,6 +842,7 @@ export async function runCodexAppServerAttempt(
     turnTerminalIdleTimeoutMs?: number;
     clientFactory?: CodexAppServerClientFactory;
     authRefreshResponseIdleTimeoutMs?: number;
+    turnStartResponseTimeoutMs?: number;
   } = {},
 ): Promise<EmbeddedRunAttemptResult> {
   const attemptStartedAt = Date.now();
@@ -1605,6 +1607,9 @@ export async function runCodexAppServerAttempt(
   const authRefreshResponseIdleTimeoutMs = resolveCodexAuthRefreshResponseIdleTimeoutMs(
     options.authRefreshResponseIdleTimeoutMs,
   );
+  const turnStartResponseTimeoutMs = resolveCodexTurnStartResponseTimeoutMs(
+    options.turnStartResponseTimeoutMs,
+  );
   let turnCompletionIdleTimer: ReturnType<typeof setTimeout> | undefined;
   let turnCompletionIdleWatchArmed = false;
   let turnCompletionIdleWatchPinnedByTerminalError = false;
@@ -2312,10 +2317,39 @@ export async function runCodexAppServerAttempt(
     };
     try {
       if (request.method === "account/chatgptAuthTokens/refresh") {
-        return refreshCodexAppServerAuthTokens({
-          agentDir,
-          authProfileId: startupAuthProfileId,
-          config: params.config,
+        return await withCodexAuthRefreshTimeout({
+          timeoutMs: authRefreshResponseIdleTimeoutMs,
+          signal: runAbortController.signal,
+          operation: async () =>
+            refreshCodexAppServerAuthTokens({
+              agentDir,
+              authProfileId: startupAuthProfileId,
+              config: params.config,
+            }),
+          onTimeout: () => {
+            authRefreshResponseWatchArmed = false;
+            timedOut = true;
+            turnCompletionIdleTimedOut = true;
+            const profileHint = startupAuthProfileId ? ` "${startupAuthProfileId}"` : "";
+            turnCompletionIdleTimeoutMessage = `Codex app-server auth token refresh did not complete within ${authRefreshResponseIdleTimeoutMs}ms; the selected OpenAI Codex auth profile${profileHint} may need re-authentication.`;
+            projector?.markTimedOut();
+            trajectoryRecorder?.recordEvent("turn.auth_refresh_request_timeout", {
+              threadId: thread.threadId,
+              turnId,
+              timeoutMs: authRefreshResponseIdleTimeoutMs,
+              authProfileId: startupAuthProfileId,
+              activeAppServerTurnRequests,
+            });
+            embeddedAgentLog.warn("codex app-server auth token refresh timed out", {
+              threadId: thread.threadId,
+              turnId,
+              timeoutMs: authRefreshResponseIdleTimeoutMs,
+              authProfileId: startupAuthProfileId,
+              activeAppServerTurnRequests,
+            });
+            rejectAuthRefreshResponseStall?.(new Error(turnCompletionIdleTimeoutMessage));
+            runAbortController.abort("auth_refresh_request_timeout");
+          },
         });
       }
       if (!turnId) {
@@ -2650,26 +2684,58 @@ export async function runCodexAppServerAttempt(
   ];
 
   let turn: CodexTurnStartResponse | undefined;
-  const startCodexTurn = async (): Promise<CodexTurnStartResponse> =>
-    assertCodexTurnStartResponse(
-      await Promise.race([
-        client.request(
-          "turn/start",
-          buildTurnStartParams(params, {
-            threadId: thread.threadId,
-            cwd: codexExecutionCwd,
-            appServer: pluginAppServer,
-            promptText: codexTurnPromptText,
-            sandboxPolicy: codexSandboxPolicy,
-            environmentSelection: codexEnvironmentSelection,
-            heartbeatCollaborationInstructions:
-              workspaceBootstrapContext.heartbeatCollaborationInstructions,
-          }),
-          { timeoutMs: params.timeoutMs, signal: runAbortController.signal },
-        ),
-        authRefreshResponseStall,
-      ]),
-    );
+  const startCodexTurn = async (): Promise<CodexTurnStartResponse> => {
+    const turnStartResponseStall =
+      params.timeoutMs > turnStartResponseTimeoutMs
+        ? createCodexTurnStartResponseTimeout({
+            timeoutMs: turnStartResponseTimeoutMs,
+            signal: runAbortController.signal,
+            onTimeout: () => {
+              timedOut = true;
+              turnCompletionIdleTimedOut = true;
+              turnCompletionIdleTimeoutMessage = `Codex app-server did not acknowledge turn/start within ${turnStartResponseTimeoutMs}ms.`;
+              projector?.markTimedOut();
+              trajectoryRecorder?.recordEvent("turn.start_response_timeout", {
+                threadId: thread.threadId,
+                timeoutMs: turnStartResponseTimeoutMs,
+                authProfileId: startupAuthProfileId,
+                activeAppServerTurnRequests,
+              });
+              embeddedAgentLog.warn("codex app-server turn/start response timed out", {
+                threadId: thread.threadId,
+                timeoutMs: turnStartResponseTimeoutMs,
+                authProfileId: startupAuthProfileId,
+                activeAppServerTurnRequests,
+              });
+              runAbortController.abort("turn_start_response_timeout");
+            },
+          })
+        : undefined;
+    try {
+      return assertCodexTurnStartResponse(
+        await Promise.race([
+          client.request(
+            "turn/start",
+            buildTurnStartParams(params, {
+              threadId: thread.threadId,
+              cwd: codexExecutionCwd,
+              appServer: pluginAppServer,
+              promptText: codexTurnPromptText,
+              sandboxPolicy: codexSandboxPolicy,
+              environmentSelection: codexEnvironmentSelection,
+              heartbeatCollaborationInstructions:
+                workspaceBootstrapContext.heartbeatCollaborationInstructions,
+            }),
+            { timeoutMs: params.timeoutMs, signal: runAbortController.signal },
+          ),
+          authRefreshResponseStall,
+          ...(turnStartResponseStall ? [turnStartResponseStall.promise] : []),
+        ]),
+      );
+    } finally {
+      turnStartResponseStall?.cleanup();
+    }
+  };
   try {
     runAgentHarnessLlmInputHook({
       event: buildLlmInputEvent(),
@@ -4291,6 +4357,93 @@ async function withCodexAbortSignal<T>(params: {
   }
 }
 
+async function withCodexAuthRefreshTimeout<T>(params: {
+  timeoutMs: number;
+  signal: AbortSignal;
+  operation: () => Promise<T>;
+  onTimeout: () => void;
+}): Promise<T> {
+  if (params.signal.aborted) {
+    throw new Error("codex app-server auth token refresh aborted");
+  }
+  let timeout: ReturnType<typeof setTimeout> | undefined;
+  let abortCleanup: (() => void) | undefined;
+  let settled = false;
+  try {
+    return await Promise.race([
+      params.operation(),
+      new Promise<never>((_, reject) => {
+        const rejectWith = (error: Error) => {
+          if (settled) {
+            return;
+          }
+          settled = true;
+          if (timeout) {
+            clearTimeout(timeout);
+            timeout = undefined;
+          }
+          abortCleanup?.();
+          reject(error);
+        };
+        timeout = setTimeout(() => {
+          const error = new Error("codex app-server auth token refresh timed out");
+          rejectWith(error);
+          params.onTimeout();
+        }, params.timeoutMs);
+        const abortListener = () =>
+          rejectWith(new Error("codex app-server auth token refresh aborted"));
+        params.signal.addEventListener("abort", abortListener, { once: true });
+        abortCleanup = () => params.signal.removeEventListener("abort", abortListener);
+      }),
+    ]);
+  } finally {
+    if (timeout) {
+      clearTimeout(timeout);
+    }
+    abortCleanup?.();
+  }
+}
+
+function createCodexTurnStartResponseTimeout(params: {
+  timeoutMs: number;
+  signal: AbortSignal;
+  onTimeout: () => void;
+}): { promise: Promise<never>; cleanup: () => void } {
+  if (params.signal.aborted) {
+    return {
+      promise: Promise.reject(new Error("codex app-server turn/start aborted")),
+      cleanup: () => undefined,
+    };
+  }
+  let timeout: ReturnType<typeof setTimeout> | undefined;
+  let settled = false;
+  let rejectPromise: ((error: Error) => void) | undefined;
+  const abortListener = () => rejectWith(new Error("codex app-server turn/start aborted"));
+  const cleanup = () => {
+    if (!settled) {
+      settled = true;
+      if (timeout) {
+        clearTimeout(timeout);
+        timeout = undefined;
+      }
+      params.signal.removeEventListener("abort", abortListener);
+    }
+  };
+  const rejectWith = (error: Error) => {
+    cleanup();
+    rejectPromise?.(error);
+  };
+  const promise = new Promise<never>((_, reject) => {
+    rejectPromise = reject;
+    timeout = setTimeout(() => {
+      params.onTimeout();
+      rejectWith(new Error("codex app-server turn/start response timed out"));
+    }, params.timeoutMs);
+    params.signal.addEventListener("abort", abortListener, { once: true });
+  });
+  return { promise, cleanup };
+}
+
 function resolveCodexStartupTimeoutMs(params: {
   timeoutMs: number;
   timeoutFloorMs?: number;
@@ -4350,6 +4503,16 @@ function resolveCodexAuthRefreshResponseIdleTimeoutMs(value: number | undefined)
   }
   if (!Number.isFinite(value)) {
     return CODEX_AUTH_REFRESH_RESPONSE_IDLE_TIMEOUT_MS;
+  }
+  return Math.max(1, Math.floor(value));
+}
+
+function resolveCodexTurnStartResponseTimeoutMs(value: number | undefined): number {
+  if (value === undefined) {
+    return CODEX_TURN_START_RESPONSE_TIMEOUT_MS;
+  }
+  if (!Number.isFinite(value)) {
+    return CODEX_TURN_START_RESPONSE_TIMEOUT_MS;
   }
   return Math.max(1, Math.floor(value));
 }
@@ -5494,6 +5657,7 @@ export const testing = {
   hasWildcardCodexToolsAllow,
   handleDynamicToolCallWithTimeout,
   isInvalidCodexImagePayloadError,
+  withCodexAuthRefreshTimeout,
   remapCodexContextFilePath,
   resolveDynamicToolCallTimeoutMs,
   resolveCodexDynamicToolsLoading,

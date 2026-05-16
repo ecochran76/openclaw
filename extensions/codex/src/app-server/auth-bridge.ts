@@ -34,10 +34,11 @@ const OPENAI_CODEX_APP_SERVER_AUTH_PROVIDER = "openai-codex";
 const LEGACY_CODEX_APP_SERVER_AUTH_PROVIDER = "codex-cli";
 const CODEX_APP_SERVER_EXTERNAL_CLI_PROVIDER_IDS = [
   CODEX_APP_SERVER_AUTH_PROVIDER,
+  OPENAI_CODEX_APP_SERVER_AUTH_PROVIDER,
   LEGACY_CODEX_APP_SERVER_AUTH_PROVIDER,
 ];
 const OPENAI_PROVIDER = "openai";
-const OPENAI_CODEX_DEFAULT_PROFILE_ID = "openai:default";
+const OPENAI_CODEX_DEFAULT_PROFILE_ID = "openai-codex:default";
 const CODEX_HOME_ENV_VAR = "CODEX_HOME";
 const HOME_ENV_VAR = "HOME";
 const CODEX_APP_SERVER_HOME_DIRNAME = "codex-home";
@@ -48,6 +49,7 @@ const CODEX_APP_SERVER_API_KEY_ENV_VARS = [CODEX_API_KEY_ENV_VAR, OPENAI_API_KEY
 const CODEX_APP_SERVER_HOME_ENV_VARS = [CODEX_HOME_ENV_VAR, HOME_ENV_VAR];
 const CODEX_AUTH_JSON_FILENAME = "auth.json";
 const CODEX_HOME_DIRNAME = ".codex";
+const CODEX_CLI_FALLBACK_EXPIRY_MS = 60 * 60 * 1000;
 
 type AuthProfileOrderConfig = Parameters<typeof resolveAuthProfileOrder>[0]["cfg"];
 const scopedOAuthRefreshQueues = new WeakMap<
@@ -102,11 +104,25 @@ export function resolveCodexAppServerAuthProfileId(params: {
   if (requested) {
     return requested;
   }
-  return resolveAuthProfileOrder({
+  const ordered = resolveAuthProfileOrder({
     cfg: params.config,
     store: params.store,
     provider: CODEX_APP_SERVER_AUTH_PROVIDER,
-  })[0]?.trim();
+  });
+  const codexProfiles = Object.entries(params.store.profiles)
+    .filter(([, credential]) =>
+      isSelectableCodexAppServerAuthProfileCredential(credential, params.config),
+    )
+    .map(([profileId]) => profileId);
+  const candidates = [
+    ...codexProfiles.filter((profileId) => profileId === OPENAI_CODEX_DEFAULT_PROFILE_ID),
+    ...ordered,
+    ...codexProfiles,
+  ];
+  return candidates.find((profileId, index) => {
+    const trimmed = profileId.trim();
+    return trimmed && candidates.findIndex((candidate) => candidate.trim() === trimmed) === index;
+  })?.trim();
 }
 
 export function resolveCodexAppServerAuthProfileIdForAgent(params: {
@@ -178,12 +194,14 @@ export function resolveCodexAppServerAuthProfileStore(params: {
     ...params.authProfileStore.profiles,
   };
   const suppliedProfileIds = new Set(Object.keys(params.authProfileStore.profiles));
+  const overlaidPersistedProfileIds =
+    overlaidStore.runtimePersistedProfileIds ?? Object.keys(overlaidStore.profiles);
   const mergeRuntimeProfileIds = (overlaidIds?: string[], suppliedIds?: string[]) => [
     ...(overlaidIds ?? []).filter((profileId) => !suppliedProfileIds.has(profileId)),
     ...(suppliedIds ?? []),
   ];
   const runtimePersistedProfileIds = mergeRuntimeProfileIds(
-    overlaidStore.runtimePersistedProfileIds,
+    overlaidPersistedProfileIds,
     params.authProfileStore.runtimePersistedProfileIds,
   ).filter((profileId) => profiles[profileId]);
   const runtimeExternalProfileIds = mergeRuntimeProfileIds(
@@ -230,7 +248,7 @@ export async function resolveCodexAppServerAuthAccountCacheKey(params: {
     config: params.config,
   });
   if (!profileId) {
-    return undefined;
+    return resolveCodexCliAuthFileOAuthCacheKey(process.env);
   }
   const credential = store.profiles[profileId];
   if (!credential || !isCodexAppServerAuthProfileCredential(credential, params.config)) {
@@ -456,7 +474,21 @@ async function resolveCodexAppServerAuthProfileLoginParamsInternal(params: {
     config: params.config,
   });
   if (!profileId) {
-    return undefined;
+    const credential = await readCodexCliAuthFileOAuthCredential(process.env);
+    return credential
+      ? resolveLoginParamsForCredential(OPENAI_CODEX_DEFAULT_PROFILE_ID, credential, {
+          agentDir: params.agentDir,
+          store: {
+            version: 1,
+            profiles: { [OPENAI_CODEX_DEFAULT_PROFILE_ID]: credential },
+            runtimeExternalProfileIds: [OPENAI_CODEX_DEFAULT_PROFILE_ID],
+            runtimeExternalProfileIdsAuthoritative: true,
+          },
+          preferStoreCredential: true,
+          forceOAuthRefresh: params.forceOAuthRefresh === true,
+          config: params.config,
+        })
+      : undefined;
   }
   const credential = store.profiles[profileId];
   if (!credential) {
@@ -533,9 +565,54 @@ function parseCodexCliAuthFileApiKey(raw: string): string | undefined {
   return typeof apiKey === "string" && apiKey.trim() ? apiKey.trim() : undefined;
 }
 
+function parseCodexCliAuthFileOAuthCredential(raw: string): OAuthCredential | undefined {
+  let parsed: unknown;
+  try {
+    parsed = JSON.parse(raw);
+  } catch {
+    return undefined;
+  }
+  if (!parsed || typeof parsed !== "object") {
+    return undefined;
+  }
+  const tokens = (parsed as Record<string, unknown>).tokens;
+  if (!tokens || typeof tokens !== "object") {
+    return undefined;
+  }
+  const record = tokens as Record<string, unknown>;
+  const access = typeof record.access_token === "string" ? record.access_token.trim() : "";
+  const refresh = typeof record.refresh_token === "string" ? record.refresh_token.trim() : "";
+  if (!access || !refresh) {
+    return undefined;
+  }
+  const accountId = typeof record.account_id === "string" ? record.account_id.trim() : "";
+  const idToken = typeof record.id_token === "string" ? record.id_token.trim() : "";
+  return {
+    type: "oauth",
+    provider: CODEX_APP_SERVER_AUTH_PROVIDER,
+    access,
+    refresh,
+    expires: Date.now() + CODEX_CLI_FALLBACK_EXPIRY_MS,
+    ...(accountId ? { accountId } : {}),
+    ...(idToken ? { idToken } : {}),
+  };
+}
+
 async function readCodexCliAuthFileApiKey(env: NodeJS.ProcessEnv): Promise<string | undefined> {
   try {
     return parseCodexCliAuthFileApiKey(await fs.readFile(resolveCodexCliAuthFilePath(env), "utf8"));
+  } catch {
+    return undefined;
+  }
+}
+
+async function readCodexCliAuthFileOAuthCredential(
+  env: NodeJS.ProcessEnv,
+): Promise<OAuthCredential | undefined> {
+  try {
+    return parseCodexCliAuthFileOAuthCredential(
+      await fs.readFile(resolveCodexCliAuthFilePath(env), "utf8"),
+    );
   } catch {
     return undefined;
   }
@@ -547,6 +624,19 @@ function resolveCodexCliAuthFileApiKeyCacheKey(env: NodeJS.ProcessEnv): string |
       fsSync.readFileSync(resolveCodexCliAuthFilePath(env), "utf8"),
     );
     return apiKey ? fingerprintCodexCliAuthFileApiKeyCacheKey(apiKey) : undefined;
+  } catch {
+    return undefined;
+  }
+}
+
+function resolveCodexCliAuthFileOAuthCacheKey(env: NodeJS.ProcessEnv): string | undefined {
+  try {
+    const credential = parseCodexCliAuthFileOAuthCredential(
+      fsSync.readFileSync(resolveCodexCliAuthFilePath(env), "utf8"),
+    );
+    return credential
+      ? resolveChatgptAccountId(OPENAI_CODEX_DEFAULT_PROFILE_ID, credential)
+      : undefined;
   } catch {
     return undefined;
   }
@@ -585,7 +675,7 @@ async function resolveLoginParamsForCredential(
       profileId,
       agentDir: params.agentDir,
     });
-    const accessToken = resolved?.apiKey?.trim();
+    const accessToken = normalizeCodexAccessToken(resolved?.apiKey).token;
     return accessToken
       ? buildChatgptAuthTokensParams(profileId, credential, accessToken)
       : undefined;
@@ -696,7 +786,14 @@ async function resolveOAuthCredentialForCodexAppServer(
         isCodexAppServerAuthProvider(storedCredential.provider, params.config)
       ? storedCredential
       : credential;
-  return resolved?.apiKey ? { ...candidate, access: resolved.apiKey } : candidate;
+  const normalized = normalizeCodexAccessToken(resolved?.apiKey);
+  return normalized.token
+    ? {
+        ...candidate,
+        access: normalized.token,
+        ...(normalized.accountId ? { accountId: normalized.accountId } : {}),
+      }
+    : candidate;
 }
 
 function shouldUseScopedOAuthCredential(params: {
@@ -763,9 +860,7 @@ async function resolveScopedOAuthCredential(params: {
       throw new Error(`Codex app-server auth profile "${params.profileId}" could not refresh.`);
     }
     if (!isDeepStrictEqual(params.store.profiles[params.profileId], credential)) {
-      throw new Error(
-        `Codex app-server auth profile "${params.profileId}" changed while refreshing.`,
-      );
+      return refreshed;
     }
     params.store.profiles[params.profileId] = refreshed;
     return refreshed;
@@ -811,6 +906,25 @@ function isCodexAppServerAuthProfileCredential(
     isCodexAppServerAuthProvider(credential.provider, config) ||
     isOpenAIApiKeyBackupCredential(credential, config)
   );
+}
+
+function isSelectableCodexAppServerAuthProfileCredential(
+  credential: AuthProfileCredential,
+  config?: AuthProfileOrderConfig,
+): boolean {
+  if (!isCodexAppServerAuthProfileCredential(credential, config)) {
+    return false;
+  }
+  if (credential.type === "oauth") {
+    return Boolean(credential.access?.trim() || credential.refresh?.trim());
+  }
+  if (credential.type === "api_key") {
+    return Boolean(credential.key?.trim() || credential.keyRef);
+  }
+  if (credential.type === "token") {
+    return Boolean(credential.token?.trim() || credential.tokenRef);
+  }
+  return false;
 }
 
 function shouldClearOpenAiApiKeyForCodexAuthProfile(params: {
@@ -878,6 +992,39 @@ function buildChatgptAuthTokensParams(
     chatgptAccountId: resolveChatgptAccountId(profileId, credential),
     chatgptPlanType: resolveChatgptPlanType(credential),
   };
+}
+
+function normalizeCodexAccessToken(value: string | undefined): {
+  token: string | undefined;
+  accountId?: string;
+} {
+  const trimmed = value?.trim();
+  if (!trimmed) {
+    return { token: undefined };
+  }
+  if (!trimmed.startsWith("{")) {
+    return { token: trimmed };
+  }
+  try {
+    const parsed = JSON.parse(trimmed) as {
+      token?: unknown;
+      accessToken?: unknown;
+      accountId?: unknown;
+    };
+    const token =
+      typeof parsed.token === "string" && parsed.token.trim()
+        ? parsed.token.trim()
+        : typeof parsed.accessToken === "string" && parsed.accessToken.trim()
+          ? parsed.accessToken.trim()
+          : undefined;
+    const accountId =
+      typeof parsed.accountId === "string" && parsed.accountId.trim()
+        ? parsed.accountId.trim()
+        : undefined;
+    return { token, accountId };
+  } catch {
+    return { token: trimmed };
+  }
 }
 
 function resolveChatgptPlanType(credential: AuthProfileCredential): string | null {
