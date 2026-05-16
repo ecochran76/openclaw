@@ -1819,12 +1819,7 @@ export async function runCodexAppServerAttempt(
   };
 
   const fireAuthRefreshResponseIdleTimeout = () => {
-    if (
-      completed ||
-      runAbortController.signal.aborted ||
-      !authRefreshResponseWatchArmed ||
-      activeAppServerTurnRequests > 0
-    ) {
+    if (completed || runAbortController.signal.aborted || !authRefreshResponseWatchArmed) {
       return;
     }
     const idleMs = Math.max(0, Date.now() - authRefreshResponseLastActivityAt);
@@ -1844,6 +1839,7 @@ export async function runCodexAppServerAttempt(
       idleMs,
       timeoutMs: authRefreshResponseIdleTimeoutMs,
       authProfileId: startupAuthProfileId,
+      activeAppServerTurnRequests,
       lastActivityReason: turnCompletionLastActivityReason,
       ...turnCompletionLastActivityDetails,
     });
@@ -1853,6 +1849,7 @@ export async function runCodexAppServerAttempt(
       idleMs,
       timeoutMs: authRefreshResponseIdleTimeoutMs,
       authProfileId: startupAuthProfileId,
+      activeAppServerTurnRequests,
       lastActivityReason: turnCompletionLastActivityReason,
       ...turnCompletionLastActivityDetails,
     });
@@ -1944,12 +1941,7 @@ export async function runCodexAppServerAttempt(
 
   function scheduleAuthRefreshResponseIdleWatch() {
     clearAuthRefreshResponseIdleTimer();
-    if (
-      completed ||
-      runAbortController.signal.aborted ||
-      !authRefreshResponseWatchArmed ||
-      activeAppServerTurnRequests > 0
-    ) {
+    if (completed || runAbortController.signal.aborted || !authRefreshResponseWatchArmed) {
       return;
     }
     const elapsedMs = Math.max(0, Date.now() - authRefreshResponseLastActivityAt);
