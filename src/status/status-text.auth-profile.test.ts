@@ -1,4 +1,4 @@
-import { beforeEach, describe, expect, it, vi } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 const ensureAuthProfileStore = vi.hoisted(() => vi.fn());
 const resolveAuthProfileOrder = vi.hoisted(() => vi.fn());
@@ -60,6 +60,10 @@ describe("resolveStatusModelAuthLabel", () => {
     );
   });
 
+  afterEach(() => {
+    vi.useRealTimers();
+  });
+
   it("surfaces agent-local auth order drift from main", async () => {
     const { resolveStatusModelAuthLabel } = await import("./status-text.js");
     expect(
@@ -89,5 +93,35 @@ describe("resolveStatusModelAuthLabel", () => {
         agentDir: "/main-agent",
       }),
     ).toBe("oauth (openai:pcg)");
+  });
+
+  it("surfaces active auth failure state for the selected profile", async () => {
+    vi.useFakeTimers();
+    vi.setSystemTime(new Date("2026-05-15T19:00:00Z"));
+    ensureAuthProfileStore.mockReturnValue({
+      profiles: {
+        "openai-codex:pcg": {
+          provider: "openai-codex",
+          type: "oauth",
+        },
+      },
+      usageStats: {
+        "openai-codex:pcg": {
+          disabledUntil: Date.now() + 60_000,
+          disabledReason: "auth_permanent",
+          failureCounts: { auth_permanent: 1 },
+          lastFailureAt: Date.now() - 30_000,
+        },
+      },
+    });
+
+    const { resolveStatusModelAuthLabel } = await import("./status-text.js");
+    expect(
+      resolveStatusModelAuthLabel({
+        provider: "openai-codex",
+        cfg: {},
+        agentDir: "/main-agent",
+      }),
+    ).toBe("oauth (openai-codex:pcg) · auth disabled: auth permanent for 1m");
   });
 });

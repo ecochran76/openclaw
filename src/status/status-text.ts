@@ -1,10 +1,7 @@
-// Status text helpers render runtime status summaries for CLI output.
 import os from "node:os";
-import { normalizeOptionalLowercaseString } from "@openclaw/normalization-core/string-coerce";
 import {
   resolveAgentConfig,
   resolveAgentDir,
-  resolveAgentWorkspaceDir,
   resolveDefaultAgentId,
   resolveSessionAgentId,
   resolveAgentModelFallbacksOverride,
@@ -17,13 +14,14 @@ import {
   ensureAuthProfileStore,
   loadAuthProfileStoreWithoutExternalProfiles,
 } from "../agents/auth-profiles/store.js";
+import type {
+  AuthProfileFailureReason,
+  ProfileUsageStats,
+} from "../agents/auth-profiles/types.js";
 import { resolveContextTokensForModel } from "../agents/context.js";
 import { resolveFastModeState } from "../agents/fast-mode.js";
 import { resolveModelAuthLabel } from "../agents/model-auth-label.js";
-import {
-  areRuntimeModelRefsEquivalent,
-  shouldPreferActiveRuntimeAliasAuthLabel,
-} from "../agents/model-runtime-aliases.js";
+import { areRuntimeModelRefsEquivalent } from "../agents/model-runtime-aliases.js";
 import {
   findNormalizedProviderValue,
   resolveDefaultModelForAgent,
@@ -41,7 +39,6 @@ import { getLatestAutomationRunForRequester } from "../automation/registry.js";
 import { buildAutomationCompactStatusLine } from "../automation/status.js";
 import { toAgentModelListLike } from "../config/model-input.js";
 import type { SessionEntry } from "../config/sessions.js";
-import { hasSessionAutoModelFallbackProvenance } from "../config/sessions/model-override-provenance.js";
 import type { OpenClawConfig } from "../config/types.openclaw.js";
 import { formatDurationCompact } from "../infra/format-time/format-duration.ts";
 import {
@@ -49,6 +46,7 @@ import {
   loadProviderUsageSummary,
   resolveUsageProviderId,
 } from "../infra/provider-usage.js";
+import { normalizeOptionalLowercaseString } from "@openclaw/normalization-core/string-coerce";
 import { normalizeAccountId } from "../routing/account-id.js";
 import { resolveNormalizedAccountEntry } from "../routing/account-lookup.js";
 import {
@@ -60,21 +58,14 @@ import {
   formatTaskStatusDetail,
   formatTaskStatusTitle,
 } from "../tasks/task-status.js";
-import { resolveActiveFallbackState } from "./fallback-notice-state.js";
-import {
-  buildCodexSyntheticUsageAuth,
-  shouldUseCodexSyntheticUsageForRuntime,
-} from "./codex-synthetic-usage.js";
-import { formatCompactPluginHealthLine } from "./status-plugin-health.js";
 import type { BuildStatusTextParams } from "./status-text.types.js";
+export type { BuildStatusTextParams } from "./status-text.types.js";
 
-// Status text assembly gathers runtime/model/session/task facts, then delegates
-// final formatting to status-message.runtime through lazy imports.
 const USAGE_OAUTH_ONLY_PROVIDERS = new Set([
   "anthropic",
   "github-copilot",
   "google-gemini-cli",
-  "openai",
+  "openai-codex",
 ]);
 
 function resolveStatusChannelFeatureLine(params: {
@@ -116,9 +107,6 @@ let agentHarnessSelectionRuntimePromise: Promise<
 let statusQueueRuntimePromise: Promise<typeof import("./status-queue.runtime.js")> | null = null;
 let statusSubagentsRuntimePromise: Promise<typeof import("./status-subagents.runtime.js")> | null =
   null;
-let statusPluginHealthRuntimePromise: Promise<
-  typeof import("./status-plugin-health.runtime.js")
-> | null = null;
 
 function loadStatusMessageRuntime(): Promise<typeof import("../auto-reply/status.runtime.js")> {
   const runtimePromise = (statusMessageRuntimePromise ??=
@@ -147,16 +135,6 @@ function loadStatusQueueRuntime(): Promise<typeof import("./status-queue.runtime
   return runtimePromise;
 }
 
-function loadStatusPluginHealthRuntime(): Promise<
-  typeof import("./status-plugin-health.runtime.js")
-> {
-  const runtimePromise = (statusPluginHealthRuntimePromise ??=
-    import("./status-plugin-health.runtime.js"));
-  return runtimePromise;
-}
-
-// Context lookup stays synchronous/non-refreshing so status output does not
-// trigger provider/catalog IO while rendering a command response.
 function resolveStatusRuntimeContextTokens(params: {
   cfg: OpenClawConfig;
   provider: string;
@@ -173,7 +151,6 @@ function resolveStatusRuntimeContextTokens(params: {
 function shouldLoadUsageSummary(params: {
   provider?: string;
   selectedModelAuth?: string;
-  credentialType?: string;
 }): boolean {
   if (!params.provider) {
     return false;
@@ -181,64 +158,8 @@ function shouldLoadUsageSummary(params: {
   if (!USAGE_OAUTH_ONLY_PROVIDERS.has(params.provider)) {
     return true;
   }
-  // OAuth/token usage endpoints are meaningful only for providers authenticated
-  // through those modes; skip API-key sessions to avoid slow unavailable calls.
   const auth = normalizeOptionalLowercaseString(params.selectedModelAuth);
-  return Boolean(
-    params.credentialType === "oauth" ||
-    params.credentialType === "token" ||
-    auth?.startsWith("oauth") ||
-    auth?.startsWith("token"),
-  );
-}
-
-function resolveUsageCredentialType(authLabel?: string): "oauth" | "token" | "api_key" | undefined {
-  const auth = normalizeOptionalLowercaseString(authLabel);
-  if (!auth) {
-    return undefined;
-  }
-  if (auth.startsWith("oauth")) {
-    return "oauth";
-  }
-  if (auth.startsWith("token")) {
-    return "token";
-  }
-  if (auth.startsWith("api-key") || auth.startsWith("api key")) {
-    return "api_key";
-  }
-  return undefined;
-}
-
-function resolveCodexSyntheticUsageAuthProfileId(params: {
-  profileId: string | undefined;
-  cfg: OpenClawConfig;
-  agentDir?: string;
-}): string | undefined {
-  const normalizedProfileId = params.profileId?.trim();
-  if (!normalizedProfileId) {
-    return undefined;
-  }
-  try {
-    const store = ensureAuthProfileStore(params.agentDir, {
-      allowKeychainPrompt: false,
-      config: params.cfg,
-      readOnly: true,
-      syncExternalCli: false,
-    });
-    const credential = store.profiles[normalizedProfileId];
-    if (!credential) {
-      return undefined;
-    }
-    const credentialProvider = normalizeOptionalLowercaseString(credential.provider);
-    const resolvedProvider = resolveProviderIdForAuth(credential.provider, { config: params.cfg });
-    return resolvedProvider === "openai" ||
-      credentialProvider === "openai-codex" ||
-      credentialProvider === "codex-cli"
-      ? normalizedProfileId
-      : undefined;
-  } catch {
-    return undefined;
-  }
+  return Boolean(auth?.startsWith("oauth") || auth?.startsWith("token"));
 }
 
 function formatSessionTaskLine(sessionKey: string): string | undefined {
@@ -280,8 +201,6 @@ async function resolveStatusHarnessId(params: {
     const id = normalizeOptionalLowercaseString(selected.id);
     return id || undefined;
   } catch {
-    // Harness selection is nice-to-have for display. Status should still render
-    // if dynamic harness modules are unavailable.
     return undefined;
   }
 }
@@ -292,13 +211,68 @@ function resolveStatusRuntimeProvider(params: {
 }): string {
   const harness = normalizeOptionalLowercaseString(params.effectiveHarness);
   const provider = normalizeOptionalLowercaseString(params.provider);
-  if (harness === "codex" && (provider === "openai" || provider === "codex")) {
-    return "openai";
+  if (harness === "codex" && provider === "openai") {
+    return "openai-codex";
   }
   if (harness === "claude-cli" && provider === "anthropic") {
     return "claude-cli";
   }
   return params.provider;
+}
+
+function resolveStatusAuthProvider(params: {
+  provider: string;
+  effectiveHarness?: string;
+}): string {
+  return resolveStatusRuntimeProvider(params);
+}
+
+function formatAuthFailureReason(reason: AuthProfileFailureReason | undefined): string {
+  return reason ? reason.replaceAll("_", " ") : "auth";
+}
+
+function resolveLastAuthFailureReason(
+  stats: ProfileUsageStats | undefined,
+): AuthProfileFailureReason | undefined {
+  if (!stats) {
+    return undefined;
+  }
+  if (stats.disabledReason === "auth" || stats.disabledReason === "auth_permanent") {
+    return stats.disabledReason;
+  }
+  if ((stats.failureCounts?.auth_permanent ?? 0) > 0) {
+    return "auth_permanent";
+  }
+  if ((stats.failureCounts?.auth ?? 0) > 0) {
+    return "auth";
+  }
+  return undefined;
+}
+
+function formatStatusAuthFailureNote(stats: ProfileUsageStats | undefined): string | undefined {
+  const reason = resolveLastAuthFailureReason(stats);
+  if (!stats || !reason) {
+    return undefined;
+  }
+  const now = Date.now();
+  if (
+    typeof stats.disabledUntil === "number" &&
+    Number.isFinite(stats.disabledUntil) &&
+    stats.disabledUntil > now
+  ) {
+    const remaining = formatStatusUptimeDuration(stats.disabledUntil - now);
+    return `auth disabled: ${formatAuthFailureReason(reason)} for ${remaining}`;
+  }
+  if (
+    typeof stats.lastFailureAt === "number" &&
+    Number.isFinite(stats.lastFailureAt) &&
+    stats.lastFailureAt > 0 &&
+    stats.lastFailureAt <= now
+  ) {
+    const age = formatStatusUptimeDuration(now - stats.lastFailureAt);
+    return `last auth failure: ${formatAuthFailureReason(reason)} ${age} ago`;
+  }
+  return `last auth failure: ${formatAuthFailureReason(reason)}`;
 }
 
 function formatAgentTaskCountsLine(agentId: string): string | undefined {
@@ -313,7 +287,7 @@ function formatStatusUptimeDuration(ms: number): string {
   return formatDurationCompact(ms, { spaced: true }) ?? "0s";
 }
 
-function buildStatusUptimeLine(): string {
+export function buildStatusUptimeLine(): string {
   const gatewayUptimeMs = Math.max(0, Math.round(process.uptime() * 1000));
   const systemUptimeMs = Math.max(0, Math.round(os.uptime() * 1000));
   return `⏱️ Uptime: gateway ${formatStatusUptimeDuration(gatewayUptimeMs)} · system ${formatStatusUptimeDuration(systemUptimeMs)}`;
@@ -325,6 +299,7 @@ function resolveSelectedAuthProfileId(params: {
   cfg?: OpenClawConfig;
   sessionEntry?: Partial<Pick<SessionEntry, "authProfileOverride">>;
   agentDir?: string;
+  workspaceDir?: string;
   includeExternalProfiles?: boolean;
 }): string | undefined {
   const provider = params.provider?.trim();
@@ -336,9 +311,6 @@ function resolveSelectedAuthProfileId(params: {
       ? loadAuthProfileStoreWithoutExternalProfiles(params.agentDir)
       : ensureAuthProfileStore(params.agentDir, {
           allowKeychainPrompt: false,
-          config: params.cfg,
-          readOnly: true,
-          syncExternalCli: false,
         });
   const profileOverride = params.sessionEntry?.authProfileOverride?.trim();
   const providers =
@@ -357,7 +329,9 @@ function resolveSelectedAuthProfileId(params: {
       ),
     ),
   ];
-  const candidates = [profileOverride, ...order].filter(Boolean) as string[];
+  const candidates = [
+    ...new Set([profileOverride, ...order, ...Object.keys(store.profiles)].filter(Boolean)),
+  ] as string[];
   const providerKeys = new Set(
     providers
       .map((candidateProvider) =>
@@ -365,6 +339,13 @@ function resolveSelectedAuthProfileId(params: {
       )
       .filter(Boolean),
   );
+  const rawProviderKeys = new Set(providers.map((candidateProvider) => candidateProvider.trim()));
+  for (const profileId of candidates) {
+    const profile = store.profiles[profileId];
+    if (profile && rawProviderKeys.has(profile.provider)) {
+      return profileId;
+    }
+  }
   for (const profileId of candidates) {
     const profile = store.profiles[profileId];
     if (!profile) {
@@ -398,9 +379,6 @@ export function resolveStatusModelAuthLabel(params: {
       ? loadAuthProfileStoreWithoutExternalProfiles(params.agentDir)
       : ensureAuthProfileStore(params.agentDir, {
           allowKeychainPrompt: false,
-          config: params.cfg,
-          readOnly: true,
-          syncExternalCli: false,
         });
   const selectedProfileId = resolveSelectedAuthProfileId(params);
   if (!selectedProfileId) {
@@ -417,48 +395,30 @@ export function resolveStatusModelAuthLabel(params: {
     store,
     profileId: selectedProfileId,
   });
+  const authFailureNote = formatStatusAuthFailureNote(store.usageStats?.[selectedProfileId]);
   const authLabel =
     profile.type === "oauth"
       ? `oauth (${profileLabel})`
       : profile.type === "token"
         ? `token (${profileLabel})`
         : `api-key (${profileLabel})`;
+  const authLabelWithState = authFailureNote ? `${authLabel} · ${authFailureNote}` : authLabel;
 
   const mainAgentDir = resolveMainAgentDir();
   if (params.agentDir === mainAgentDir) {
-    return authLabel;
+    return authLabelWithState;
   }
 
-  const providerKeys = [
-    provider,
-    ...(params.acceptedProviderIds && params.acceptedProviderIds.length > 0
-      ? params.acceptedProviderIds
-      : []),
-  ];
-  const providerOrderKeys = [...new Set(providerKeys.map((value) => value.trim()).filter(Boolean))];
-  const providerAuthKeys = [
-    ...new Set(
-      providerOrderKeys.map((value) => resolveProviderIdForAuth(value, { config: params.cfg })),
-    ),
-  ];
+  const providerKey = provider.trim().toLowerCase();
+  const providerAuthKey = resolveProviderIdForAuth(provider, { config: params.cfg });
   const currentState = loadPersistedAuthProfileState(params.agentDir);
   const mainState = loadPersistedAuthProfileState(mainAgentDir);
-  const currentPreferredOrder = providerOrderKeys
-    .map((providerKey) => findNormalizedProviderValue(currentState.order, providerKey)?.[0])
-    .find(Boolean);
-  const mainPreferredOrder = providerOrderKeys
-    .map(
-      (providerKey) =>
-        findNormalizedProviderValue(mainState.order, providerKey)?.[0] ??
-        findNormalizedProviderValue(params.cfg?.auth?.order, providerKey)?.[0],
-    )
-    .find(Boolean);
-  const currentLastGood = providerAuthKeys
-    .map((providerKey) => findNormalizedProviderValue(currentState.lastGood, providerKey))
-    .find(Boolean);
-  const mainLastGood = providerAuthKeys
-    .map((providerKey) => findNormalizedProviderValue(mainState.lastGood, providerKey))
-    .find(Boolean);
+  const currentPreferredOrder = findNormalizedProviderValue(currentState.order, providerKey)?.[0];
+  const mainPreferredOrder =
+    findNormalizedProviderValue(mainState.order, providerKey)?.[0] ??
+    findNormalizedProviderValue(params.cfg?.auth?.order, providerKey)?.[0];
+  const currentLastGood = findNormalizedProviderValue(currentState.lastGood, providerAuthKey);
+  const mainLastGood = findNormalizedProviderValue(mainState.lastGood, providerAuthKey);
 
   let note: string | undefined;
   if (currentPreferredOrder && mainLastGood && currentPreferredOrder !== mainLastGood) {
@@ -473,20 +433,9 @@ export function resolveStatusModelAuthLabel(params: {
     note = `agent last-good ${currentLastGood}; main last-good ${mainLastGood}`;
   }
 
-  return note ? `${authLabel} · ${note}` : authLabel;
+  return [authLabel, authFailureNote, note].filter(Boolean).join(" · ");
 }
 
-async function resolveRuntimePluginHealthLine(): Promise<string> {
-  try {
-    const { collectRuntimePluginHealthSnapshot } = await loadStatusPluginHealthRuntime();
-    return formatCompactPluginHealthLine(collectRuntimePluginHealthSnapshot());
-  } catch {
-    return "⚠️ Plugins: health unavailable";
-  }
-}
-
-// Public status text builder for CLI/chat status commands. It resolves dynamic
-// runtime details just-in-time and returns the formatted multiline status body.
 export async function buildStatusText(params: BuildStatusTextParams): Promise<string> {
   const {
     cfg,
@@ -512,39 +461,27 @@ export async function buildStatusText(params: BuildStatusTextParams): Promise<st
     ? resolveSessionAgentId({ sessionKey, config: cfg })
     : resolveDefaultAgentId(cfg);
   const statusAgentDir = resolveAgentDir(cfg, statusAgentId);
-  const statusWorkspaceDir =
-    params.workspaceDir ??
-    sessionEntry?.spawnedWorkspaceDir ??
-    resolveAgentWorkspaceDir(cfg, statusAgentId);
-  const selectedProvider = sessionEntry?.providerOverride?.trim() ?? provider;
-  const selectedModel = sessionEntry?.modelOverride?.trim() ?? model;
-  const parseSelectedProvider = Boolean(
-    sessionEntry?.modelOverride?.trim() && !sessionEntry?.providerOverride?.trim(),
-  );
   const modelRefs = resolveSelectedAndActiveModel({
-    selectedProvider,
-    selectedModel,
+    selectedProvider: provider,
+    selectedModel: model,
     sessionEntry,
-    parseSelectedProvider,
   });
-  const selectedLookupProvider = modelRefs.selected.provider || selectedProvider || provider;
-  const selectedLookupModel = modelRefs.selected.model || selectedModel || model;
   const effectiveHarness =
     params.resolvedHarness ??
     (await resolveStatusHarnessId({
       cfg,
-      provider: selectedLookupProvider,
-      model: selectedLookupModel,
+      provider,
+      model,
       agentId: statusAgentId,
       sessionKey,
       sessionEntry,
     }));
   const selectedStatusProvider = resolveStatusRuntimeProvider({
-    provider: selectedLookupProvider,
+    provider,
     effectiveHarness,
   });
   const selectedAuthProviders = listOpenAIAuthProfileProvidersForAgentRuntime({
-    provider: selectedLookupProvider,
+    provider,
     harnessRuntime: effectiveHarness,
     config: cfg,
   });
@@ -583,78 +520,35 @@ export async function buildStatusText(params: BuildStatusTextParams): Promise<st
   const runtimeAliasModelEquivalent = areRuntimeModelRefsEquivalent(
     modelRefs.selected.label,
     modelRefs.active.label,
-    { config: cfg },
   );
-  const fallbackState = resolveActiveFallbackState({
-    selectedModelRef: modelRefs.selected.label || "unknown",
-    activeModelRef: modelRefs.active.label || "unknown",
-    config: cfg,
-    state: sessionEntry,
-  });
   if (
-    shouldPreferActiveRuntimeAliasAuthLabel({
-      runtimeAliasModelEquivalent,
-      selectedAuthLabel: selectedModelAuth,
-      activeAuthLabel: activeModelAuth,
-    })
+    runtimeAliasModelEquivalent &&
+    normalizeOptionalLowercaseString(selectedModelAuth) === "unknown" &&
+    activeModelAuth &&
+    normalizeOptionalLowercaseString(activeModelAuth) !== "unknown"
   ) {
-    // Runtime aliases can make selected/active model refs equivalent while auth
-    // labels differ; prefer the active auth label so status matches execution.
     selectedModelAuth = activeModelAuth;
   }
-  const activeRuntimeIsAuthoritative =
-    !modelRefs.activeDiffers ||
-    fallbackState.active ||
-    hasSessionAutoModelFallbackProvenance(sessionEntry) ||
-    runtimeAliasModelEquivalent;
-  const usageAuthLabel = activeRuntimeIsAuthoritative ? activeModelAuth : selectedModelAuth;
-  const usageStatusProvider = activeRuntimeIsAuthoritative
-    ? activeStatusProvider
-    : selectedStatusProvider;
-  const usageProvider = activeRuntimeIsAuthoritative ? activeProvider : selectedLookupProvider;
-  const selectedUsageCredentialType = resolveUsageCredentialType(usageAuthLabel);
-  const useCodexSyntheticUsage =
-    selectedUsageCredentialType !== "api_key" &&
-    shouldUseCodexSyntheticUsageForRuntime({
-      provider: usageStatusProvider,
-      effectiveHarness,
-    });
-  const codexUsageAuthProfileId = useCodexSyntheticUsage
-    ? resolveCodexSyntheticUsageAuthProfileId({
-        profileId: sessionEntry?.authProfileOverride,
-        cfg,
-        agentDir: statusAgentDir,
-      })
-    : undefined;
-  const usageCredentialType = useCodexSyntheticUsage ? "token" : selectedUsageCredentialType;
+  const usageAuthLabel = modelRefs.activeDiffers ? activeModelAuth : selectedModelAuth;
   const currentUsageProvider =
-    resolveUsageProviderId(usageStatusProvider, { credentialType: usageCredentialType }) ??
-    resolveUsageProviderId(usageProvider, { credentialType: usageCredentialType });
+    resolveUsageProviderId(activeStatusProvider) ?? resolveUsageProviderId(activeProvider);
   let usageLine: string | null = null;
   if (
     currentUsageProvider &&
     shouldLoadUsageSummary({
       provider: currentUsageProvider,
       selectedModelAuth: usageAuthLabel,
-      credentialType: usageCredentialType,
     })
   ) {
     try {
-      // Usage summary is optional operator context. Bound it tightly so a slow
-      // provider usage probe cannot delay the status command.
-      const usageSummaryTimeoutMs = useCodexSyntheticUsage ? 8000 : 3500;
+      const usageSummaryTimeoutMs = 3500;
       let usageTimeout: NodeJS.Timeout | undefined;
       const usageSummary = await Promise.race([
         loadProviderUsageSummary({
           timeoutMs: usageSummaryTimeoutMs,
           providers: [currentUsageProvider],
           agentDir: statusAgentDir,
-          workspaceDir: statusWorkspaceDir,
-          config: cfg,
           profileId: sessionEntry?.authProfileOverride,
-          auth: useCodexSyntheticUsage
-            ? [buildCodexSyntheticUsageAuth({ authProfileId: codexUsageAuthProfileId })]
-            : undefined,
         }),
         new Promise<never>((_, reject) => {
           usageTimeout = setTimeout(
@@ -668,11 +562,7 @@ export async function buildStatusText(params: BuildStatusTextParams): Promise<st
         }
       });
       const usageEntry = usageSummary.providers[0];
-      if (
-        usageEntry &&
-        !usageEntry.error &&
-        (usageEntry.windows.length > 0 || Boolean(usageEntry.summary?.trim()))
-      ) {
+      if (usageEntry && !usageEntry.error && usageEntry.windows.length > 0) {
         const summaryLine = formatUsageWindowSummary(usageEntry, {
           now: Date.now(),
           maxWindows: 2,
@@ -710,8 +600,6 @@ export async function buildStatusText(params: BuildStatusTextParams): Promise<st
   if (sessionKey) {
     const { mainKey, alias } = resolveMainSessionAlias(cfg);
     const requesterKey = resolveInternalSessionKey({ key: sessionKey, alias, mainKey });
-    // Task/subagent status should follow the internal session key alias used by
-    // runtime registries, not necessarily the external key passed to the command.
     taskLine = params.skipDefaultTaskLookup
       ? params.taskLineOverride
       : (params.taskLineOverride ?? formatSessionTaskLine(requesterKey));
@@ -745,7 +633,7 @@ export async function buildStatusText(params: BuildStatusTextParams): Promise<st
       model,
       agentId: statusAgentId,
       sessionEntry,
-    }).mode;
+    }).enabled;
   const agentFallbacksOverride = resolveAgentModelFallbacksOverride(cfg, statusAgentId);
   const configuredDefaultRef = resolveDefaultModelForAgent({
     cfg,
@@ -753,49 +641,15 @@ export async function buildStatusText(params: BuildStatusTextParams): Promise<st
     allowPluginNormalization: false,
   });
   const configuredDefaultModelLabel = `${configuredDefaultRef.provider}/${configuredDefaultRef.model}`;
-  const pluginHealthLine = Object.hasOwn(params, "pluginHealthLineOverride")
-    ? params.pluginHealthLineOverride
-    : await resolveRuntimePluginHealthLine();
-  const channelFeatureLine = resolveStatusChannelFeatureLine({
-    cfg,
-    statusChannel,
-    statusAccountId: params.statusAccountId,
-    sessionEntry,
-  });
   const { buildStatusMessage } = await loadStatusMessageRuntime();
   const explicitThinkingDefault =
     (agentConfig?.thinkingDefault as ThinkLevel | undefined) ??
     (agentDefaults.thinkingDefault as ThinkLevel | undefined);
-  const configuredContextTokens =
-    typeof agentConfig?.contextTokens === "number" && agentConfig.contextTokens > 0
-      ? agentConfig.contextTokens
-      : typeof agentDefaults.contextTokens === "number" && agentDefaults.contextTokens > 0
-        ? agentDefaults.contextTokens
-        : undefined;
   const runtimeContextTokens = resolveStatusRuntimeContextTokens({
     cfg,
     provider: activeStatusProvider,
     model: modelRefs.active.model || model,
   });
-  const selectedContextTokens = resolveStatusRuntimeContextTokens({
-    cfg,
-    provider: selectedStatusProvider,
-    model: modelRefs.selected.model || selectedLookupModel,
-  });
-  const statusAgentContextTokens =
-    typeof contextTokens === "number" &&
-    contextTokens > 0 &&
-    (activeRuntimeIsAuthoritative ||
-      contextTokens === configuredContextTokens ||
-      contextTokens === selectedContextTokens)
-      ? contextTokens
-      : undefined;
-  const statusRuntimeContextTokens = activeRuntimeIsAuthoritative
-    ? (runtimeContextTokens ??
-      (fallbackState.active && typeof contextTokens === "number" && contextTokens > 0
-        ? contextTokens
-        : undefined))
-    : undefined;
   return buildStatusMessage({
     config: cfg,
     agent: {
@@ -805,9 +659,7 @@ export async function buildStatusText(params: BuildStatusTextParams): Promise<st
         primary: params.primaryModelLabelOverride ?? `${provider}/${model}`,
         ...(agentFallbacksOverride === undefined ? {} : { fallbacks: agentFallbacksOverride }),
       },
-      ...(statusAgentContextTokens !== undefined
-        ? { contextTokens: statusAgentContextTokens }
-        : {}),
+      ...(typeof contextTokens === "number" && contextTokens > 0 ? { contextTokens } : {}),
       thinkingDefault: explicitThinkingDefault,
       verboseDefault: agentDefaults.verboseDefault,
       reasoningDefault: agentConfig?.reasoningDefault ?? agentDefaults.reasoningDefault,
@@ -815,8 +667,11 @@ export async function buildStatusText(params: BuildStatusTextParams): Promise<st
     },
     agentId: statusAgentId,
     configuredDefaultModelLabel,
-    explicitConfiguredContextTokens: configuredContextTokens,
-    runtimeContextTokens: statusRuntimeContextTokens,
+    explicitConfiguredContextTokens:
+      typeof agentDefaults.contextTokens === "number" && agentDefaults.contextTokens > 0
+        ? agentDefaults.contextTokens
+        : undefined,
+    runtimeContextTokens,
     sessionEntry,
     sessionKey,
     parentSessionKey,
@@ -834,6 +689,12 @@ export async function buildStatusText(params: BuildStatusTextParams): Promise<st
     activeModelAuth,
     uptimeLine: buildStatusUptimeLine(),
     usageLine: usageLine ?? undefined,
+    channelFeatureLine: resolveStatusChannelFeatureLine({
+      cfg,
+      statusChannel,
+      statusAccountId: params.statusAccountId,
+      sessionEntry,
+    }),
     queue: {
       mode: queueSettings.mode,
       depth: queueDepth,
@@ -844,8 +705,6 @@ export async function buildStatusText(params: BuildStatusTextParams): Promise<st
     },
     subagentsLine,
     turnLine: taskLine,
-    pluginHealthLine,
-    channelFeatureLine,
     automationLine,
     mediaDecisions: params.mediaDecisions,
     includeTranscriptUsage: params.includeTranscriptUsage ?? true,

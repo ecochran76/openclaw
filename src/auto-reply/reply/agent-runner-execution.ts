@@ -1,16 +1,8 @@
-/** Agent-runner execution loop, fallback handling, and user-facing failure mapping. */
 import crypto from "node:crypto";
-import {
-  hasNonEmptyString,
-  normalizeLowercaseStringOrEmpty,
-  normalizeOptionalString,
-  readStringValue,
-} from "@openclaw/normalization-core/string-coerce";
 import {
   hasOutboundReplyContent,
   resolveSendableOutboundReplyParts,
 } from "openclaw/plugin-sdk/reply-payload";
-import { sanitizeForLog } from "../../../packages/terminal-core/src/ansi.js";
 import {
   clearAutoFallbackPrimaryProbeSelection,
   entryMatchesAutoFallbackPrimaryProbe,
@@ -18,41 +10,20 @@ import {
   markAutoFallbackPrimaryProbe,
   resolveAutoFallbackPrimaryProbe,
 } from "../../agents/agent-scope.js";
-import { formatAuthProfileFailureMessage } from "../../agents/auth-profiles/failure-copy.js";
 import {
   buildOAuthRefreshFailureLoginCommand,
   classifyOAuthRefreshFailure,
-  classifyOAuthRefreshFailureError,
 } from "../../agents/auth-profiles/oauth-refresh-failure.js";
+import { formatAuthRecoveryHint } from "../../agents/auth-profiles/reauth-guidance.js";
 import { resolveBootstrapWarningSignaturesSeen } from "../../agents/bootstrap-budget.js";
 import { getCliSessionBinding } from "../../agents/cli-session.js";
 import { resolveContextTokensForModel } from "../../agents/context.js";
-import {
-  BILLING_ERROR_USER_MESSAGE,
-  formatBillingErrorMessage,
-  formatRateLimitOrOverloadedErrorCopy,
-  isCompactionFailureError,
-  isContextOverflowError,
-  isBillingErrorMessage,
-  isLikelyContextOverflowError,
-  isOverloadedErrorMessage,
-  isRateLimitErrorMessage,
-  isTransientHttpError,
-} from "../../agents/embedded-agent-helpers.js";
-import { sanitizeUserFacingText } from "../../agents/embedded-agent-helpers/sanitize-user-facing-text.js";
-import { isMessagingToolSendAction } from "../../agents/embedded-agent-messaging.js";
-import { mergeEmbeddedAgentRunResultForModelFallbackExhaustion } from "../../agents/embedded-agent-runner/result-fallback-classifier.js";
-import type { RunEmbeddedAgentParams } from "../../agents/embedded-agent-runner/run/params.js";
-import { runEmbeddedAgent } from "../../agents/embedded-agent.js";
-import { isFailoverError } from "../../agents/failover-error.js";
-import type { FastModeAutoProgressState } from "../../agents/fast-mode.js";
-import { resolveAgentHarnessPolicy } from "../../agents/harness/policy.js";
 import { ensureSelectedAgentHarnessPlugin } from "../../agents/harness/runtime-plugin.js";
+import { resolveAgentHarnessPolicy } from "../../agents/harness/selection.js";
 import { LiveSessionModelSwitchError } from "../../agents/live-model-switch-error.js";
-import { isMissingProviderAuthError } from "../../agents/model-auth.js";
 import { runWithModelFallback, isFallbackSummaryError } from "../../agents/model-fallback.js";
 import {
-  isCliRuntimeAliasForProvider,
+  listLegacyRuntimeModelProviderAliases,
   resolveCliRuntimeExecutionProvider,
 } from "../../agents/model-runtime-aliases.js";
 import {
@@ -62,32 +33,45 @@ import {
 } from "../../agents/model-selection.js";
 import { resolveOpenAIRuntimeProvider } from "../../agents/openai-routing.js";
 import {
-  AGENT_RUN_RESTART_ABORT_STOP_REASON,
-  createAgentRunRestartAbortError,
-  isAgentRunRestartAbortReason,
-  resolveAgentRunAbortLifecycleFields,
-} from "../../agents/run-termination.js";
+  BILLING_ERROR_USER_MESSAGE,
+  formatRateLimitOrOverloadedErrorCopy,
+  isCompactionFailureError,
+  isContextOverflowError,
+  isBillingErrorMessage,
+  isAuthErrorMessage,
+  isLikelyContextOverflowError,
+  isOverloadedErrorMessage,
+  isRateLimitErrorMessage,
+  isTransientHttpError,
+} from "../../agents/embedded-agent-helpers.js";
+import { sanitizeUserFacingText } from "../../agents/embedded-agent-helpers/sanitize-user-facing-text.js";
+import { isMessagingToolSendAction } from "../../agents/embedded-agent-messaging.js";
+import { runEmbeddedAgent } from "../../agents/embedded-agent.js";
 import { buildAgentRuntimeOutcomePlan } from "../../agents/runtime-plan/build.js";
-import { resolveGroupSessionKey, type SessionEntry } from "../../config/sessions.js";
-import { updateSessionEntry } from "../../config/sessions/session-accessor.js";
+import {
+  resolveGroupSessionKey,
+  type SessionEntry,
+  updateSessionStore,
+} from "../../config/sessions.js";
 import { resolveSilentReplyPolicy } from "../../config/silent-reply.js";
 import type { OpenClawConfig } from "../../config/types.openclaw.js";
 import { logVerbose } from "../../globals.js";
-import {
-  captureAgentRunLifecycleGeneration,
-  clearAgentRunContext,
-  emitAgentEvent,
-  registerAgentRunContext,
-} from "../../infra/agent-events.js";
+import { emitAgentEvent, registerAgentRunContext } from "../../infra/agent-events.js";
 import { isDiagnosticsEnabled } from "../../infra/diagnostic-events.js";
 import { formatErrorMessage } from "../../infra/errors.js";
 import { logSessionTurnCreated } from "../../logging/diagnostic.js";
-import { createSubsystemLogger } from "../../logging/subsystem.js";
 import { CommandLaneClearedError, GatewayDrainingError } from "../../process/command-queue.js";
 import { CommandLane } from "../../process/lanes.js";
 import { defaultRuntime } from "../../runtime.js";
 import { shouldPreserveUserFacingSessionStateForInputProvenance } from "../../sessions/input-provenance.js";
 import { truncateUtf16Safe } from "../../shared/utf16-slice.js";
+import {
+  hasNonEmptyString,
+  normalizeLowercaseStringOrEmpty,
+  normalizeOptionalString,
+  readStringValue,
+} from "@openclaw/normalization-core/string-coerce";
+import { sanitizeForLog } from "../../../packages/terminal-core/src/ansi.js";
 import {
   isMarkdownCapableMessageChannel,
   resolveMessageChannel,
@@ -107,18 +91,8 @@ import {
   stripLeadingSilentToken,
 } from "../tokens.js";
 import type { GetReplyOptions, ReplyPayload } from "../types.js";
-import {
-  createAgentLifecycleTerminalBackstop,
-  resolveAgentLifecycleTerminalMetadata,
-  type AgentLifecycleTerminalBackstop,
-} from "./agent-lifecycle-terminal.js";
 import { resolveRunAuthProfile } from "./agent-runner-auth-profile.js";
-import {
-  clearDroppedCliSessionBinding,
-  createCliToolSummaryTracker,
-  keepCliSessionBindingOnlyWhenReused,
-  runCliAgentWithLifecycle,
-} from "./agent-runner-cli-dispatch.js";
+import { runCliAgentWithLifecycle } from "./agent-runner-cli-dispatch.js";
 import {
   GENERIC_EXTERNAL_RUN_FAILURE_TEXT,
   HEARTBEAT_EXTERNAL_RUN_FAILURE_TEXT,
@@ -127,17 +101,9 @@ import {
   buildEmbeddedRunExecutionParams,
   resolveQueuedReplyRuntimeConfig,
   resolveModelFallbackOptions,
-  resolveRunFastModeForFallbackCandidate,
 } from "./agent-runner-utils.js";
-import type { BlockReplyPipeline } from "./block-reply-pipeline.js";
-import {
-  createCompactionHookNoticePayload,
-  createCompactionNoticePayload,
-  readCompactionHookMessages,
-  shouldNotifyUserAboutCompaction,
-} from "./compaction-notice.js";
+import { type BlockReplyPipeline } from "./block-reply-pipeline.js";
 import { resolveCurrentTurnImages } from "./current-turn-images.js";
-import { hasInboundAudio } from "./inbound-media.js";
 import { resolveOriginMessageProvider } from "./origin-routing.js";
 import {
   classifyProviderRequestError,
@@ -148,7 +114,6 @@ import { createBlockReplyDeliveryHandler } from "./reply-delivery.js";
 import type { ReplyMediaContext } from "./reply-media-paths.js";
 import { createReplyMediaContext } from "./reply-media-paths.runtime.js";
 import type { ReplyOperation } from "./reply-run-registry.js";
-import { isReplyProfilerEnabled } from "./reply-timing-tracker.js";
 import type { TypingSignaler } from "./typing-mode.js";
 
 // Maximum number of LiveSessionModelSwitchError retries before surfacing a
@@ -157,247 +122,10 @@ import type { TypingSignaler } from "./typing-mode.js";
 // See: https://github.com/openclaw/openclaw/issues/58348
 export const MAX_LIVE_SWITCH_RETRIES = 2;
 
-type AgentTurnTimingSpan = {
-  name: string;
-  durationMs: number;
-  elapsedMs: number;
-};
-
-type AgentTurnTimingSummary = {
-  totalMs: number;
-  spans: AgentTurnTimingSpan[];
-};
-
-const agentTurnTimingLog = createSubsystemLogger("auto-reply/agent-turn-timing");
-const agentCompactionLog = createSubsystemLogger("auto-reply/compaction");
-const CODEX_APP_SERVER_COMPACTION_BACKEND = "codex-app-server";
-const AGENT_TURN_TIMING_WARN_TOTAL_MS = 1_000;
-const AGENT_TURN_TIMING_WARN_STAGE_MS = 500;
-
-function formatCompactionModelRef(provider?: string, model?: string): string {
-  const normalizedProvider = normalizeOptionalString(provider);
-  const normalizedModel = normalizeOptionalString(model);
-  if (normalizedProvider && normalizedModel) {
-    return `${sanitizeForLog(normalizedProvider)}/${sanitizeForLog(normalizedModel)}`;
-  }
-  if (normalizedProvider) {
-    return sanitizeForLog(normalizedProvider);
-  }
-  if (normalizedModel) {
-    return sanitizeForLog(normalizedModel);
-  }
-  return "unknown model";
-}
-
-function createAgentTurnTimingTracker(options: { profilerEnabled?: boolean } = {}): {
-  measure: <T>(name: string, run: () => Promise<T> | T) => Promise<T>;
-  measureSync: <T>(name: string, run: () => T) => T;
-  logIfSlow: (params: {
-    runId: string;
-    sessionId?: string;
-    sessionKey?: string;
-    outcome: "completed" | "error";
-    error?: string;
-  }) => void;
-  logMilestoneIfSlow: (params: {
-    runId: string;
-    sessionId?: string;
-    sessionKey?: string;
-    milestone: string;
-  }) => void;
-} {
-  if (!options.profilerEnabled) {
-    // This tracker wraps the agent-turn hot path. Without an explicit profiler
-    // flag, keep every wrapper pass-through so normal turns avoid Date.now and
-    // span-array work entirely.
-    return {
-      async measure(_name, run) {
-        return await run();
-      },
-      measureSync(_name, run) {
-        return run();
-      },
-      logIfSlow() {},
-      logMilestoneIfSlow() {},
-    };
-  }
-
-  const startedAt = Date.now();
-  let didLog = false;
-  const spans: AgentTurnTimingSpan[] = [];
-  const toMs = (value: number) => Math.max(0, Math.round(value));
-  const record = (name: string, spanStartedAt: number) => {
-    spans.push({
-      name,
-      durationMs: toMs(Date.now() - spanStartedAt),
-      elapsedMs: toMs(Date.now() - startedAt),
-    });
-  };
-  const snapshot = (): AgentTurnTimingSummary => ({
-    totalMs: toMs(Date.now() - startedAt),
-    spans: spans.slice(),
-  });
-  const shouldLog = (summary: AgentTurnTimingSummary) =>
-    summary.totalMs >= AGENT_TURN_TIMING_WARN_TOTAL_MS ||
-    summary.spans.some((span) => span.durationMs >= AGENT_TURN_TIMING_WARN_STAGE_MS);
-  const formatSpans = (summary: AgentTurnTimingSummary) =>
-    summary.spans.length > 0
-      ? summary.spans
-          .map((span) => `${span.name}:${span.durationMs}ms@${span.elapsedMs}ms`)
-          .join(",")
-      : "none";
-  return {
-    async measure(name, run) {
-      const spanStartedAt = Date.now();
-      try {
-        return await run();
-      } finally {
-        record(name, spanStartedAt);
-      }
-    },
-    measureSync(name, run) {
-      const spanStartedAt = Date.now();
-      try {
-        return run();
-      } finally {
-        record(name, spanStartedAt);
-      }
-    },
-    logIfSlow(params) {
-      if (didLog) {
-        return;
-      }
-      const summary = snapshot();
-      if (!shouldLog(summary)) {
-        return;
-      }
-      didLog = true;
-      agentTurnTimingLog.warn(
-        `agent turn timings runId=${params.runId} sessionId=${
-          params.sessionId ?? "unknown"
-        } sessionKey=${params.sessionKey ?? "unknown"} outcome=${params.outcome} totalMs=${
-          summary.totalMs
-        } stages=${formatSpans(summary)}${params.error ? ` error="${params.error}"` : ""}`,
-        {
-          runId: params.runId,
-          sessionId: params.sessionId,
-          sessionKey: params.sessionKey,
-          outcome: params.outcome,
-          error: params.error,
-          totalMs: summary.totalMs,
-          spans: summary.spans,
-        },
-      );
-    },
-    logMilestoneIfSlow(params) {
-      if (!options.profilerEnabled) {
-        return;
-      }
-      const summary = snapshot();
-      if (!shouldLog(summary)) {
-        return;
-      }
-      agentTurnTimingLog.warn(
-        `agent turn milestone runId=${params.runId} sessionId=${
-          params.sessionId ?? "unknown"
-        } sessionKey=${params.sessionKey ?? "unknown"} milestone=${params.milestone} totalMs=${
-          summary.totalMs
-        } stages=${formatSpans(summary)}`,
-        {
-          runId: params.runId,
-          sessionId: params.sessionId,
-          sessionKey: params.sessionKey,
-          milestone: params.milestone,
-          totalMs: summary.totalMs,
-          spans: summary.spans,
-        },
-      );
-    },
-  };
-}
-
 function readApprovalScopeValue(value: unknown): "turn" | "session" | undefined {
   return value === "turn" || value === "session" ? value : undefined;
 }
 
-function readRecordValue(value: unknown): Record<string, unknown> | undefined {
-  return value && typeof value === "object" && !Array.isArray(value)
-    ? (value as Record<string, unknown>)
-    : undefined;
-}
-
-function readFiniteNumberValue(value: unknown): number | undefined {
-  return typeof value === "number" && Number.isFinite(value) ? value : undefined;
-}
-
-function readNullableNumberValue(value: unknown): number | null | undefined {
-  if (value === null) {
-    return null;
-  }
-  return readFiniteNumberValue(value);
-}
-
-function isCommandToolName(name: string | undefined): boolean {
-  const normalized = normalizeLowercaseStringOrEmpty(name);
-  return normalized === "exec" || normalized === "bash" || normalized === "shell";
-}
-
-export function buildCommandOutputFromToolResultEvent(evt: {
-  stream: string;
-  data: Record<string, unknown>;
-}): Parameters<NonNullable<GetReplyOptions["onCommandOutput"]>>[0] | undefined {
-  if (evt.stream !== "tool" || readStringValue(evt.data.phase) !== "result") {
-    return undefined;
-  }
-  const name = readStringValue(evt.data.name);
-  if (!isCommandToolName(name)) {
-    return undefined;
-  }
-  const result = readRecordValue(evt.data.result);
-  const details = readRecordValue(result?.details);
-  const output =
-    readStringValue(evt.data.output) ??
-    readStringValue(result?.output) ??
-    readStringValue(details?.output);
-  const explicitStatus =
-    readStringValue(evt.data.status) ??
-    readStringValue(result?.status) ??
-    readStringValue(details?.status);
-  const exitCode = readNullableNumberValue(
-    result?.exitCode ?? details?.exitCode ?? evt.data.exitCode,
-  );
-  const durationMs = readFiniteNumberValue(
-    result?.durationMs ?? details?.durationMs ?? evt.data.durationMs,
-  );
-  const cwd = readStringValue(evt.data.cwd);
-  const hasConcreteCommandResult =
-    output !== undefined ||
-    explicitStatus !== undefined ||
-    exitCode !== undefined ||
-    durationMs !== undefined ||
-    cwd !== undefined ||
-    (result !== undefined && Object.keys(result).length > 0);
-  if (!hasConcreteCommandResult) {
-    return undefined;
-  }
-  const errorStatus =
-    evt.data.isError === true ? "failed" : evt.data.isError === false ? "completed" : undefined;
-  const status = explicitStatus ?? errorStatus;
-  return {
-    itemId: readStringValue(evt.data.itemId),
-    phase: "end",
-    title: readStringValue(evt.data.title),
-    toolCallId: readStringValue(evt.data.toolCallId),
-    name,
-    output,
-    status,
-    exitCode,
-    durationMs,
-    cwd,
-  };
-}
-
-/** One attempted runtime fallback candidate and its failure reason. */
 export type RuntimeFallbackAttempt = {
   provider: string;
   model: string;
@@ -407,7 +135,6 @@ export type RuntimeFallbackAttempt = {
   code?: string;
 };
 
-/** Result of running an agent turn through fallback/retry handling. */
 export type AgentRunLoopResult =
   | {
       kind: "success";
@@ -415,14 +142,11 @@ export type AgentRunLoopResult =
       runResult: Awaited<ReturnType<typeof runEmbeddedAgent>>;
       fallbackProvider?: string;
       fallbackModel?: string;
-      fallbackExhausted?: true;
       fallbackAttempts: RuntimeFallbackAttempt[];
       didLogHeartbeatStrip: boolean;
       autoCompactionCount: number;
       /** Payload keys sent directly (not via pipeline) during tool flush. */
       directlySentBlockKeys?: Set<string>;
-      /** Payloads successfully sent directly during tool flush. */
-      directlySentBlockPayloads?: ReplyPayload[];
     }
   | { kind: "final"; payload: ReplyPayload };
 
@@ -525,13 +249,6 @@ function snapshotFallbackSelectionState(entry: SessionEntry): FallbackSelectionS
   };
 }
 
-function buildFallbackSelectionStatePatch(entry: SessionEntry): Partial<SessionEntry> {
-  return {
-    ...snapshotFallbackSelectionState(entry),
-    updatedAt: entry.updatedAt,
-  };
-}
-
 function buildFallbackSelectionState(params: {
   provider: string;
   model: string;
@@ -574,7 +291,6 @@ function resolveFallbackSelectionOrigin(params: { entry: SessionEntry; run: Foll
   return { provider: params.run.provider, model: params.run.model };
 }
 
-/** Persists the fallback candidate selection onto a session entry. */
 export function applyFallbackCandidateSelectionToEntry(params: {
   entry: SessionEntry;
   run: FollowupRun["run"];
@@ -694,29 +410,6 @@ function buildRateLimitCooldownMessage(err: unknown): string {
   return "⚠️ All models are temporarily rate-limited. Please try again in a few minutes.";
 }
 
-function resolveBillingFailureReplyText(err: unknown): string {
-  const billingFailure = isFallbackSummaryError(err)
-    ? err.attempts.find(
-        (attempt) =>
-          attempt.reason === "billing" &&
-          (attempt.authMode === "oauth" || attempt.authMode === "token"),
-      )
-    : isFailoverError(err) && err.reason === "billing"
-      ? err
-      : undefined;
-  if (
-    !billingFailure ||
-    (billingFailure.authMode !== "oauth" && billingFailure.authMode !== "token")
-  ) {
-    return BILLING_ERROR_USER_MESSAGE;
-  }
-  return formatBillingErrorMessage(
-    billingFailure.provider,
-    billingFailure.model,
-    billingFailure.authMode,
-  );
-}
-
 function extractCodexUsageLimitErrorMessage(err: unknown): string | undefined {
   if (isFallbackSummaryError(err)) {
     for (const attempt of err.attempts) {
@@ -777,6 +470,55 @@ function hasBillingAttemptSummary(err: unknown): boolean {
   );
 }
 
+function buildFallbackSummaryAuthFailureMessage(params: {
+  err: unknown;
+  provider: string;
+  model: string;
+  authProfileId?: string;
+}): string | undefined {
+  if (!isFallbackSummaryError(params.err)) {
+    return undefined;
+  }
+  return (
+    buildTerminalAuthFailureNotice({
+      selectedProvider: params.provider,
+      selectedModel: params.model,
+      attempts: params.err.attempts,
+      authProfileId: params.authProfileId,
+    }) ?? undefined
+  );
+}
+
+function buildDirectAuthFailureMessage(params: {
+  message: string;
+  provider: string;
+  model: string;
+  authProfileId?: string;
+}): string | undefined {
+  if (!isAuthErrorMessage(params.message)) {
+    return undefined;
+  }
+  const profileId = params.authProfileId?.trim();
+  const selected = `${params.provider}/${params.model}`;
+  const recoveryHint = formatAuthRecoveryHint({
+    provider: params.provider,
+    authProfileId: profileId,
+    allowChatReauth: true,
+    includeCliAlternative: true,
+  });
+  return `🔐 Auth failed for ${profileId || selected}. ${recoveryHint}`;
+}
+
+function isToolResultTurnMismatchError(message: string): boolean {
+  const lower = normalizeLowercaseStringOrEmpty(message);
+  return (
+    lower.includes("toolresult") &&
+    lower.includes("tooluse") &&
+    lower.includes("exceeds the number") &&
+    lower.includes("previous turn")
+  );
+}
+
 function collapseRepeatedFailureDetail(message: string): string {
   const parts = message
     .split(/\s+\|\s+/u)
@@ -788,17 +530,14 @@ function collapseRepeatedFailureDetail(message: string): string {
   return message.trim();
 }
 
-const SAFE_MISSING_API_KEY_PROVIDERS = new Set(["anthropic", "google", "openai"]);
+const SAFE_MISSING_API_KEY_PROVIDERS = new Set(["anthropic", "google", "openai", "openai-codex"]);
 const EXTERNAL_RUN_FAILURE_DETAIL_MAX_CHARS = 900;
 const AGENT_FAILED_BEFORE_REPLY_TEXT = "Agent failed before reply:";
-const PREFLIGHT_COMPACTION_FAILURE_PREFIX = "Preflight compaction required but failed:";
 
 type ExternalRunFailureReply = {
   text: string;
   isGenericRunnerFailure: boolean;
 };
-
-type ExternalRunFailureInput = string | { message: string; error?: unknown };
 
 function isNonDirectConversationContext(ctx: TemplateContext): boolean {
   const chatType = normalizeLowercaseStringOrEmpty(ctx.ChatType);
@@ -856,28 +595,6 @@ function buildCodexAppServerFailureText(message: string): string | null {
   return null;
 }
 
-/** Formats the reply shown when preflight compaction fails before a run. */
-export function buildPreflightCompactionFailureText(
-  message: string,
-  options?: { includeDetails?: boolean },
-): string | null {
-  const normalizedMessage = collapseRepeatedFailureDetail(message);
-  if (!normalizedMessage.startsWith(PREFLIGHT_COMPACTION_FAILURE_PREFIX)) {
-    return null;
-  }
-  const reason = sanitizeUserFacingText(
-    normalizedMessage.slice(PREFLIGHT_COMPACTION_FAILURE_PREFIX.length),
-    { errorContext: true },
-  )
-    .trim()
-    .replace(/\s+/gu, " ");
-  const reasonSuffix = options?.includeDetails && reason ? ` Reason: ${reason}.` : "";
-  return (
-    "⚠️ Context is too large and auto-compaction could not recover this turn." +
-    `${reasonSuffix} Try again, use /compact, or use /new to start a fresh session.`
-  );
-}
-
 function buildCliBackendTimeoutFailureText(message: string): string | null {
   const normalizedMessage = collapseRepeatedFailureDetail(message);
   const stall = normalizedMessage.match(CLI_BACKEND_NO_OUTPUT_STALL_RE);
@@ -896,22 +613,15 @@ function buildCliBackendTimeoutFailureText(message: string): string | null {
   );
 }
 
-function buildMissingApiKeyFailureText(input: { message: string; error?: unknown }): string | null {
-  const normalizedMessage = collapseRepeatedFailureDetail(input.message);
-  const provider = isMissingProviderAuthError(input.error)
-    ? input.error.provider.trim().toLowerCase()
-    : normalizedMessage
-        .match(/No API key found for provider "([^"]+)"/u)?.[1]
-        ?.trim()
-        .toLowerCase();
+function buildMissingApiKeyFailureText(message: string): string | null {
+  const normalizedMessage = collapseRepeatedFailureDetail(message);
+  const providerMatch = normalizedMessage.match(/No API key found for provider "([^"]+)"/u);
+  const provider = providerMatch?.[1]?.trim().toLowerCase();
   if (!provider) {
     return null;
   }
   if (provider === "openai" && normalizedMessage.includes("OpenAI Codex OAuth")) {
-    return "⚠️ Missing API key for OpenAI on the gateway. Use `openai/gpt-5.5` with the OpenAI OAuth profile, or set `OPENAI_API_KEY` for direct OpenAI API-key runs.";
-  }
-  if (provider === "openai") {
-    return '⚠️ Missing API key for provider "openai". Run `openclaw doctor --fix` to repair stale OpenAI model/session routes, restart the gateway if doctor asks, then try again. If doctor has nothing to repair or the error persists, re-auth with `openclaw models auth login --provider openai` or run `openclaw configure`.';
+    return "⚠️ Missing API key for OpenAI on the gateway. Use `openai/gpt-5.5` with the Codex OAuth profile, or set `OPENAI_API_KEY` for direct OpenAI API-key runs.";
   }
   if (SAFE_MISSING_API_KEY_PROVIDERS.has(provider)) {
     return `⚠️ Missing API key for provider "${provider}". Configure the gateway auth for that provider, then try again.`;
@@ -919,16 +629,19 @@ function buildMissingApiKeyFailureText(input: { message: string; error?: unknown
   return "⚠️ Missing API key for the selected provider on the gateway. Configure provider auth, then try again.";
 }
 
-function buildAuthProfileFailoverFailureText(error: unknown): string | null {
-  if (!isFailoverError(error) || !error.provider || !error.authProfileFailure) {
-    return null;
+function formatOAuthRefreshFailureRecoveryHint(params: {
+  provider: string | null;
+  authProfileId?: string | null;
+}): string {
+  if (params.provider) {
+    return formatAuthRecoveryHint({
+      provider: params.provider,
+      authProfileId: params.authProfileId ?? undefined,
+      allowChatReauth: true,
+      includeCliAlternative: true,
+    });
   }
-  return formatAuthProfileFailureMessage({
-    reason: error.reason,
-    provider: error.provider,
-    allInCooldown: error.authProfileFailure.allInCooldown,
-    cause: error.cause,
-  });
+  return `Re-auth with ${buildOAuthRefreshFailureLoginCommand(null)}, then try again.`;
 }
 
 function formatForwardedExternalRunFailureText(message: string): string {
@@ -948,42 +661,35 @@ function formatForwardedExternalRunFailureText(message: string): string {
 }
 
 function buildExternalRunFailureReply(
-  input: ExternalRunFailureInput,
+  message: string,
   options?: { includeDetails?: boolean; isHeartbeat?: boolean },
 ): ExternalRunFailureReply {
-  const message = typeof input === "string" ? input : input.message;
-  const error = typeof input === "string" ? undefined : input.error;
   const normalizedMessage = collapseRepeatedFailureDetail(message);
-  const authProfileFailoverFailure = buildAuthProfileFailoverFailureText(error);
-  if (authProfileFailoverFailure) {
-    return { text: authProfileFailoverFailure, isGenericRunnerFailure: false };
-  }
-  const providerRequestError = classifyProviderRequestError(error ?? normalizedMessage);
+  const providerRequestError = classifyProviderRequestError(normalizedMessage);
   if (providerRequestError) {
     return {
       text: providerRequestError.userMessage,
       isGenericRunnerFailure: false,
     };
   }
-  const missingApiKeyFailure = buildMissingApiKeyFailureText({
-    message: normalizedMessage,
-    error,
-  });
+  const missingApiKeyFailure = buildMissingApiKeyFailureText(normalizedMessage);
   if (missingApiKeyFailure) {
     return { text: missingApiKeyFailure, isGenericRunnerFailure: false };
   }
-  const oauthRefreshFailure =
-    classifyOAuthRefreshFailureError(error) ?? classifyOAuthRefreshFailure(normalizedMessage);
+  const oauthRefreshFailure = classifyOAuthRefreshFailure(normalizedMessage);
   if (oauthRefreshFailure) {
-    const loginCommand = buildOAuthRefreshFailureLoginCommand(oauthRefreshFailure.provider);
+    const recoveryHint = formatOAuthRefreshFailureRecoveryHint(oauthRefreshFailure);
+    const profileSuffix = oauthRefreshFailure.authProfileId
+      ? ` (${oauthRefreshFailure.authProfileId})`
+      : "";
     if (oauthRefreshFailure.reason) {
       return {
-        text: `⚠️ Model login expired on the gateway${oauthRefreshFailure.provider ? ` for ${oauthRefreshFailure.provider}` : ""}. Re-auth with \`${loginCommand}\`, then try again.`,
+        text: `⚠️ Model login expired on the gateway${oauthRefreshFailure.provider ? ` for ${oauthRefreshFailure.provider}` : ""}${profileSuffix}. ${recoveryHint}`,
         isGenericRunnerFailure: false,
       };
     }
     return {
-      text: `⚠️ Model login failed on the gateway${oauthRefreshFailure.provider ? ` for ${oauthRefreshFailure.provider}` : ""}. Please try again. If this keeps happening, re-auth with \`${loginCommand}\`.`,
+      text: `⚠️ Model login failed on the gateway${oauthRefreshFailure.provider ? ` for ${oauthRefreshFailure.provider}` : ""}${profileSuffix}. ${recoveryHint}`,
       isGenericRunnerFailure: false,
     };
   }
@@ -1007,14 +713,9 @@ function buildExternalRunFailureReply(
 }
 
 function markAgentRunFailureReplyPayload<T extends ReplyPayload>(payload: T): T {
-  const marked = markReplyPayloadForSourceSuppressionDelivery(payload);
-  if (!isSilentReplyText(marked.text, SILENT_REPLY_TOKEN)) {
-    marked.isError = true;
-  }
-  return marked;
+  return markReplyPayloadForSourceSuppressionDelivery(payload);
 }
 
-/** Converts known agent-run failures into user-facing reply payloads. */
 export function buildKnownAgentRunFailureReplyPayload(params: {
   err: unknown;
   sessionCtx: TemplateContext;
@@ -1025,27 +726,11 @@ export function buildKnownAgentRunFailureReplyPayload(params: {
   const isFallbackSummary = isFallbackSummaryError(params.err);
   const isBilling = isFallbackSummary
     ? hasBillingAttemptSummary(params.err)
-    : isFailoverError(params.err)
-      ? params.err.reason === "billing"
-      : isBillingErrorMessage(message);
+    : isBillingErrorMessage(message);
   if (isBilling) {
     return markAgentRunFailureReplyPayload({
       text: resolveExternalRunFailureTextForConversation({
-        text: resolveBillingFailureReplyText(params.err),
-        sessionCtx: params.sessionCtx,
-        isGenericRunnerFailure: false,
-        cfg: params.cfg,
-      }),
-    });
-  }
-
-  const preflightCompactionFailureText = buildPreflightCompactionFailureText(message, {
-    includeDetails: isVerboseFailureDetailEnabled(params.resolvedVerboseLevel),
-  });
-  if (preflightCompactionFailureText) {
-    return markAgentRunFailureReplyPayload({
-      text: resolveExternalRunFailureTextForConversation({
-        text: preflightCompactionFailureText,
+        text: BILLING_ERROR_USER_MESSAGE,
         sessionCtx: params.sessionCtx,
         isGenericRunnerFailure: false,
         cfg: params.cfg,
@@ -1084,12 +769,9 @@ export function buildKnownAgentRunFailureReplyPayload(params: {
     });
   }
 
-  const externalRunFailureReply = buildExternalRunFailureReply(
-    { message, error: params.err },
-    {
-      includeDetails: isVerboseFailureDetailEnabled(params.resolvedVerboseLevel),
-    },
-  );
+  const externalRunFailureReply = buildExternalRunFailureReply(message, {
+    includeDetails: isVerboseFailureDetailEnabled(params.resolvedVerboseLevel),
+  });
   if (externalRunFailureReply.isGenericRunnerFailure) {
     return undefined;
   }
@@ -1103,92 +785,9 @@ export function buildKnownAgentRunFailureReplyPayload(params: {
   });
 }
 
-const DEFAULT_RESERVE_TOKENS_FLOOR = 20_000;
-
-/** Computes a reserve-token floor scaled to the selected context window. */
-export function computeContextAwareReserveTokensFloor(contextWindow: number | undefined): number {
-  if (typeof contextWindow !== "number" || contextWindow <= 0) {
-    return DEFAULT_RESERVE_TOKENS_FLOOR;
-  }
-  if (contextWindow >= 1_000_000) {
-    return 100_000;
-  }
-  if (contextWindow >= 200_000) {
-    return 50_000;
-  }
-  if (contextWindow >= 100_000) {
-    return 35_000;
-  }
-  return DEFAULT_RESERVE_TOKENS_FLOOR;
-}
-
-function resolveContextWindowForCompactionHint(params: {
-  cfg: FollowupRun["run"]["config"];
-  primaryProvider?: string;
-  primaryModel?: string;
-  runtimeProvider?: string;
-  runtimeModel?: string;
-  agentId?: string;
-  activeSessionEntry?: SessionEntry;
-}): number | undefined {
-  let modelWindow: number | undefined;
-  const entryProvider = params.activeSessionEntry?.modelProvider;
-  const entryModel = params.activeSessionEntry?.model;
-  const runtimeProvider = params.runtimeProvider ?? entryProvider;
-  const runtimeModel = params.runtimeModel ?? entryModel;
-  const hasExplicitRuntimeRef = Boolean(params.runtimeProvider && params.runtimeModel);
-  if (runtimeProvider && runtimeModel) {
-    const resolved = resolveContextTokensForModel({
-      cfg: params.cfg,
-      provider: runtimeProvider,
-      model: runtimeModel,
-      allowAsyncLoad: false,
-    });
-    if (typeof resolved === "number" && resolved > 0) {
-      modelWindow = resolved;
-    }
-  }
-  const sessionWindow = normalizePositiveContextTokens(params.activeSessionEntry?.contextTokens);
-  const sessionMatchesRuntimeRef = runtimeProvider === entryProvider && runtimeModel === entryModel;
-  const trustedSessionWindow =
-    !hasExplicitRuntimeRef || sessionMatchesRuntimeRef ? sessionWindow : undefined;
-  if (modelWindow === undefined && sessionMatchesRuntimeRef && sessionWindow !== undefined) {
-    modelWindow = sessionWindow;
-  }
-  if (
-    modelWindow === undefined &&
-    !hasExplicitRuntimeRef &&
-    params.primaryProvider &&
-    params.primaryModel
-  ) {
-    const resolved = resolveContextTokensForModel({
-      cfg: params.cfg,
-      provider: params.primaryProvider,
-      model: params.primaryModel,
-      allowAsyncLoad: false,
-    });
-    if (typeof resolved === "number" && resolved > 0) {
-      modelWindow = resolved;
-    }
-  }
-  const contextWindow = modelWindow ?? trustedSessionWindow;
-  const agentCap = resolveAgentContextTokensForHint({
-    cfg: params.cfg,
-    agentId: params.agentId,
-  });
-  if (agentCap !== undefined && contextWindow !== undefined) {
-    return Math.min(agentCap, contextWindow);
-  }
-  return agentCap ?? contextWindow;
-}
-
-function buildContextOverflowResetHint(contextWindowTokens: number | undefined): string {
-  const reserveFloor = computeContextAwareReserveTokensFloor(contextWindowTokens);
-  return (
-    "\n\nTo prevent this, increase your compaction buffer by setting " +
-    `\`agents.defaults.compaction.reserveTokensFloor\` to ${reserveFloor} or higher in your config.`
-  );
-}
+const CONTEXT_OVERFLOW_RESET_HINT =
+  "\n\nTo prevent this, increase your compaction buffer by setting " +
+  "`agents.defaults.compaction.reserveTokensFloor` to 20000 or higher in your config.";
 
 type ModelRefLike = {
   provider: string;
@@ -1365,7 +964,6 @@ function resolveHeartbeatBleedHint(params: {
   );
 }
 
-/** Builds recovery instructions for context-overflow failures. */
 export function buildContextOverflowRecoveryText(params: {
   duringCompaction?: boolean;
   preserveSessionMapping?: boolean;
@@ -1373,8 +971,6 @@ export function buildContextOverflowRecoveryText(params: {
   agentId?: string;
   primaryProvider?: string;
   primaryModel?: string;
-  runtimeProvider?: string;
-  runtimeModel?: string;
   activeSessionEntry?: SessionEntry;
 }): string {
   const prefix = params.preserveSessionMapping
@@ -1382,30 +978,16 @@ export function buildContextOverflowRecoveryText(params: {
     : params.duringCompaction
       ? "⚠️ Context limit exceeded during compaction. I've reset our conversation to start fresh - please try again."
       : "⚠️ Context limit exceeded. I've reset our conversation to start fresh - please try again.";
-  const primaryContextWindow = resolveContextWindowForCompactionHint({
-    cfg: params.cfg,
-    primaryProvider: params.primaryProvider,
-    primaryModel: params.primaryModel,
-    runtimeProvider: params.runtimeProvider,
-    runtimeModel: params.runtimeModel,
-    agentId: params.agentId,
-    activeSessionEntry: params.activeSessionEntry,
-  });
-  const explicitRuntimeMatchesSession =
-    !params.runtimeProvider ||
-    !params.runtimeModel ||
-    (params.runtimeProvider === params.activeSessionEntry?.modelProvider &&
-      params.runtimeModel === params.activeSessionEntry?.model);
-  const heartbeatBleedHint = explicitRuntimeMatchesSession
-    ? resolveHeartbeatBleedHint({
-        cfg: params.cfg,
-        agentId: params.agentId,
-        primaryProvider: params.primaryProvider,
-        primaryModel: params.primaryModel,
-        activeSessionEntry: params.activeSessionEntry,
-      })
-    : undefined;
-  return prefix + (heartbeatBleedHint ?? buildContextOverflowResetHint(primaryContextWindow));
+  return (
+    prefix +
+    (resolveHeartbeatBleedHint({
+      cfg: params.cfg,
+      agentId: params.agentId,
+      primaryProvider: params.primaryProvider,
+      primaryModel: params.primaryModel,
+      activeSessionEntry: params.activeSessionEntry,
+    }) ?? CONTEXT_OVERFLOW_RESET_HINT)
+  );
 }
 
 function buildRestartLifecycleReplyText(): string {
@@ -1457,6 +1039,66 @@ function isReplyOperationRestartAbort(replyOperation?: ReplyOperation): boolean 
   );
 }
 
+function createEmbeddedLifecycleTerminalBackstop(params: { runId: string; sessionKey?: string }) {
+  let terminalEmitted = false;
+  let startedAt: number | undefined;
+
+  const note = (evt: { stream: string; data: Record<string, unknown> }) => {
+    if (evt.stream !== "lifecycle") {
+      return;
+    }
+    const phase = readStringValue(evt.data.phase);
+    if (phase === "start" && typeof evt.data.startedAt === "number") {
+      startedAt = evt.data.startedAt;
+    }
+    if (phase === "end" || phase === "error") {
+      terminalEmitted = true;
+    }
+  };
+
+  const emit = (phase: "end" | "error", resultOrError: unknown) => {
+    if (terminalEmitted) {
+      return;
+    }
+    terminalEmitted = true;
+    const data: Record<string, unknown> = {
+      phase,
+      endedAt: Date.now(),
+      ...(startedAt !== undefined ? { startedAt } : {}),
+    };
+    if (phase === "error") {
+      data.error = formatErrorMessage(resultOrError);
+    } else {
+      const meta =
+        resultOrError && typeof resultOrError === "object" && "meta" in resultOrError
+          ? (resultOrError as { meta?: Record<string, unknown> }).meta
+          : undefined;
+      if (meta?.aborted === true) {
+        data.aborted = true;
+      }
+      const stopReason = readStringValue(meta?.stopReason);
+      if (stopReason) {
+        data.stopReason = stopReason;
+      }
+      const livenessState = readStringValue(meta?.livenessState);
+      if (livenessState) {
+        data.livenessState = livenessState;
+      }
+      if (meta?.replayInvalid === true) {
+        data.replayInvalid = true;
+      }
+    }
+    emitAgentEvent({
+      runId: params.runId,
+      ...(params.sessionKey ? { sessionKey: params.sessionKey } : {}),
+      stream: "lifecycle",
+      data,
+    });
+  };
+
+  return { emit, note };
+}
+
 function emitModelFallbackStepLifecycle(params: {
   runId: string;
   sessionKey?: string;
@@ -1473,27 +1115,28 @@ function emitModelFallbackStepLifecycle(params: {
   });
 }
 
-/** Resolves runtime provider override stored on the session entry. */
 export function resolveSessionRuntimeOverrideForProvider(params: {
   provider: string;
   entry?: Pick<SessionEntry, "agentRuntimeOverride">;
-  cfg?: OpenClawConfig;
 }): string | undefined {
   const provider = normalizeLowercaseStringOrEmpty(params.provider);
   const runtime = normalizeLowercaseStringOrEmpty(params.entry?.agentRuntimeOverride);
   if (!runtime || runtime === "auto" || runtime === "default") {
     return undefined;
   }
+  if (runtime === "pi") {
+    return "pi";
+  }
   if (provider === "openai" && runtime === "codex") {
     return "codex";
   }
-  if (isCliRuntimeAliasForProvider({ provider, runtime, cfg: params.cfg })) {
-    return runtime;
-  }
-  return undefined;
+  return listLegacyRuntimeModelProviderAliases().find(
+    (alias) =>
+      normalizeLowercaseStringOrEmpty(alias.provider) === provider &&
+      normalizeLowercaseStringOrEmpty(alias.runtime) === runtime,
+  )?.runtime;
 }
 
-/** Decides whether to retry after rechecking auto-fallback primary probe state. */
 export function resolveRunAfterAutoFallbackPrimaryProbeRecheck(params: {
   run: FollowupRun["run"];
   entry?: SessionEntry;
@@ -1563,7 +1206,6 @@ export function resolveRunAfterAutoFallbackPrimaryProbeRecheck(params: {
   };
 }
 
-/** Runs the agent turn with provider/model fallback, retry, and failure mapping. */
 export async function runAgentTurnWithFallback(params: {
   commandBody: string;
   transcriptCommandBody?: string;
@@ -1596,16 +1238,13 @@ export async function runAgentTurnWithFallback(params: {
   resolvedVerboseLevel: VerboseLevel;
   toolProgressDetail?: "explain" | "raw";
   replyMediaContext?: ReplyMediaContext;
-  onCompactionNoticePayload?: (payload: ReplyPayload) => Promise<void> | void;
-  isRestartRecoveryArmed?: () => boolean;
 }): Promise<AgentRunLoopResult> {
   const TRANSIENT_HTTP_RETRY_DELAY_MS = 2_500;
   let didLogHeartbeatStrip = false;
   let autoCompactionCount = 0;
   // Track payloads sent directly (not via pipeline) during tool flush to avoid duplicates.
   const directlySentBlockKeys = new Set<string>();
-  const directlySentBlockPayloads: Array<ReplyPayload | undefined> = [];
-  const runnableRun = resolveRunAfterAutoFallbackPrimaryProbeRecheck({
+  let runnableRun = resolveRunAfterAutoFallbackPrimaryProbeRecheck({
     run: params.followupRun.run,
     entry: params.activeSessionStore?.[params.sessionKey ?? ""] ?? params.getActiveSessionEntry(),
     sessionKey: params.sessionKey,
@@ -1614,16 +1253,13 @@ export async function runAgentTurnWithFallback(params: {
     params.followupRun.run = runnableRun;
   }
   const runtimeConfig = resolveQueuedReplyRuntimeConfig(runnableRun.config);
-  const effectiveRun =
+  let effectiveRun =
     runtimeConfig === runnableRun.config
       ? runnableRun
       : {
           ...runnableRun,
           config: runtimeConfig,
         };
-  const preserveUserFacingSessionState = shouldPreserveUserFacingSessionStateForInputProvenance(
-    effectiveRun.inputProvenance,
-  );
   const resolveRunForFallbackCandidate = (provider: string, model: string): FollowupRun["run"] => {
     const probe = effectiveRun.autoFallbackPrimaryProbe;
     const isPrimaryProbeCandidate = probe && provider === probe.provider && model === probe.model;
@@ -1660,25 +1296,6 @@ export async function runAgentTurnWithFallback(params: {
   };
 
   const runId = params.opts?.runId ?? crypto.randomUUID();
-  const agentTurnTiming = createAgentTurnTimingTracker({
-    profilerEnabled: isReplyProfilerEnabled({ config: runtimeConfig }),
-  });
-  const shouldSurfaceToControlUi = isInternalMessageChannel(
-    params.followupRun.run.messageProvider ??
-      params.sessionCtx.Surface ??
-      params.sessionCtx.Provider,
-  );
-  let lifecycleGeneration = captureAgentRunLifecycleGeneration(runId);
-  if (params.sessionKey) {
-    registerAgentRunContext(runId, {
-      sessionKey: params.sessionKey,
-      ...(params.followupRun.run.sessionId ? { sessionId: params.followupRun.run.sessionId } : {}),
-      lifecycleGeneration,
-      verboseLevel: params.resolvedVerboseLevel,
-      isHeartbeat: params.isHeartbeat,
-      isControlUiVisible: shouldSurfaceToControlUi,
-    });
-  }
   if (isDiagnosticsEnabled(runtimeConfig)) {
     logSessionTurnCreated({
       runId,
@@ -1692,40 +1309,28 @@ export async function runAgentTurnWithFallback(params: {
       trigger: params.isHeartbeat ? "heartbeat" : "user",
     });
   }
-  let replyMediaContext: ReplyMediaContext;
-  let currentTurnImages: Awaited<ReturnType<typeof resolveCurrentTurnImages>>;
-  try {
-    replyMediaContext =
-      params.replyMediaContext ??
-      agentTurnTiming.measureSync("reply_media_context", () =>
-        createReplyMediaContext({
-          cfg: runtimeConfig,
-          sessionKey: params.sessionKey,
-          workspaceDir: params.followupRun.run.workspaceDir,
-          messageProvider: params.followupRun.run.messageProvider,
-          accountId:
-            params.followupRun.originatingAccountId ?? params.followupRun.run.agentAccountId,
-          groupId: params.followupRun.run.groupId,
-          groupChannel: params.followupRun.run.groupChannel,
-          groupSpace: params.followupRun.run.groupSpace,
-          requesterSenderId: params.followupRun.run.senderId,
-          requesterSenderName: params.followupRun.run.senderName,
-          requesterSenderUsername: params.followupRun.run.senderUsername,
-          requesterSenderE164: params.followupRun.run.senderE164,
-        }),
-      );
-    currentTurnImages = await agentTurnTiming.measure("current_turn_images", () =>
-      resolveCurrentTurnImages({
-        ctx: params.sessionCtx,
-        cfg: runtimeConfig,
-        images: params.followupRun.images ?? params.opts?.images,
-        imageOrder: params.followupRun.imageOrder ?? params.opts?.imageOrder,
-      }),
-    );
-  } catch (error) {
-    clearAgentRunContext(runId, lifecycleGeneration);
-    throw error;
-  }
+  const replyMediaContext =
+    params.replyMediaContext ??
+    createReplyMediaContext({
+      cfg: runtimeConfig,
+      sessionKey: params.sessionKey,
+      workspaceDir: params.followupRun.run.workspaceDir,
+      messageProvider: params.followupRun.run.messageProvider,
+      accountId: params.followupRun.originatingAccountId ?? params.followupRun.run.agentAccountId,
+      groupId: params.followupRun.run.groupId,
+      groupChannel: params.followupRun.run.groupChannel,
+      groupSpace: params.followupRun.run.groupSpace,
+      requesterSenderId: params.followupRun.run.senderId,
+      requesterSenderName: params.followupRun.run.senderName,
+      requesterSenderUsername: params.followupRun.run.senderUsername,
+      requesterSenderE164: params.followupRun.run.senderE164,
+    });
+  const currentTurnImages = await resolveCurrentTurnImages({
+    ctx: params.sessionCtx,
+    cfg: runtimeConfig,
+    images: params.followupRun.images ?? params.opts?.images,
+    imageOrder: params.followupRun.imageOrder ?? params.opts?.imageOrder,
+  });
   let didNotifyAgentRunStart = false;
   const notifyAgentRunStart = () => {
     if (didNotifyAgentRunStart) {
@@ -1734,82 +1339,76 @@ export async function runAgentTurnWithFallback(params: {
     didNotifyAgentRunStart = true;
     params.opts?.onAgentRunStart?.(runId);
   };
-  const signalExecutionPhaseForTyping = (
-    info: Parameters<NonNullable<RunEmbeddedAgentParams["onExecutionPhase"]>>[0],
-  ) => {
-    const isUserVisibleExecutionActivity =
-      info.phase === "turn_accepted" ||
-      info.phase === "process_spawned" ||
-      info.phase === "model_call_started" ||
-      info.phase === "tool_execution_started" ||
-      info.phase === "assistant_output_started";
-    if (!isUserVisibleExecutionActivity) {
+  const currentMessageId = params.sessionCtx.MessageSidFull ?? params.sessionCtx.MessageSid;
+  const shouldNotifyUserAboutCompaction =
+    runtimeConfig?.agents?.defaults?.compaction?.notifyUser === true;
+  const sendCompactionNotice = async (phase: "start" | "end" | "incomplete") => {
+    if (!params.opts?.onBlockReply) {
       return;
     }
-    notifyAgentRunStart();
-    void (
-      params.typingSignals.signalExecutionActivity?.() ?? params.typingSignals.signalRunStart()
-    ).catch((err: unknown) => {
-      logVerbose(`execution phase typing signal failed: ${String(err)}`);
+    const text =
+      phase === "start"
+        ? "🧹 Compacting context..."
+        : phase === "end"
+          ? "🧹 Compaction complete"
+          : "🧹 Compaction incomplete";
+    const noticePayload = params.applyReplyToMode({
+      text,
+      replyToId: currentMessageId,
+      replyToCurrent: true,
+      isCompactionNotice: true,
     });
-  };
-  const currentMessageId = params.sessionCtx.MessageSidFull ?? params.sessionCtx.MessageSid;
-  const notifyUserAboutCompaction = shouldNotifyUserAboutCompaction(runtimeConfig);
-  const deliverCompactionNoticePayload = async (noticePayload: ReplyPayload, label: string) => {
     try {
-      if (params.opts?.onBlockReply) {
-        await params.opts.onBlockReply(noticePayload);
-        return;
-      }
-      await params.onCompactionNoticePayload?.(noticePayload);
+      await params.opts.onBlockReply(noticePayload);
     } catch (err) {
       // Non-critical notice delivery failure should not bubble out of the
       // fire-and-forget event handler.
-      logVerbose(`compaction ${label} notice delivery failed (non-fatal): ${String(err)}`);
+      logVerbose(`compaction ${phase} notice delivery failed (non-fatal): ${String(err)}`);
     }
   };
-  const sendCompactionNotice = async (phase: "start" | "end" | "incomplete") => {
-    await deliverCompactionNoticePayload(
-      createCompactionNoticePayload({
-        phase,
-        currentMessageId,
-        applyReplyToMode: params.applyReplyToMode,
-      }),
-      phase,
-    );
+  const readCompactionHookMessages = (value: unknown): string[] => {
+    if (!Array.isArray(value)) {
+      return [];
+    }
+    return value
+      .filter((entry): entry is string => typeof entry === "string")
+      .map((entry) => entry.trim())
+      .filter((entry) => entry.length > 0);
   };
   const sendCompactionHookMessages = async (messages: string[]) => {
-    const noticePayload = createCompactionHookNoticePayload({
-      messages,
-      currentMessageId,
-      applyReplyToMode: params.applyReplyToMode,
-    });
-    if (!noticePayload) {
+    if (!params.opts?.onBlockReply || messages.length === 0) {
       return;
     }
-    await deliverCompactionNoticePayload(noticePayload, "hook");
+    const noticePayload = params.applyReplyToMode({
+      text: messages.join("\n\n"),
+      replyToId: currentMessageId,
+      replyToCurrent: true,
+      isCompactionNotice: true,
+    });
+    try {
+      await params.opts.onBlockReply(noticePayload);
+    } catch (err) {
+      logVerbose(`compaction hook notice delivery failed (non-fatal): ${String(err)}`);
+    }
   };
+  const shouldSurfaceToControlUi = isInternalMessageChannel(
+    params.followupRun.run.messageProvider ??
+      params.sessionCtx.Surface ??
+      params.sessionCtx.Provider,
+  );
+  if (params.sessionKey) {
+    registerAgentRunContext(runId, {
+      sessionKey: params.sessionKey,
+      verboseLevel: params.resolvedVerboseLevel,
+      isHeartbeat: params.isHeartbeat,
+      isControlUiVisible: shouldSurfaceToControlUi,
+    });
+  }
   let runResult: Awaited<ReturnType<typeof runEmbeddedAgent>>;
   let fallbackProvider = params.followupRun.run.provider;
   let fallbackModel = params.followupRun.run.model;
-  let attemptedRuntimeProvider = fallbackProvider;
-  let attemptedRuntimeModel = fallbackModel;
   let fallbackAttempts: RuntimeFallbackAttempt[] = [];
-  let fallbackExhausted = false;
-  let pendingLifecycleTerminal:
-    | {
-        provider: string;
-        model: string;
-        backstop: AgentLifecycleTerminalBackstop;
-      }
-    | undefined;
-  const takePendingLifecycleTerminal = () => {
-    const terminal = pendingLifecycleTerminal?.backstop;
-    pendingLifecycleTerminal = undefined;
-    return terminal;
-  };
-  let transientHttpRetriesRemaining = 1;
-  const consumeTransientHttpRetry = () => transientHttpRetriesRemaining-- > 0;
+  let didRetryTransientHttpError = false;
   let liveModelSwitchRetries = 0;
   let bootstrapPromptWarningSignaturesSeen = resolveBootstrapWarningSignaturesSeen(
     params.getActiveSessionEntry()?.systemPromptReport,
@@ -1845,10 +1444,12 @@ export async function runAgentTurnWithFallback(params: {
     model: string,
     candidateRun: FollowupRun["run"],
   ): Promise<(() => Promise<void>) | undefined> => {
+    if (effectiveRun.hasOneTurnModelOverride === true) {
+      return undefined;
+    }
     if (
       !params.sessionKey ||
       !params.activeSessionStore ||
-      preserveUserFacingSessionState ||
       (provider === effectiveRun.provider && model === effectiveRun.model)
     ) {
       return undefined;
@@ -1890,15 +1491,10 @@ export async function runAgentTurnWithFallback(params: {
             model: effectiveRun.model,
           }
         : candidateRun;
-    const persistedProvider = resolveOpenAIRuntimeProvider({
-      provider,
-      config: runtimeConfig,
-      workspaceDir: params.followupRun.run.workspaceDir,
-    });
     const applied = applyFallbackCandidateSelectionToEntry({
       entry: activeSessionEntry,
       run: selectionRun,
-      provider: persistedProvider,
+      provider,
       model,
       force: candidateRun !== effectiveRun && Boolean(effectiveRun.autoFallbackPrimaryProbe),
       ...(effectiveRun.autoFallbackPrimaryProbe
@@ -1918,13 +1514,14 @@ export async function runAgentTurnWithFallback(params: {
 
     try {
       if (params.storePath) {
-        await updateSessionEntry(
-          { storePath: params.storePath, sessionKey: params.sessionKey },
-          (persistedEntry) => {
-            applyFallbackSelectionState(persistedEntry, nextState);
-            return buildFallbackSelectionStatePatch(persistedEntry);
-          },
-        );
+        await updateSessionStore(params.storePath, (store) => {
+          const persistedEntry = store[params.sessionKey!];
+          if (!persistedEntry) {
+            return;
+          }
+          applyFallbackSelectionState(persistedEntry, nextState);
+          store[params.sessionKey!] = persistedEntry;
+        });
       }
     } catch (error) {
       rollbackFallbackSelectionStateIfUnchanged(activeSessionEntry, nextState, previousState);
@@ -1941,27 +1538,24 @@ export async function runAgentTurnWithFallback(params: {
       if (rolledBackInMemory) {
         params.activeSessionStore![params.sessionKey!] = activeSessionEntry;
       }
-      if (!params.storePath || !params.sessionKey) {
+      if (!params.storePath) {
         return;
       }
-      await updateSessionEntry(
-        { storePath: params.storePath, sessionKey: params.sessionKey },
-        (persistedEntry) => {
-          if (rollbackFallbackSelectionStateIfUnchanged(persistedEntry, nextState, previousState)) {
-            return buildFallbackSelectionStatePatch(persistedEntry);
-          }
-          return null;
-        },
-      );
+      await updateSessionStore(params.storePath, (store) => {
+        const persistedEntry = store[params.sessionKey!];
+        if (!persistedEntry) {
+          return;
+        }
+        if (rollbackFallbackSelectionStateIfUnchanged(persistedEntry, nextState, previousState)) {
+          store[params.sessionKey!] = persistedEntry;
+        }
+      });
     };
   };
   const clearRecoveredAutoFallbackPrimaryProbe = async (paramsForClear: {
     provider: string;
     model: string;
   }): Promise<void> => {
-    if (preserveUserFacingSessionState) {
-      return;
-    }
     const probe = effectiveRun.autoFallbackPrimaryProbe;
     if (!probe) {
       return;
@@ -1985,37 +1579,17 @@ export async function runAgentTurnWithFallback(params: {
     if (!params.storePath) {
       return;
     }
-    await updateSessionEntry(
-      { storePath: params.storePath, sessionKey: params.sessionKey },
-      (persistedEntry) => {
-        if (!entryMatchesAutoFallbackPrimaryProbe(persistedEntry, probe)) {
-          return null;
-        }
-        const shouldClearAuthProfile =
-          persistedEntry.authProfileOverrideSource === "auto" ||
-          (persistedEntry.authProfileOverrideSource === undefined &&
-            persistedEntry.authProfileOverrideCompactionCount !== undefined);
-        clearAutoFallbackPrimaryProbeSelection(persistedEntry);
-        return {
-          providerOverride: undefined,
-          modelOverride: undefined,
-          modelOverrideSource: undefined,
-          modelOverrideFallbackOriginProvider: undefined,
-          modelOverrideFallbackOriginModel: undefined,
-          ...(shouldClearAuthProfile
-            ? {
-                authProfileOverride: undefined,
-                authProfileOverrideSource: undefined,
-                authProfileOverrideCompactionCount: undefined,
-              }
-            : {}),
-          fallbackNoticeSelectedModel: undefined,
-          fallbackNoticeActiveModel: undefined,
-          fallbackNoticeReason: undefined,
-          updatedAt: persistedEntry.updatedAt,
-        };
-      },
-    );
+    await updateSessionStore(params.storePath, (store) => {
+      const persistedEntry = store[params.sessionKey!];
+      if (!persistedEntry) {
+        return;
+      }
+      if (!entryMatchesAutoFallbackPrimaryProbe(persistedEntry, probe)) {
+        return;
+      }
+      clearAutoFallbackPrimaryProbeSelection(persistedEntry);
+      store[params.sessionKey!] = persistedEntry;
+    });
   };
 
   while (true) {
@@ -2094,7 +1668,6 @@ export async function runAgentTurnWithFallback(params: {
             blockStreamingEnabled: params.blockStreamingEnabled,
             blockReplyPipeline,
             directlySentBlockKeys,
-            directlySentBlockPayloads,
           })
         : undefined;
       let messageToolOnlyDeliveryCompleted = false;
@@ -2102,869 +1675,638 @@ export async function runAgentTurnWithFallback(params: {
       const sourceRepliesAreToolOnly =
         params.followupRun.run.sourceReplyDeliveryMode === "message_tool_only";
       const shouldSuppressProgressAfterMessageToolDelivery = () =>
-        sourceRepliesAreToolOnly &&
-        messageToolOnlyDeliveryCompleted &&
-        params.opts?.allowProgressCallbacksWhenSourceDeliverySuppressed !== true;
+        sourceRepliesAreToolOnly && messageToolOnlyDeliveryCompleted;
       const onToolResult = params.opts?.onToolResult;
       const outcomePlan = buildAgentRuntimeOutcomePlan();
       const runLane = CommandLane.Main;
-      const runAbortSignal = params.replyOperation?.abortSignal ?? params.opts?.abortSignal;
       let queuedUserMessagePersistedAcrossFallback = false;
       let assistantErrorPersistedAcrossFallback = false;
-      const userTurnTranscriptRecorder =
-        params.followupRun.userTurnTranscriptRecorder ?? params.opts?.userTurnTranscriptRecorder;
-      const notifyUserMessagePersisted = () => {
-        queuedUserMessagePersistedAcrossFallback = true;
-      };
-      const fastModeStartedAtMs = Date.now();
-      const fastModeAutoProgressState: FastModeAutoProgressState = {
-        offAnnounced: false,
-        resetAnnounced: false,
-      };
-      // Profiler-only milestone: it separates fallback setup from the actual
-      // model run without adding extra live logs/snapshots to normal turns.
-      agentTurnTiming.logMilestoneIfSlow({
+      const fallbackResult = await runWithModelFallback<EmbeddedAgentRunResult>({
+        ...resolveModelFallbackOptions(effectiveRun, runtimeConfig),
         runId,
         sessionId: params.followupRun.run.sessionId,
-        sessionKey: params.sessionKey,
-        milestone: "before_model_fallback",
-      });
-      const fallbackResult = await agentTurnTiming.measure("model_fallback", () =>
-        runWithModelFallback<EmbeddedAgentRunResult>({
-          ...resolveModelFallbackOptions(effectiveRun, runtimeConfig),
-          runId,
-          sessionId: params.followupRun.run.sessionId,
-          lane: runLane,
-          abortSignal: runAbortSignal,
-          resolveAgentHarnessRuntimeOverride: (provider) =>
-            resolveSessionRuntimeOverrideForProvider({
+        lane: runLane,
+        resolveAgentHarnessRuntimeOverride: (provider) =>
+          resolveSessionRuntimeOverrideForProvider({
+            provider,
+            entry: params.getActiveSessionEntry(),
+          }),
+        prepareAgentHarnessRuntime: async ({ provider, model, agentHarnessRuntimeOverride }) => {
+          await ensureSelectedAgentHarnessPlugin({
+            config: runtimeConfig,
+            provider,
+            modelId: model,
+            agentId: params.followupRun.run.agentId,
+            sessionKey: params.followupRun.run.runtimePolicySessionKey ?? params.sessionKey,
+            agentHarnessRuntimeOverride,
+            workspaceDir: params.followupRun.run.workspaceDir,
+          });
+        },
+        onFallbackStep: (step) => {
+          emitModelFallbackStepLifecycle({
+            runId,
+            sessionKey: params.sessionKey,
+            step,
+          });
+        },
+        classifyResult: async ({ result, provider, model }) => {
+          const classification = outcomePlan.classifyRunResult({
+            result,
+            provider,
+            model,
+            hasDirectlySentBlockReply: directlySentBlockKeys.size > 0,
+            hasBlockReplyPipelineOutput: Boolean(
+              blockReplyPipeline?.hasBuffered() || blockReplyPipeline?.didStream(),
+            ),
+          });
+          if (classification) {
+            await rollbackClassifiedFallbackCandidateSelection(provider, model);
+          }
+          return classification;
+        },
+        run: async (provider, model, runOptions) => {
+          const suppressQueuedUserPersistenceForCandidate =
+            (params.followupRun.run.suppressNextUserMessagePersistence ?? false) ||
+            queuedUserMessagePersistedAcrossFallback;
+          const suppressAssistantErrorPersistenceForCandidate =
+            assistantErrorPersistedAcrossFallback;
+          const candidateRun = resolveRunForFallbackCandidate(provider, model);
+          const activeProbe = effectiveRun.autoFallbackPrimaryProbe;
+          if (activeProbe && provider === activeProbe.provider && model === activeProbe.model) {
+            markAutoFallbackPrimaryProbe({
+              probe: activeProbe,
+              sessionKey: params.sessionKey,
+            });
+          }
+          // Notify that model selection is complete (including after fallback).
+          // This allows responsePrefix template interpolation with the actual model.
+          params.opts?.onModelSelected?.({
+            provider,
+            model,
+            thinkLevel: params.followupRun.run.thinkLevel,
+          });
+          let rollbackFallbackCandidateSelection: (() => Promise<void>) | undefined;
+          try {
+            rollbackFallbackCandidateSelection = await persistFallbackCandidateSelection(
               provider,
-              entry: params.getActiveSessionEntry(),
-              cfg: runtimeConfig,
-            }),
-          prepareAgentHarnessRuntime: async ({ provider, model, agentHarnessRuntimeOverride }) => {
-            await agentTurnTiming.measure("fallback_prepare_harness", () =>
-              ensureSelectedAgentHarnessPlugin({
+              model,
+              candidateRun,
+            );
+            if (rollbackFallbackCandidateSelection) {
+              pendingFallbackCandidateRollback = {
+                provider,
+                model,
+                rollback: rollbackFallbackCandidateSelection,
+              };
+            }
+          } catch (error) {
+            logVerbose(
+              `failed to persist fallback candidate selection (non-fatal): ${String(error)}`,
+            );
+          }
+
+          const sessionRuntimeOverride = resolveSessionRuntimeOverrideForProvider({
+            provider,
+            entry: params.getActiveSessionEntry(),
+          });
+          const selectedAuthProfile = resolveRunAuthProfile(candidateRun, provider, {
+            config: runtimeConfig,
+          });
+          const cliExecutionProvider =
+            sessionRuntimeOverride === "pi"
+              ? provider
+              : ((sessionRuntimeOverride && isCliProvider(sessionRuntimeOverride, runtimeConfig)
+                  ? sessionRuntimeOverride
+                  : undefined) ??
+                resolveCliRuntimeExecutionProvider({
+                  provider,
+                  cfg: runtimeConfig,
+                  agentId: params.followupRun.run.agentId,
+                  modelId: model,
+                  authProfileId: selectedAuthProfile.authProfileId,
+                }) ??
+                provider);
+
+          if (isCliProvider(cliExecutionProvider, runtimeConfig)) {
+            const isRoomEventCliRun = params.followupRun.currentInboundEventKind === "room_event";
+            const cliSessionBinding = isRoomEventCliRun
+              ? undefined
+              : getCliSessionBinding(params.getActiveSessionEntry(), cliExecutionProvider);
+            const authProfile = resolveRunAuthProfile(candidateRun, cliExecutionProvider, {
+              config: runtimeConfig,
+            });
+            const hookMessageProvider = resolveOriginMessageProvider({
+              originatingChannel: params.followupRun.originatingChannel,
+              provider: params.sessionCtx.Provider,
+            });
+            const result = await runCliAgentWithLifecycle({
+              runId,
+              provider: cliExecutionProvider,
+              onAgentRunStart: notifyAgentRunStart,
+              suppressAssistantBridge: params.followupRun.run.silentExpected,
+              onAssistantText: async (text) => {
+                const textForTyping = await handlePartialForTyping({ text } as ReplyPayload);
+                if (textForTyping === undefined || !params.opts?.onPartialReply) {
+                  return;
+                }
+                await params.opts.onPartialReply({ text: textForTyping });
+              },
+              onReasoningText: async (text) => {
+                await params.opts?.onReasoningStream?.({ text });
+              },
+              onErrorBeforeLifecycle: async () => {
+                if (!rollbackFallbackCandidateSelection) {
+                  return;
+                }
+                try {
+                  await rollbackFallbackCandidateSelection();
+                  clearPendingFallbackRollback(rollbackFallbackCandidateSelection);
+                } catch (rollbackError) {
+                  logVerbose(
+                    `failed to roll back fallback candidate selection (non-fatal): ${String(rollbackError)}`,
+                  );
+                }
+              },
+              runParams: {
+                sessionId: params.followupRun.run.sessionId,
+                sessionKey: params.sessionKey,
+                agentId: params.followupRun.run.agentId,
+                trigger: params.isHeartbeat ? "heartbeat" : "user",
+                sessionFile: params.followupRun.run.sessionFile,
+                workspaceDir: params.followupRun.run.workspaceDir,
                 config: runtimeConfig,
+                prompt: params.commandBody,
+                transcriptPrompt: params.transcriptCommandBody,
+                currentInboundEventKind: params.followupRun.currentInboundEventKind,
+                currentInboundContext: params.followupRun.currentInboundContext,
+                inputProvenance: params.followupRun.run.inputProvenance,
+                provider: cliExecutionProvider,
+                model,
+                thinkLevel: params.followupRun.run.thinkLevel,
+                timeoutMs: params.followupRun.run.timeoutMs,
+                runId,
+                lane: runLane,
+                extraSystemPrompt: params.followupRun.run.extraSystemPrompt,
+                sourceReplyDeliveryMode: params.followupRun.run.sourceReplyDeliveryMode,
+                silentReplyPromptMode: params.followupRun.run.silentReplyPromptMode,
+                extraSystemPromptStatic: params.followupRun.run.extraSystemPromptStatic,
+                ownerNumbers: params.followupRun.run.ownerNumbers,
+                cliSessionId: cliSessionBinding?.sessionId,
+                cliSessionBinding,
+                authProfileId: authProfile.authProfileId,
+                bootstrapPromptWarningSignaturesSeen,
+                bootstrapPromptWarningSignature:
+                  bootstrapPromptWarningSignaturesSeen[
+                    bootstrapPromptWarningSignaturesSeen.length - 1
+                  ],
+                images: currentTurnImages.images,
+                imageOrder: currentTurnImages.imageOrder,
+                skillsSnapshot: params.followupRun.run.skillsSnapshot,
+                messageChannel: params.followupRun.originatingChannel ?? undefined,
+                messageProvider: hookMessageProvider,
+                agentAccountId: params.followupRun.run.agentAccountId,
+                senderIsOwner: params.followupRun.run.senderIsOwner,
+                disableTools: params.opts?.disableTools,
+                abortSignal: params.replyOperation?.abortSignal ?? params.opts?.abortSignal,
+                replyOperation: params.replyOperation,
+              },
+              transformResult: (rawResult) =>
+                isRoomEventCliRun && rawResult.meta.agentMeta
+                  ? (() => {
+                      const { cliSessionBinding: _cliSessionBinding, ...agentMeta } =
+                        rawResult.meta.agentMeta;
+                      return {
+                        ...rawResult,
+                        meta: {
+                          ...rawResult.meta,
+                          agentMeta: {
+                            ...agentMeta,
+                            sessionId: "",
+                          },
+                        },
+                      };
+                    })()
+                  : rawResult,
+            });
+            bootstrapPromptWarningSignaturesSeen = resolveBootstrapWarningSignaturesSeen(
+              result.meta?.systemPromptReport,
+            );
+            return result;
+          }
+          const { embeddedContext, senderContext, runBaseParams } = buildEmbeddedRunExecutionParams(
+            {
+              run: candidateRun,
+              sessionCtx: params.sessionCtx,
+              hasRepliedRef: params.opts?.hasRepliedRef,
+              provider,
+              runId,
+              allowTransientCooldownProbe: runOptions?.allowTransientCooldownProbe,
+              model,
+            },
+          );
+          const agentHarnessPolicy = sessionRuntimeOverride
+            ? ({ runtime: sessionRuntimeOverride, runtimeSource: "model" } as const)
+            : resolveAgentHarnessPolicy({
                 provider,
                 modelId: model,
+                config: runtimeConfig,
                 agentId: params.followupRun.run.agentId,
                 sessionKey: params.followupRun.run.runtimePolicySessionKey ?? params.sessionKey,
-                agentHarnessRuntimeOverride,
-                workspaceDir: params.followupRun.run.workspaceDir,
-              }),
-            );
-          },
-          onFallbackStep: (step) => {
-            emitModelFallbackStepLifecycle({
+              });
+          const embeddedRunProvider = resolveOpenAIRuntimeProvider({
+            provider,
+            harnessRuntime: agentHarnessPolicy.runtime,
+            authProfileProvider: runBaseParams.authProfileId?.split(":", 1)[0],
+            authProfileId: runBaseParams.authProfileId,
+            config: runtimeConfig,
+            workspaceDir: params.followupRun.run.workspaceDir,
+          });
+          const embeddedRunHarnessOverride =
+            sessionRuntimeOverride ??
+            (agentHarnessPolicy.runtime === "pi" && embeddedRunProvider !== provider
+              ? "pi"
+              : undefined);
+          return (async () => {
+            let attemptCompactionCount = 0;
+            const lifecycleBackstop = createEmbeddedLifecycleTerminalBackstop({
               runId,
               sessionKey: params.sessionKey,
-              step,
             });
-          },
-          classifyResult: async ({ result, provider, model }) => {
-            const classification = outcomePlan.classifyRunResult({
-              result,
-              provider,
-              model,
-              hasDirectlySentBlockReply: directlySentBlockKeys.size > 0,
-              hasBlockReplyPipelineOutput: Boolean(
-                blockReplyPipeline?.hasBuffered() || blockReplyPipeline?.didStream(),
-              ),
-            });
-            if (classification) {
-              await rollbackClassifiedFallbackCandidateSelection(provider, model);
-            }
-            return classification;
-          },
-          mergeExhaustedResult: mergeEmbeddedAgentRunResultForModelFallbackExhaustion,
-          run: async (provider, model, runOptions) => {
-            attemptedRuntimeProvider = provider;
-            attemptedRuntimeModel = model;
-            const suppressQueuedUserPersistenceForCandidate =
-              (params.followupRun.run.suppressNextUserMessagePersistence ?? false) ||
-              queuedUserMessagePersistedAcrossFallback;
-            const suppressAssistantErrorPersistenceForCandidate =
-              assistantErrorPersistedAcrossFallback;
-            const candidateRun = resolveRunForFallbackCandidate(provider, model);
-            const candidateFastMode = resolveRunFastModeForFallbackCandidate({
-              run: candidateRun,
-              config: runtimeConfig,
-              provider,
-              model,
-              sessionEntry: params.getActiveSessionEntry(),
-            });
-            const activeProbe = effectiveRun.autoFallbackPrimaryProbe;
-            if (activeProbe && provider === activeProbe.provider && model === activeProbe.model) {
-              markAutoFallbackPrimaryProbe({
-                probe: activeProbe,
-                sessionKey: params.sessionKey,
-              });
-            }
-            // Notify that model selection is complete (including after fallback).
-            // This allows responsePrefix template interpolation with the actual model.
-            params.opts?.onModelSelected?.({
-              provider,
-              model,
-              thinkLevel: params.followupRun.run.thinkLevel,
-            });
-            let rollbackFallbackCandidateSelection: (() => Promise<void>) | undefined;
             try {
-              rollbackFallbackCandidateSelection = await agentTurnTiming.measure(
-                "fallback_persist_selection",
-                () => persistFallbackCandidateSelection(provider, model, candidateRun),
-              );
-              if (rollbackFallbackCandidateSelection) {
-                pendingFallbackCandidateRollback = {
-                  provider,
-                  model,
-                  rollback: rollbackFallbackCandidateSelection,
-                };
-              }
-            } catch (error) {
-              logVerbose(
-                `failed to persist fallback candidate selection (non-fatal): ${String(error)}`,
-              );
-            }
-
-            const { sessionRuntimeOverride, cliExecutionProvider } = agentTurnTiming.measureSync(
-              "fallback_resolve_runtime",
-              () => {
-                const resolvedSessionRuntimeOverride = resolveSessionRuntimeOverrideForProvider({
-                  provider,
-                  entry: params.getActiveSessionEntry(),
-                  cfg: runtimeConfig,
-                });
-                const resolvedSelectedAuthProfile = resolveRunAuthProfile(candidateRun, provider, {
-                  config: runtimeConfig,
-                });
-                const resolvedCliExecutionProvider =
-                  (resolvedSessionRuntimeOverride &&
-                  isCliProvider(resolvedSessionRuntimeOverride, runtimeConfig)
-                    ? resolvedSessionRuntimeOverride
-                    : undefined) ??
-                  resolveCliRuntimeExecutionProvider({
-                    provider,
-                    cfg: runtimeConfig,
-                    agentId: params.followupRun.run.agentId,
-                    modelId: model,
-                    authProfileId: resolvedSelectedAuthProfile.authProfileId,
-                  }) ??
-                  provider;
-                return {
-                  sessionRuntimeOverride: resolvedSessionRuntimeOverride,
-                  cliExecutionProvider: resolvedCliExecutionProvider,
-                };
-              },
-            );
-
-            if (isCliProvider(cliExecutionProvider, runtimeConfig)) {
-              const cliSessionBinding = getCliSessionBinding(
-                params.getActiveSessionEntry(),
-                cliExecutionProvider,
-              );
-              const cliLifecycleStartedAt = Date.now();
-              const lifecycleBackstop = createAgentLifecycleTerminalBackstop({
-                runId,
-                sessionKey: params.sessionKey,
-                startedAt: cliLifecycleStartedAt,
-                getLifecycleGeneration: () => lifecycleGeneration,
-                resolveAbortLifecycleFields: () => ({
-                  ...resolveAgentRunAbortLifecycleFields(runAbortSignal),
-                  ...(isReplyOperationRestartAbort(params.replyOperation)
-                    ? {
-                        aborted: true as const,
-                        stopReason: AGENT_RUN_RESTART_ABORT_STOP_REASON,
-                      }
-                    : {}),
-                }),
-              });
-              pendingLifecycleTerminal = { provider, model, backstop: lifecycleBackstop };
-              const authProfile = resolveRunAuthProfile(candidateRun, cliExecutionProvider, {
-                config: runtimeConfig,
-              });
-              let droppedCliSessionReplacement = false;
-              const hookMessageProvider = resolveOriginMessageProvider({
-                originatingChannel: params.followupRun.originatingChannel,
-                provider: params.sessionCtx.Provider,
-              });
-              const cliCurrentThreadId =
-                params.followupRun.originatingThreadId ?? params.sessionCtx.MessageThreadId;
-              const isRestartSentinelContinuation =
-                params.sessionCtx.InputProvenance?.kind === "internal_system" &&
-                params.sessionCtx.InputProvenance.sourceTool === "restart-sentinel";
-              const cliCurrentMessageId = isRestartSentinelContinuation
-                ? params.sessionCtx.ReplyToId
-                : (params.sessionCtx.MessageSidFull ?? params.sessionCtx.MessageSid);
-              const cliToolSummaryTracker = createCliToolSummaryTracker({
-                detailMode: params.toolProgressDetail,
-                shouldEmitToolResult: params.shouldEmitToolResult,
-                shouldEmitToolOutput: params.shouldEmitToolOutput,
-                deliver: async (payload) => {
-                  await params.opts?.onToolResult?.(payload);
+              const result = await runEmbeddedAgent({
+                ...embeddedContext,
+                allowGatewaySubagentBinding: true,
+                trigger: params.isHeartbeat ? "heartbeat" : "user",
+                groupId: resolveGroupSessionKey(params.sessionCtx)?.id,
+                groupChannel:
+                  normalizeOptionalString(params.sessionCtx.GroupChannel) ??
+                  normalizeOptionalString(params.sessionCtx.GroupSubject),
+                groupSpace: normalizeOptionalString(params.sessionCtx.GroupSpace),
+                ...senderContext,
+                ...runBaseParams,
+                provider: embeddedRunProvider,
+                agentHarnessId: embeddedRunHarnessOverride,
+                agentHarnessRuntimeOverride: embeddedRunHarnessOverride,
+                sandboxSessionKey: params.runtimePolicySessionKey,
+                prompt: params.commandBody,
+                transcriptPrompt: params.transcriptCommandBody,
+                currentInboundEventKind: params.followupRun.currentInboundEventKind,
+                currentInboundContext: params.followupRun.currentInboundContext,
+                extraSystemPrompt: params.followupRun.run.extraSystemPrompt,
+                sourceReplyDeliveryMode: params.followupRun.run.sourceReplyDeliveryMode,
+                forceMessageTool:
+                  params.followupRun.run.sourceReplyDeliveryMode === "message_tool_only",
+                silentReplyPromptMode: params.followupRun.run.silentReplyPromptMode,
+                suppressNextUserMessagePersistence: suppressQueuedUserPersistenceForCandidate,
+                onUserMessagePersisted: () => {
+                  queuedUserMessagePersistedAcrossFallback = true;
                 },
-              });
-              const result = await agentTurnTiming.measure("cli_run", () =>
-                runCliAgentWithLifecycle({
-                  runId,
-                  lifecycleGeneration,
-                  provider: cliExecutionProvider,
-                  startedAt: cliLifecycleStartedAt,
-                  emitLifecycleTerminal: false,
-                  onAgentRunStart: notifyAgentRunStart,
-                  suppressAssistantBridge: params.followupRun.run.silentExpected,
-                  onAssistantText: async (text) => {
-                    const textForTyping = await handlePartialForTyping({ text } as ReplyPayload);
-                    if (textForTyping === undefined || !params.opts?.onPartialReply) {
+                suppressTranscriptOnlyAssistantPersistence:
+                  params.followupRun.run.suppressTranscriptOnlyAssistantPersistence,
+                suppressAssistantErrorPersistence: suppressAssistantErrorPersistenceForCandidate,
+                onAssistantErrorMessagePersisted: () => {
+                  assistantErrorPersistedAcrossFallback = true;
+                },
+                toolResultFormat: (() => {
+                  const channel = resolveMessageChannel(
+                    params.sessionCtx.Surface,
+                    params.sessionCtx.Provider,
+                  );
+                  if (!channel) {
+                    return "markdown";
+                  }
+                  return isMarkdownCapableMessageChannel(channel) ? "markdown" : "plain";
+                })(),
+                toolProgressDetail: params.toolProgressDetail,
+                suppressToolErrorWarnings: params.opts?.suppressToolErrorWarnings,
+                disableTools: params.opts?.disableTools,
+                enableHeartbeatTool: params.opts?.enableHeartbeatTool,
+                forceHeartbeatTool: params.opts?.forceHeartbeatTool,
+                bootstrapContextMode: params.opts?.bootstrapContextMode,
+                bootstrapContextRunKind: params.opts?.isHeartbeat ? "heartbeat" : "default",
+                images: currentTurnImages.images,
+                imageOrder: currentTurnImages.imageOrder,
+                abortSignal: params.replyOperation?.abortSignal ?? params.opts?.abortSignal,
+                replyOperation: params.replyOperation,
+                blockReplyBreak: params.resolvedBlockStreamingBreak,
+                blockReplyChunking: params.blockReplyChunking,
+                onPartialReply: async (payload) => {
+                  const textForTyping = await handlePartialForTyping(payload);
+                  if (!params.opts?.onPartialReply || textForTyping === undefined) {
+                    return;
+                  }
+                  await params.opts.onPartialReply({
+                    text: textForTyping,
+                    mediaUrls: payload.mediaUrls,
+                  });
+                },
+                onAssistantMessageStart: async () => {
+                  await params.typingSignals.signalMessageStart();
+                  await params.opts?.onAssistantMessageStart?.();
+                },
+                onReasoningStream:
+                  params.typingSignals.shouldStartOnReasoning || params.opts?.onReasoningStream
+                    ? async (payload) => {
+                        if (params.followupRun.run.silentExpected) {
+                          return;
+                        }
+                        await params.typingSignals.signalReasoningDelta();
+                        await params.opts?.onReasoningStream?.({
+                          text: payload.text,
+                          mediaUrls: payload.mediaUrls,
+                        });
+                      }
+                    : undefined,
+                onReasoningEnd: params.opts?.onReasoningEnd,
+                onAgentEvent: async (evt) => {
+                  lifecycleBackstop.note(evt);
+                  // Signal run start only after the embedded agent emits real activity.
+                  const hasLifecyclePhase =
+                    evt.stream === "lifecycle" && typeof evt.data.phase === "string";
+                  if (evt.stream !== "lifecycle" || hasLifecyclePhase) {
+                    notifyAgentRunStart();
+                  }
+                  // Trigger typing when tools start executing.
+                  // Must await to ensure typing indicator starts before tool summaries are emitted.
+                  if (evt.stream === "tool") {
+                    const phase = readStringValue(evt.data.phase) ?? "";
+                    const name = readStringValue(evt.data.name);
+                    const toolCallId = readStringValue(evt.data.toolCallId) ?? "";
+                    const args =
+                      evt.data.args && typeof evt.data.args === "object"
+                        ? (evt.data.args as Record<string, unknown>)
+                        : undefined;
+                    if (
+                      sourceRepliesAreToolOnly &&
+                      toolCallId &&
+                      name &&
+                      (phase === "start" || phase === "update") &&
+                      args &&
+                      isMessagingToolSendAction(name, args)
+                    ) {
+                      messageToolOnlyDeliveryToolCallIds.add(toolCallId);
+                    }
+                    if (shouldSuppressProgressAfterMessageToolDelivery()) {
                       return;
                     }
-                    await params.opts.onPartialReply({ text: textForTyping });
-                  },
-                  onReasoningText: async (text) => {
-                    await params.opts?.onReasoningStream?.({ text });
-                  },
-                  onToolEvent: async (payload) => {
-                    await cliToolSummaryTracker.noteToolEvent(payload);
-                    if (payload.phase === "result") {
-                      return;
-                    }
-                    const { name, phase, args } = payload;
-                    await Promise.all([
-                      params.typingSignals.signalToolStart(),
-                      params.opts?.onToolStart?.({
+                    if (phase === "start" || phase === "update") {
+                      const toolStartProgressPromise = params.opts?.onToolStart?.({
                         name,
                         phase,
                         args,
                         detailMode: params.toolProgressDetail,
-                      }),
-                    ]);
-                  },
-                  onCommentaryText:
-                    params.opts?.commentaryProgressEnabled === true && params.opts.onItemEvent
-                      ? async (payload) => {
-                          await params.opts?.onItemEvent?.({
-                            itemId: payload.itemId,
-                            kind: "preamble",
-                            progressText: payload.text,
-                          });
+                      });
+                      await Promise.all([
+                        params.typingSignals.signalToolStart(),
+                        toolStartProgressPromise,
+                      ]);
+                    }
+                  }
+                  const suppressItemChannelProgress =
+                    evt.stream === "item" &&
+                    evt.data.suppressChannelProgress === true &&
+                    Boolean(params.opts?.onToolStart);
+                  const itemPhase = evt.stream === "item" ? readStringValue(evt.data.phase) : "";
+                  const itemName = evt.stream === "item" ? readStringValue(evt.data.name) : "";
+                  const itemStatus = evt.stream === "item" ? readStringValue(evt.data.status) : "";
+                  const itemToolCallId =
+                    evt.stream === "item" ? (readStringValue(evt.data.toolCallId) ?? "") : "";
+                  const completedMessageToolDelivery =
+                    sourceRepliesAreToolOnly &&
+                    itemPhase === "end" &&
+                    itemStatus === "completed" &&
+                    itemToolCallId.length > 0 &&
+                    messageToolOnlyDeliveryToolCallIds.has(itemToolCallId);
+                  const suppressProgressAfterMessageToolDelivery =
+                    shouldSuppressProgressAfterMessageToolDelivery();
+                  if (completedMessageToolDelivery) {
+                    messageToolOnlyDeliveryToolCallIds.delete(itemToolCallId);
+                    messageToolOnlyDeliveryCompleted = true;
+                  }
+                  if (
+                    evt.stream === "item" &&
+                    !suppressItemChannelProgress &&
+                    (!suppressProgressAfterMessageToolDelivery || completedMessageToolDelivery)
+                  ) {
+                    await params.opts?.onItemEvent?.({
+                      itemId: readStringValue(evt.data.itemId),
+                      kind: readStringValue(evt.data.kind),
+                      title: readStringValue(evt.data.title),
+                      name: itemName,
+                      phase: itemPhase,
+                      status: itemStatus,
+                      summary: readStringValue(evt.data.summary),
+                      progressText: readStringValue(evt.data.progressText),
+                      meta: readStringValue(evt.data.meta),
+                      approvalId: readStringValue(evt.data.approvalId),
+                      approvalSlug: readStringValue(evt.data.approvalSlug),
+                    });
+                  }
+                  if (evt.stream === "plan" && !shouldSuppressProgressAfterMessageToolDelivery()) {
+                    await params.opts?.onPlanUpdate?.({
+                      phase: readStringValue(evt.data.phase),
+                      title: readStringValue(evt.data.title),
+                      explanation: readStringValue(evt.data.explanation),
+                      steps: Array.isArray(evt.data.steps)
+                        ? evt.data.steps.filter((step): step is string => typeof step === "string")
+                        : undefined,
+                      source: readStringValue(evt.data.source),
+                    });
+                  }
+                  if (
+                    evt.stream === "approval" &&
+                    !shouldSuppressProgressAfterMessageToolDelivery()
+                  ) {
+                    await params.opts?.onApprovalEvent?.({
+                      phase: readStringValue(evt.data.phase),
+                      kind: readStringValue(evt.data.kind),
+                      status: readStringValue(evt.data.status),
+                      title: readStringValue(evt.data.title),
+                      itemId: readStringValue(evt.data.itemId),
+                      toolCallId: readStringValue(evt.data.toolCallId),
+                      approvalId: readStringValue(evt.data.approvalId),
+                      approvalSlug: readStringValue(evt.data.approvalSlug),
+                      command: readStringValue(evt.data.command),
+                      host: readStringValue(evt.data.host),
+                      reason: readStringValue(evt.data.reason),
+                      scope: readApprovalScopeValue(evt.data.scope),
+                      message: readStringValue(evt.data.message),
+                    });
+                  }
+                  if (
+                    evt.stream === "command_output" &&
+                    !shouldSuppressProgressAfterMessageToolDelivery()
+                  ) {
+                    await params.opts?.onCommandOutput?.({
+                      itemId: readStringValue(evt.data.itemId),
+                      phase: readStringValue(evt.data.phase),
+                      title: readStringValue(evt.data.title),
+                      toolCallId: readStringValue(evt.data.toolCallId),
+                      name: readStringValue(evt.data.name),
+                      output: readStringValue(evt.data.output),
+                      status: readStringValue(evt.data.status),
+                      exitCode:
+                        typeof evt.data.exitCode === "number" || evt.data.exitCode === null
+                          ? evt.data.exitCode
+                          : undefined,
+                      durationMs:
+                        typeof evt.data.durationMs === "number" ? evt.data.durationMs : undefined,
+                      cwd: readStringValue(evt.data.cwd),
+                    });
+                  }
+                  if (evt.stream === "patch" && !shouldSuppressProgressAfterMessageToolDelivery()) {
+                    await params.opts?.onPatchSummary?.({
+                      itemId: readStringValue(evt.data.itemId),
+                      phase: readStringValue(evt.data.phase),
+                      title: readStringValue(evt.data.title),
+                      toolCallId: readStringValue(evt.data.toolCallId),
+                      name: readStringValue(evt.data.name),
+                      added: Array.isArray(evt.data.added)
+                        ? evt.data.added.filter(
+                            (entry): entry is string => typeof entry === "string",
+                          )
+                        : undefined,
+                      modified: Array.isArray(evt.data.modified)
+                        ? evt.data.modified.filter(
+                            (entry): entry is string => typeof entry === "string",
+                          )
+                        : undefined,
+                      deleted: Array.isArray(evt.data.deleted)
+                        ? evt.data.deleted.filter(
+                            (entry): entry is string => typeof entry === "string",
+                          )
+                        : undefined,
+                      summary: readStringValue(evt.data.summary),
+                    });
+                  }
+                  // Track auto-compaction and notify higher layers.
+                  if (evt.stream === "compaction") {
+                    const phase = readStringValue(evt.data.phase) ?? "";
+                    const hookMessages = readCompactionHookMessages(evt.data.messages);
+                    if (phase === "start") {
+                      // Keep custom compaction callbacks active, but gate the
+                      // fallback user-facing notice behind explicit opt-in.
+                      if (params.opts?.onCompactionStart) {
+                        await params.opts.onCompactionStart();
+                      }
+                      if (hookMessages.length > 0) {
+                        await sendCompactionHookMessages(hookMessages);
+                      } else if (
+                        !params.opts?.onCompactionStart &&
+                        shouldNotifyUserAboutCompaction
+                      ) {
+                        // Send directly via opts.onBlockReply (bypassing the
+                        // pipeline) so the notice does not cause final payloads
+                        // to be discarded on non-streaming model paths.
+                        await sendCompactionNotice("start");
+                      }
+                    }
+                    if (phase === "end") {
+                      const completed = evt.data?.completed === true;
+                      if (completed) {
+                        attemptCompactionCount += 1;
+                        if (params.opts?.onCompactionEnd) {
+                          await params.opts.onCompactionEnd();
                         }
-                      : undefined,
-                  onFastModeAutoProgress: async (payload) => {
-                    await params.opts?.onToolResult?.(payload);
-                  },
-                  onErrorBeforeLifecycle: async () => {
-                    if (!rollbackFallbackCandidateSelection) {
-                      return;
+                        if (hookMessages.length > 0) {
+                          await sendCompactionHookMessages(hookMessages);
+                        } else if (
+                          !params.opts?.onCompactionEnd &&
+                          shouldNotifyUserAboutCompaction
+                        ) {
+                          await sendCompactionNotice("end");
+                        }
+                      } else if (hookMessages.length > 0) {
+                        await sendCompactionHookMessages(hookMessages);
+                      } else if (shouldNotifyUserAboutCompaction) {
+                        await sendCompactionNotice("incomplete");
+                      }
                     }
-                    try {
-                      await rollbackFallbackCandidateSelection();
-                      clearPendingFallbackRollback(rollbackFallbackCandidateSelection);
-                    } catch (rollbackError) {
-                      logVerbose(
-                        `failed to roll back fallback candidate selection (non-fatal): ${String(rollbackError)}`,
-                      );
-                    }
-                  },
-                  transformResult:
-                    params.followupRun.currentInboundEventKind === "room_event"
-                      ? (resultLocal) =>
-                          keepCliSessionBindingOnlyWhenReused({
-                            result: resultLocal,
-                            existingSessionId: cliSessionBinding?.sessionId,
-                            onDroppedReplacement: () => {
-                              droppedCliSessionReplacement = true;
-                            },
+                  }
+                },
+                // Always pass onBlockReply so flushBlockReplyBuffer works before tool execution,
+                // even when regular block streaming is disabled. The handler sends directly
+                // via opts.onBlockReply when the pipeline isn't available.
+                onBlockReply: blockReplyHandler,
+                onBlockReplyFlush:
+                  params.blockStreamingEnabled && blockReplyPipeline
+                    ? async () => {
+                        await blockReplyPipeline.flush({ force: true });
+                      }
+                    : undefined,
+                shouldEmitToolResult: params.shouldEmitToolResult,
+                shouldEmitToolOutput: params.shouldEmitToolOutput,
+                bootstrapPromptWarningSignaturesSeen,
+                bootstrapPromptWarningSignature:
+                  bootstrapPromptWarningSignaturesSeen[
+                    bootstrapPromptWarningSignaturesSeen.length - 1
+                  ],
+                onToolResult: onToolResult
+                  ? (() => {
+                      // Serialize tool result delivery to preserve message ordering.
+                      // Without this, concurrent tool callbacks race through typing signals
+                      // and message sends, causing out-of-order delivery to the user.
+                      // See: https://github.com/openclaw/openclaw/issues/11044
+                      let toolResultChain: Promise<void> = Promise.resolve();
+                      return (payload: ReplyPayload) => {
+                        toolResultChain = toolResultChain
+                          .then(async () => {
+                            const { text, skip } = normalizeStreamingText(payload);
+                            if (skip) {
+                              return;
+                            }
+                            if (text !== undefined) {
+                              await params.typingSignals.signalTextDelta(text);
+                            }
+                            await onToolResult({
+                              ...payload,
+                              text,
+                            });
                           })
-                      : undefined,
-                  runParams: {
-                    sessionId: params.followupRun.run.sessionId,
-                    sessionKey: params.sessionKey,
-                    agentId: params.followupRun.run.agentId,
-                    trigger: params.isHeartbeat ? "heartbeat" : "user",
-                    sessionFile: params.followupRun.run.sessionFile,
-                    workspaceDir: params.followupRun.run.workspaceDir,
-                    cwd: params.followupRun.run.cwd,
-                    config: runtimeConfig,
-                    prompt: params.commandBody,
-                    transcriptPrompt: params.transcriptCommandBody,
-                    suppressNextUserMessagePersistence: suppressQueuedUserPersistenceForCandidate,
-                    userTurnTranscriptRecorder,
-                    onUserMessagePersisted: notifyUserMessagePersisted,
-                    persistAssistantTranscript:
-                      params.followupRun.currentInboundEventKind !== "room_event" &&
-                      params.followupRun.run.suppressTranscriptOnlyAssistantPersistence !== true,
-                    storePath: params.storePath,
-                    currentInboundEventKind: params.followupRun.currentInboundEventKind,
-                    currentInboundContext: params.followupRun.currentInboundContext,
-                    inputProvenance: params.followupRun.run.inputProvenance,
-                    provider: cliExecutionProvider,
-                    model,
-                    thinkLevel: params.followupRun.run.thinkLevel,
-                    fastMode: candidateFastMode.fastMode,
-                    fastModeStartedAtMs,
-                    fastModeAutoOnSeconds: candidateFastMode.fastModeAutoOnSeconds,
-                    fastModeAutoProgressState,
-                    isFinalFallbackAttempt: runOptions?.isFinalFallbackAttempt,
-                    timeoutMs: params.followupRun.run.timeoutMs,
-                    runTimeoutOverrideMs: params.followupRun.run.runTimeoutOverrideMs,
-                    runId,
-                    lane: runLane,
-                    extraSystemPrompt: params.followupRun.run.extraSystemPrompt,
-                    sourceReplyDeliveryMode: params.followupRun.run.sourceReplyDeliveryMode,
-                    silentReplyPromptMode: params.followupRun.run.silentReplyPromptMode,
-                    allowEmptyAssistantReplyAsSilent:
-                      params.followupRun.run.allowEmptyAssistantReplyAsSilent,
-                    extraSystemPromptStatic: params.followupRun.run.extraSystemPromptStatic,
-                    ownerNumbers: params.followupRun.run.ownerNumbers,
-                    cliSessionId: cliSessionBinding?.sessionId,
-                    cliSessionBinding,
-                    authProfileId: authProfile.authProfileId,
-                    bootstrapPromptWarningSignaturesSeen,
-                    bootstrapPromptWarningSignature:
-                      bootstrapPromptWarningSignaturesSeen[
-                        bootstrapPromptWarningSignaturesSeen.length - 1
-                      ],
-                    images: currentTurnImages.images,
-                    imageOrder: currentTurnImages.imageOrder,
-                    skillsSnapshot: params.followupRun.run.skillsSnapshot,
-                    messageChannel: params.followupRun.originatingChannel ?? undefined,
-                    messageProvider: hookMessageProvider,
-                    currentChannelId:
-                      params.followupRun.originatingTo ??
-                      params.sessionCtx.OriginatingTo ??
-                      params.sessionCtx.To,
-                    senderId: params.followupRun.run.senderId,
-                    chatId: params.followupRun.originatingChatId,
-                    channelContext: params.followupRun.run.channelContext,
-                    currentThreadTs:
-                      cliCurrentThreadId != null ? String(cliCurrentThreadId) : undefined,
-                    currentMessageId: cliCurrentMessageId,
-                    currentInboundAudio: hasInboundAudio(params.sessionCtx),
-                    agentAccountId: params.followupRun.run.agentAccountId,
-                    senderIsOwner: params.followupRun.run.senderIsOwner,
-                    approvalReviewerDeviceId: params.followupRun.run.approvalReviewerDeviceId,
-                    toolsAllow: params.opts?.toolsAllow,
-                    disableTools: params.opts?.disableTools,
-                    abortSignal: runAbortSignal,
-                    onExecutionPhase: signalExecutionPhaseForTyping,
-                    replyOperation: params.replyOperation,
-                  },
-                }),
-              );
-              if (droppedCliSessionReplacement) {
-                await clearDroppedCliSessionBinding({
-                  provider: cliExecutionProvider,
-                  sessionKey: params.sessionKey,
-                  sessionStore: params.activeSessionStore,
-                  storePath: params.storePath,
-                  activeSessionEntry: params.getActiveSessionEntry(),
-                });
-              }
+                          .catch((err) => {
+                            // Keep chain healthy after an error so later tool results still deliver.
+                            logVerbose(`tool result delivery failed: ${String(err)}`);
+                          });
+                        const task = toolResultChain.finally(() => {
+                          params.pendingToolTasks.delete(task);
+                        });
+                        params.pendingToolTasks.add(task);
+                      };
+                    })()
+                  : undefined,
+              });
               bootstrapPromptWarningSignaturesSeen = resolveBootstrapWarningSignaturesSeen(
                 result.meta?.systemPromptReport,
               );
+              lifecycleBackstop.emit("end", result);
+              const resultCompactionCount = Math.max(
+                0,
+                result.meta?.agentMeta?.compactionCount ?? 0,
+              );
+              attemptCompactionCount = Math.max(attemptCompactionCount, resultCompactionCount);
               return result;
-            }
-            const { embeddedContext, senderContext, runBaseParams } =
-              buildEmbeddedRunExecutionParams({
-                run: { ...candidateRun, ...candidateFastMode },
-                replyRoute: params.followupRun,
-                sessionCtx: params.sessionCtx,
-                hasRepliedRef: params.opts?.hasRepliedRef,
-                provider,
-                runId,
-                promptCacheKey: params.opts?.promptCacheKey,
-                allowTransientCooldownProbe: runOptions?.allowTransientCooldownProbe,
-                model,
-              });
-            const agentHarnessPolicy = sessionRuntimeOverride
-              ? ({ runtime: sessionRuntimeOverride, runtimeSource: "model" } as const)
-              : resolveAgentHarnessPolicy({
-                  provider,
-                  modelId: model,
-                  config: runtimeConfig,
-                  agentId: params.followupRun.run.agentId,
-                  sessionKey: params.followupRun.run.runtimePolicySessionKey ?? params.sessionKey,
-                });
-            const embeddedRunProvider = resolveOpenAIRuntimeProvider({
-              provider,
-              harnessRuntime: agentHarnessPolicy.runtime,
-              authProfileProvider: runBaseParams.authProfileId?.split(":", 1)[0],
-              authProfileId: runBaseParams.authProfileId,
-              config: runtimeConfig,
-              workspaceDir: params.followupRun.run.workspaceDir,
-            });
-            const embeddedRunHarnessOverride =
-              sessionRuntimeOverride ??
-              (agentHarnessPolicy.runtime === "openclaw" && embeddedRunProvider !== provider
-                ? "openclaw"
-                : undefined);
-            return (async () => {
-              let attemptCompactionCount = 0;
-              const lifecycleBackstop = createAgentLifecycleTerminalBackstop({
-                runId,
-                sessionKey: params.sessionKey,
-                getLifecycleGeneration: () => lifecycleGeneration,
-                resolveAbortLifecycleFields: () => ({
-                  ...resolveAgentRunAbortLifecycleFields(runAbortSignal),
-                  ...(isReplyOperationRestartAbort(params.replyOperation)
-                    ? {
-                        aborted: true as const,
-                        stopReason: AGENT_RUN_RESTART_ABORT_STOP_REASON,
-                      }
-                    : {}),
-                }),
-              });
-              pendingLifecycleTerminal = { provider, model, backstop: lifecycleBackstop };
-              try {
-                // Profiler-only milestone: it exposes time spent before Codex
-                // dispatch while leaving the regular embedded run path inert.
-                agentTurnTiming.logMilestoneIfSlow({
-                  runId,
-                  sessionId: params.followupRun.run.sessionId,
-                  sessionKey: params.sessionKey,
-                  milestone: "before_embedded_run",
-                });
-                const result = await agentTurnTiming.measure("embedded_run", () =>
-                  runEmbeddedAgent({
-                    ...embeddedContext,
-                    lifecycleGeneration,
-                    allowGatewaySubagentBinding: true,
-                    trigger: params.isHeartbeat ? "heartbeat" : "user",
-                    groupId: resolveGroupSessionKey(params.sessionCtx)?.id,
-                    groupChannel:
-                      normalizeOptionalString(params.sessionCtx.GroupChannel) ??
-                      normalizeOptionalString(params.sessionCtx.GroupSubject),
-                    groupSpace: normalizeOptionalString(params.sessionCtx.GroupSpace),
-                    ...senderContext,
-                    ...runBaseParams,
-                    provider: embeddedRunProvider,
-                    agentHarnessId: embeddedRunHarnessOverride,
-                    agentHarnessRuntimeOverride: embeddedRunHarnessOverride,
-                    fastModeStartedAtMs,
-                    fastModeAutoProgressState,
-                    isFinalFallbackAttempt: runOptions?.isFinalFallbackAttempt,
-                    sandboxSessionKey: params.runtimePolicySessionKey,
-                    prompt: params.commandBody,
-                    transcriptPrompt: params.transcriptCommandBody,
-                    userTurnTranscriptRecorder,
-                    currentInboundEventKind: params.followupRun.currentInboundEventKind,
-                    currentInboundContext: params.followupRun.currentInboundContext,
-                    extraSystemPrompt: params.followupRun.run.extraSystemPrompt,
-                    sourceReplyDeliveryMode: params.followupRun.run.sourceReplyDeliveryMode,
-                    forceMessageTool:
-                      params.followupRun.run.sourceReplyDeliveryMode === "message_tool_only",
-                    silentReplyPromptMode: params.followupRun.run.silentReplyPromptMode,
-                    suppressNextUserMessagePersistence: suppressQueuedUserPersistenceForCandidate,
-                    onUserMessagePersisted: notifyUserMessagePersisted,
-                    suppressTranscriptOnlyAssistantPersistence:
-                      params.followupRun.run.suppressTranscriptOnlyAssistantPersistence,
-                    suppressAssistantErrorPersistence:
-                      suppressAssistantErrorPersistenceForCandidate,
-                    onAssistantErrorMessagePersisted: () => {
-                      assistantErrorPersistedAcrossFallback = true;
-                    },
-                    toolResultFormat: (() => {
-                      const channel = resolveMessageChannel(
-                        params.sessionCtx.Surface,
-                        params.sessionCtx.Provider,
-                      );
-                      if (!channel) {
-                        return "markdown";
-                      }
-                      return isMarkdownCapableMessageChannel(channel) ? "markdown" : "plain";
-                    })(),
-                    toolProgressDetail: params.toolProgressDetail,
-                    suppressToolErrorWarnings:
-                      params.opts?.shouldSuppressToolErrorWarnings ??
-                      params.opts?.suppressToolErrorWarnings,
-                    toolsAllow: params.opts?.toolsAllow,
-                    disableTools: params.opts?.disableTools,
-                    enableHeartbeatTool: params.opts?.enableHeartbeatTool,
-                    forceHeartbeatTool: params.opts?.forceHeartbeatTool,
-                    bootstrapContextMode: params.opts?.bootstrapContextMode,
-                    bootstrapContextRunKind: params.opts?.isHeartbeat ? "heartbeat" : "default",
-                    images: currentTurnImages.images,
-                    imageOrder: currentTurnImages.imageOrder,
-                    abortSignal: runAbortSignal,
-                    replyOperation: params.replyOperation,
-                    deferTerminalLifecycle: true,
-                    onExecutionStarted: (info) => {
-                      if (info?.lifecycleGeneration) {
-                        lifecycleGeneration = info.lifecycleGeneration;
-                      }
-                    },
-                    onExecutionPhase: signalExecutionPhaseForTyping,
-                    blockReplyBreak: params.resolvedBlockStreamingBreak,
-                    blockReplyChunking: params.blockReplyChunking,
-                    onPartialReply: async (payload) => {
-                      const textForTyping = await handlePartialForTyping(payload);
-                      if (!params.opts?.onPartialReply || textForTyping === undefined) {
-                        return;
-                      }
-                      await params.opts.onPartialReply({
-                        text: textForTyping,
-                        mediaUrls: payload.mediaUrls,
-                      });
-                    },
-                    onAssistantMessageStart: async () => {
-                      await params.typingSignals.signalMessageStart();
-                      await params.opts?.onAssistantMessageStart?.();
-                    },
-                    onReasoningStream:
-                      params.typingSignals.shouldStartOnReasoning || params.opts?.onReasoningStream
-                        ? async (payload) => {
-                            if (params.followupRun.run.silentExpected) {
-                              return;
-                            }
-                            await params.typingSignals.signalReasoningDelta();
-                            await params.opts?.onReasoningStream?.({
-                              text: payload.text,
-                              mediaUrls: payload.mediaUrls,
-                              isReasoningSnapshot: payload.isReasoningSnapshot,
-                            });
-                          }
-                        : undefined,
-                    onReasoningEnd: params.opts?.onReasoningEnd,
-                    onAgentEvent: async (evt) => {
-                      lifecycleBackstop.note(evt);
-                      // Signal run start only after the embedded agent emits real activity.
-                      const hasLifecyclePhase =
-                        evt.stream === "lifecycle" && typeof evt.data.phase === "string";
-                      if (evt.stream !== "lifecycle" || hasLifecyclePhase) {
-                        notifyAgentRunStart();
-                      }
-                      // Trigger typing when tools start executing.
-                      // Must await to ensure typing indicator starts before tool summaries are emitted.
-                      if (evt.stream === "tool") {
-                        const phase = readStringValue(evt.data.phase) ?? "";
-                        const name = readStringValue(evt.data.name);
-                        const toolCallId = readStringValue(evt.data.toolCallId) ?? "";
-                        const args =
-                          evt.data.args && typeof evt.data.args === "object"
-                            ? (evt.data.args as Record<string, unknown>)
-                            : undefined;
-                        if (
-                          sourceRepliesAreToolOnly &&
-                          toolCallId &&
-                          name &&
-                          (phase === "start" || phase === "update") &&
-                          args &&
-                          isMessagingToolSendAction(name, args)
-                        ) {
-                          messageToolOnlyDeliveryToolCallIds.add(toolCallId);
-                        }
-                        if (shouldSuppressProgressAfterMessageToolDelivery()) {
-                          return;
-                        }
-                        if (phase === "start" || phase === "update") {
-                          const toolStartProgressPromise = params.opts?.onToolStart?.({
-                            itemId: readStringValue(evt.data.itemId),
-                            toolCallId: readStringValue(evt.data.toolCallId),
-                            name,
-                            phase,
-                            args,
-                            detailMode: params.toolProgressDetail,
-                          });
-                          await Promise.all([
-                            params.typingSignals.signalToolStart(),
-                            toolStartProgressPromise,
-                          ]);
-                        }
-                        const commandOutput = buildCommandOutputFromToolResultEvent(evt);
-                        if (commandOutput) {
-                          await params.opts?.onCommandOutput?.(commandOutput);
-                        }
-                      }
-                      const suppressItemChannelProgress =
-                        evt.stream === "item" &&
-                        evt.data.suppressChannelProgress === true &&
-                        Boolean(params.opts?.onToolStart);
-                      const itemPhase =
-                        evt.stream === "item" ? readStringValue(evt.data.phase) : "";
-                      const itemName = evt.stream === "item" ? readStringValue(evt.data.name) : "";
-                      const itemStatus =
-                        evt.stream === "item" ? readStringValue(evt.data.status) : "";
-                      const itemToolCallId =
-                        evt.stream === "item" ? (readStringValue(evt.data.toolCallId) ?? "") : "";
-                      const completedMessageToolDelivery =
-                        sourceRepliesAreToolOnly &&
-                        itemPhase === "end" &&
-                        itemStatus === "completed" &&
-                        itemToolCallId.length > 0 &&
-                        messageToolOnlyDeliveryToolCallIds.has(itemToolCallId);
-                      const suppressProgressAfterMessageToolDelivery =
-                        shouldSuppressProgressAfterMessageToolDelivery();
-                      if (completedMessageToolDelivery) {
-                        messageToolOnlyDeliveryToolCallIds.delete(itemToolCallId);
-                        messageToolOnlyDeliveryCompleted = true;
-                      }
-                      if (
-                        evt.stream === "item" &&
-                        !suppressItemChannelProgress &&
-                        (!suppressProgressAfterMessageToolDelivery || completedMessageToolDelivery)
-                      ) {
-                        await params.opts?.onItemEvent?.({
-                          itemId: readStringValue(evt.data.itemId),
-                          toolCallId: readStringValue(evt.data.toolCallId),
-                          kind: readStringValue(evt.data.kind),
-                          title: readStringValue(evt.data.title),
-                          name: itemName,
-                          phase: itemPhase,
-                          status: itemStatus,
-                          summary: readStringValue(evt.data.summary),
-                          progressText: readStringValue(evt.data.progressText),
-                          meta: readStringValue(evt.data.meta),
-                          approvalId: readStringValue(evt.data.approvalId),
-                          approvalSlug: readStringValue(evt.data.approvalSlug),
-                        });
-                      }
-                      if (
-                        evt.stream === "plan" &&
-                        !shouldSuppressProgressAfterMessageToolDelivery()
-                      ) {
-                        await params.opts?.onPlanUpdate?.({
-                          phase: readStringValue(evt.data.phase),
-                          title: readStringValue(evt.data.title),
-                          explanation: readStringValue(evt.data.explanation),
-                          steps: Array.isArray(evt.data.steps)
-                            ? evt.data.steps.filter(
-                                (step): step is string => typeof step === "string",
-                              )
-                            : undefined,
-                          source: readStringValue(evt.data.source),
-                        });
-                      }
-                      if (
-                        evt.stream === "approval" &&
-                        !shouldSuppressProgressAfterMessageToolDelivery()
-                      ) {
-                        await params.opts?.onApprovalEvent?.({
-                          phase: readStringValue(evt.data.phase),
-                          kind: readStringValue(evt.data.kind),
-                          status: readStringValue(evt.data.status),
-                          title: readStringValue(evt.data.title),
-                          itemId: readStringValue(evt.data.itemId),
-                          toolCallId: readStringValue(evt.data.toolCallId),
-                          approvalId: readStringValue(evt.data.approvalId),
-                          approvalSlug: readStringValue(evt.data.approvalSlug),
-                          command: readStringValue(evt.data.command),
-                          host: readStringValue(evt.data.host),
-                          reason: readStringValue(evt.data.reason),
-                          scope: readApprovalScopeValue(evt.data.scope),
-                          message: readStringValue(evt.data.message),
-                        });
-                      }
-                      if (
-                        evt.stream === "command_output" &&
-                        !shouldSuppressProgressAfterMessageToolDelivery()
-                      ) {
-                        await params.opts?.onCommandOutput?.({
-                          itemId: readStringValue(evt.data.itemId),
-                          phase: readStringValue(evt.data.phase),
-                          title: readStringValue(evt.data.title),
-                          toolCallId: readStringValue(evt.data.toolCallId),
-                          name: readStringValue(evt.data.name),
-                          output: readStringValue(evt.data.output),
-                          status: readStringValue(evt.data.status),
-                          exitCode:
-                            typeof evt.data.exitCode === "number" || evt.data.exitCode === null
-                              ? evt.data.exitCode
-                              : undefined,
-                          durationMs:
-                            typeof evt.data.durationMs === "number"
-                              ? evt.data.durationMs
-                              : undefined,
-                          cwd: readStringValue(evt.data.cwd),
-                        });
-                      }
-                      if (
-                        evt.stream === "patch" &&
-                        !shouldSuppressProgressAfterMessageToolDelivery()
-                      ) {
-                        await params.opts?.onPatchSummary?.({
-                          itemId: readStringValue(evt.data.itemId),
-                          phase: readStringValue(evt.data.phase),
-                          title: readStringValue(evt.data.title),
-                          toolCallId: readStringValue(evt.data.toolCallId),
-                          name: readStringValue(evt.data.name),
-                          added: Array.isArray(evt.data.added)
-                            ? evt.data.added.filter(
-                                (entry): entry is string => typeof entry === "string",
-                              )
-                            : undefined,
-                          modified: Array.isArray(evt.data.modified)
-                            ? evt.data.modified.filter(
-                                (entry): entry is string => typeof entry === "string",
-                              )
-                            : undefined,
-                          deleted: Array.isArray(evt.data.deleted)
-                            ? evt.data.deleted.filter(
-                                (entry): entry is string => typeof entry === "string",
-                              )
-                            : undefined,
-                          summary: readStringValue(evt.data.summary),
-                        });
-                      }
-                      if (evt.stream === "compaction") {
-                        const phase = readStringValue(evt.data.phase) ?? "";
-                        const backend = readStringValue(evt.data.backend);
-                        const hookMessages = readCompactionHookMessages(evt.data.messages);
-                        const sendCompactionUserNotices = async (
-                          noticePhase: "start" | "end" | "incomplete",
-                        ) => {
-                          if (hookMessages.length > 0) {
-                            await sendCompactionHookMessages(hookMessages);
-                          }
-                          if (notifyUserAboutCompaction) {
-                            await sendCompactionNotice(noticePhase);
-                          }
-                        };
-                        if (phase === "start") {
-                          if (params.opts?.onCompactionStart) {
-                            await params.opts.onCompactionStart();
-                          }
-                          await sendCompactionUserNotices("start");
-                        }
-                        if (phase === "end") {
-                          const completed = evt.data?.completed === true;
-                          if (completed) {
-                            attemptCompactionCount += 1;
-                            if (backend === CODEX_APP_SERVER_COMPACTION_BACKEND) {
-                              const modelRef = formatCompactionModelRef(provider, model);
-                              const consoleMessage =
-                                `codex app-server auto-compaction succeeded for ${modelRef}; ` +
-                                "refreshed session context";
-                              agentCompactionLog.info(
-                                "codex app-server auto-compaction succeeded",
-                                {
-                                  event: "codex_app_server_compaction_succeeded",
-                                  backend,
-                                  provider,
-                                  model,
-                                  sessionKey: params.sessionKey,
-                                  sessionId: effectiveRun.sessionId,
-                                  threadId: readStringValue(evt.data.threadId),
-                                  turnId: readStringValue(evt.data.turnId),
-                                  itemId: readStringValue(evt.data.itemId),
-                                  compactionCount: attemptCompactionCount,
-                                  consoleMessage,
-                                },
-                              );
-                            }
-                            if (params.opts?.onCompactionEnd) {
-                              await params.opts.onCompactionEnd();
-                            }
-                            await sendCompactionUserNotices("end");
-                          } else {
-                            await sendCompactionUserNotices("incomplete");
-                          }
-                        }
-                      }
-                    },
-                    // Always pass onBlockReply so flushBlockReplyBuffer works before tool execution,
-                    // even when regular block streaming is disabled. The handler sends directly
-                    // via opts.onBlockReply when the pipeline isn't available.
-                    onBlockReply: blockReplyHandler,
-                    onBlockReplyFlush:
-                      params.blockStreamingEnabled && blockReplyPipeline
-                        ? async () => {
-                            await blockReplyPipeline.flush({ force: true });
-                          }
-                        : undefined,
-                    shouldEmitToolResult: params.shouldEmitToolResult,
-                    shouldEmitToolOutput: params.shouldEmitToolOutput,
-                    bootstrapPromptWarningSignaturesSeen,
-                    bootstrapPromptWarningSignature:
-                      bootstrapPromptWarningSignaturesSeen[
-                        bootstrapPromptWarningSignaturesSeen.length - 1
-                      ],
-                    onToolResult: onToolResult
-                      ? (() => {
-                          // Serialize tool result delivery to preserve message ordering.
-                          // Without this, concurrent tool callbacks race through typing signals
-                          // and message sends, causing out-of-order delivery to the user.
-                          // See: https://github.com/openclaw/openclaw/issues/11044
-                          let toolResultChain: Promise<void> = Promise.resolve();
-                          return (payload: ReplyPayload) => {
-                            toolResultChain = toolResultChain
-                              .then(async () => {
-                                const { text, skip } = normalizeStreamingText(payload);
-                                if (skip) {
-                                  return;
-                                }
-                                if (text !== undefined) {
-                                  await params.typingSignals.signalTextDelta(text);
-                                }
-                                await onToolResult({
-                                  ...payload,
-                                  text,
-                                });
-                              })
-                              .catch((err: unknown) => {
-                                // Keep chain healthy after an error so later tool results still deliver.
-                                logVerbose(`tool result delivery failed: ${String(err)}`);
-                              });
-                            const task = toolResultChain.finally(() => {
-                              params.pendingToolTasks.delete(task);
-                            });
-                            params.pendingToolTasks.add(task);
-                          };
-                        })()
-                      : undefined,
-                  }),
-                );
-                bootstrapPromptWarningSignaturesSeen = resolveBootstrapWarningSignaturesSeen(
-                  result.meta?.systemPromptReport,
-                );
-                const resultCompactionCount = Math.max(
-                  0,
-                  result.meta?.agentMeta?.compactionCount ?? 0,
-                );
-                attemptCompactionCount = Math.max(attemptCompactionCount, resultCompactionCount);
-                return result;
-              } catch (err) {
-                if (rollbackFallbackCandidateSelection) {
-                  try {
-                    await rollbackFallbackCandidateSelection();
-                    clearPendingFallbackRollback(rollbackFallbackCandidateSelection);
-                  } catch (rollbackError) {
-                    logVerbose(
-                      `failed to roll back fallback candidate selection (non-fatal): ${String(rollbackError)}`,
-                    );
-                  }
+            } catch (err) {
+              if (rollbackFallbackCandidateSelection) {
+                try {
+                  await rollbackFallbackCandidateSelection();
+                  clearPendingFallbackRollback(rollbackFallbackCandidateSelection);
+                } catch (rollbackError) {
+                  logVerbose(
+                    `failed to roll back fallback candidate selection (non-fatal): ${String(rollbackError)}`,
+                  );
                 }
-                throw err;
-              } finally {
-                autoCompactionCount += attemptCompactionCount;
               }
-            })();
-          },
-        }),
-      );
-      agentTurnTiming.logIfSlow({
-        runId,
-        sessionId: params.followupRun.run.sessionId,
-        sessionKey: params.sessionKey,
-        outcome: "completed",
+              lifecycleBackstop.emit("error", err);
+              throw err;
+            } finally {
+              autoCompactionCount += attemptCompactionCount;
+            }
+          })();
+        },
       });
       runResult = fallbackResult.result;
       fallbackProvider = fallbackResult.provider;
       fallbackModel = fallbackResult.model;
-      fallbackExhausted = fallbackResult.outcome === "exhausted";
-      const settledLifecycleTerminal =
-        pendingLifecycleTerminal?.provider === fallbackProvider &&
-        pendingLifecycleTerminal.model === fallbackModel
-          ? pendingLifecycleTerminal.backstop
-          : undefined;
-      pendingLifecycleTerminal = undefined;
-      const restartAbortReason = runAbortSignal?.reason;
-      if (isReplyOperationRestartAbort(params.replyOperation)) {
-        settledLifecycleTerminal?.emit("end", runResult);
-        throw isAgentRunRestartAbortReason(restartAbortReason)
-          ? restartAbortReason
-          : createAgentRunRestartAbortError();
-      }
       fallbackAttempts = Array.isArray(fallbackResult.attempts)
         ? fallbackResult.attempts.map((attempt) => ({
             provider: attempt.provider,
@@ -2975,45 +2317,16 @@ export async function runAgentTurnWithFallback(params: {
             code: attempt.code || undefined,
           }))
         : [];
-      if (!fallbackExhausted) {
-        await clearRecoveredAutoFallbackPrimaryProbe({
-          provider: fallbackProvider,
-          model: fallbackModel,
-        });
-      }
+      await clearRecoveredAutoFallbackPrimaryProbe({
+        provider: fallbackProvider,
+        model: fallbackModel,
+      });
 
       // Some embedded runs surface context overflow as an error payload instead of throwing.
       // Preserve the active session mapping and surface explicit guidance instead
       // of silently rotating the session key to a new session id.
       const embeddedError = runResult.meta?.error;
-      const deferredLifecycleError = settledLifecycleTerminal?.getDeferredError();
-      const userFacingErrorPayload = runResult.payloads?.find(
-        (payload) => payload.isError === true && typeof payload.text === "string",
-      )?.text;
-      const terminalErrorMessage =
-        deferredLifecycleError ??
-        userFacingErrorPayload ??
-        (embeddedError ? "Agent run failed" : undefined);
-      const emitSettledLifecycleError = (error: Error, extraData?: Record<string, unknown>) => {
-        if (settledLifecycleTerminal) {
-          settledLifecycleTerminal.emit("error", error, extraData);
-          return;
-        }
-        emitAgentEvent({
-          runId,
-          lifecycleGeneration,
-          ...(params.sessionKey ? { sessionKey: params.sessionKey } : {}),
-          stream: "lifecycle",
-          data: {
-            phase: "error",
-            error: error.message,
-            endedAt: Date.now(),
-            ...extraData,
-          },
-        });
-      };
       if (embeddedError && isContextOverflowError(embeddedError.message)) {
-        emitSettledLifecycleError(new Error(terminalErrorMessage ?? "Agent run failed"));
         defaultRuntime.error(
           `Auto-compaction failed (${embeddedError.message}). Preserving existing session mapping for ${params.sessionKey ?? params.followupRun.run.sessionId}.`,
         );
@@ -3027,15 +2340,12 @@ export async function runAgentTurnWithFallback(params: {
               agentId: params.followupRun.run.agentId,
               primaryProvider: params.followupRun.run.provider,
               primaryModel: params.followupRun.run.model,
-              runtimeProvider: attemptedRuntimeProvider,
-              runtimeModel: attemptedRuntimeModel,
               activeSessionEntry: params.getActiveSessionEntry(),
             }),
           }),
         };
       }
       if (embeddedError?.kind === "role_ordering") {
-        emitSettledLifecycleError(new Error(terminalErrorMessage ?? "Agent run failed"));
         const providerRequestError = classifyProviderRequestError(embeddedError);
         params.replyOperation?.fail("run_failed", embeddedError);
         const embeddedErrorText = formatErrorMessage(embeddedError).replace(/\.\s*$/, "");
@@ -3050,25 +2360,6 @@ export async function runAgentTurnWithFallback(params: {
         };
       }
 
-      const terminalMetadata = resolveAgentLifecycleTerminalMetadata(runResult.meta);
-      if (fallbackExhausted) {
-        const exhaustionError = new Error(
-          terminalErrorMessage ?? "All model fallback candidates failed",
-        );
-        emitSettledLifecycleError(exhaustionError, {
-          ...terminalMetadata,
-          fallbackExhaustedFailure: true,
-        });
-        params.replyOperation?.retainFailureUntilComplete();
-        params.replyOperation?.fail("run_failed", exhaustionError);
-      } else if (deferredLifecycleError || embeddedError) {
-        const terminalError = new Error(terminalErrorMessage ?? "Agent run failed");
-        emitSettledLifecycleError(terminalError, terminalMetadata);
-        params.replyOperation?.retainFailureUntilComplete();
-        params.replyOperation?.fail("run_failed", terminalError);
-      } else {
-        settledLifecycleTerminal?.emit("end", runResult);
-      }
       break;
     } catch (err) {
       if (err instanceof LiveSessionModelSwitchError) {
@@ -3083,7 +2374,6 @@ export async function runAgentTurnWithFallback(params: {
             `Live model switch failed after ${MAX_LIVE_SWITCH_RETRIES} retries ` +
               `(${sanitizeForLog(err.provider)}/${sanitizeForLog(err.model)}). The requested model may be unavailable.`,
           );
-          takePendingLifecycleTerminal()?.emit("error", err);
           const switchErrorText = shouldSurfaceToControlUi
             ? "⚠️ Agent failed before reply: model switch could not be completed. " +
               "The requested model may be temporarily unavailable.\n" +
@@ -3112,56 +2402,34 @@ export async function runAgentTurnWithFallback(params: {
         if (effectiveRun !== runnableRun && effectiveRun !== params.followupRun.run) {
           applyLiveModelSwitchToRun(effectiveRun, err);
         }
-        pendingLifecycleTerminal = undefined;
         fallbackProvider = err.provider;
         fallbackModel = err.model;
         continue;
       }
       const message = formatErrorMessage(err);
-      agentTurnTiming.logIfSlow({
-        runId,
-        sessionId: params.followupRun.run.sessionId,
-        sessionKey: params.sessionKey,
-        outcome: "error",
-        error: message,
-      });
       const isBilling = isFallbackSummaryError(err)
         ? hasBillingAttemptSummary(err)
-        : isFailoverError(err)
-          ? err.reason === "billing"
-          : isBillingErrorMessage(message);
+        : isBillingErrorMessage(message);
       const isContextOverflow = !isBilling && isLikelyContextOverflowError(message);
       const isCompactionFailure = !isBilling && isCompactionFailureError(message);
+      const isSessionCorruption = /function call turn comes immediately after/i.test(message);
+      const isRoleOrderingError = /incorrect role information|roles must alternate/i.test(message);
       const providerRequestError =
-        !isBilling && !shouldSurfaceToControlUi ? classifyProviderRequestError(err) : undefined;
+        !isBilling && !isRoleOrderingError && !shouldSurfaceToControlUi
+          ? classifyProviderRequestError(err)
+          : undefined;
       const isTransientHttp = isTransientHttpError(message);
 
-      // Drain/restart aborts stay silent and defer to post-restart
-      // main-session recovery, which resumes the interrupted turn (or emits its
-      // own genuine non-resumable notice). A generic "try again" here is a
-      // false terminal that invites a duplicate manual retry. Restart abort is
-      // treated exactly like user abort for visible output; the fail()
-      // bookkeeping for drain/lane-cleared is still recorded.
       if (isReplyOperationRestartAbort(params.replyOperation)) {
-        takePendingLifecycleTerminal()?.emit("end", err);
-        if (params.isRestartRecoveryArmed?.() !== true) {
-          return {
-            kind: "final",
-            payload: markAgentRunFailureReplyPayload({
-              text: buildRestartLifecycleReplyText(),
-            }),
-          };
-        }
         return {
           kind: "final",
-          payload: {
-            text: SILENT_REPLY_TOKEN,
-          },
+          payload: markAgentRunFailureReplyPayload({
+            text: buildRestartLifecycleReplyText(),
+          }),
         };
       }
 
       if (isReplyOperationUserAbort(params.replyOperation)) {
-        takePendingLifecycleTerminal()?.emit("error", err);
         return {
           kind: "final",
           payload: {
@@ -3172,7 +2440,6 @@ export async function runAgentTurnWithFallback(params: {
 
       const restartLifecycleError = resolveRestartLifecycleError(err);
       if (restartLifecycleError instanceof GatewayDrainingError) {
-        takePendingLifecycleTerminal()?.emit("error", restartLifecycleError);
         params.replyOperation?.fail("gateway_draining", restartLifecycleError);
         return {
           kind: "final",
@@ -3183,7 +2450,6 @@ export async function runAgentTurnWithFallback(params: {
       }
 
       if (restartLifecycleError instanceof CommandLaneClearedError) {
-        takePendingLifecycleTerminal()?.emit("error", restartLifecycleError);
         params.replyOperation?.fail("command_lane_cleared", restartLifecycleError);
         return {
           kind: "final",
@@ -3194,7 +2460,6 @@ export async function runAgentTurnWithFallback(params: {
       }
 
       if (isCompactionFailure) {
-        takePendingLifecycleTerminal()?.emit("error", err);
         defaultRuntime.error(
           `Auto-compaction failed (${message}). Preserving existing session mapping for ${params.sessionKey ?? params.followupRun.run.sessionId}.`,
         );
@@ -3209,15 +2474,48 @@ export async function runAgentTurnWithFallback(params: {
               agentId: params.followupRun.run.agentId,
               primaryProvider: params.followupRun.run.provider,
               primaryModel: params.followupRun.run.model,
-              runtimeProvider: attemptedRuntimeProvider,
-              runtimeModel: attemptedRuntimeModel,
               activeSessionEntry: params.getActiveSessionEntry(),
             }),
           }),
         };
       }
+      if (isRoleOrderingError) {
+        const didReset = await params.resetSessionAfterRoleOrderingConflict(message);
+        if (didReset) {
+          params.replyOperation?.fail("run_failed", err);
+          return {
+            kind: "final",
+            payload: markAgentRunFailureReplyPayload({
+              text: "⚠️ Message ordering conflict. I've reset the conversation - please try again.",
+            }),
+          };
+        }
+      }
+
+      // Auto-recover from Gemini session corruption by resetting the session
+      if (
+        isSessionCorruption &&
+        params.sessionKey &&
+        params.activeSessionStore &&
+        params.storePath
+      ) {
+        const sessionKey = params.sessionKey;
+        const corruptedSessionId = params.getActiveSessionEntry()?.sessionId;
+        defaultRuntime.error(
+          `Detected Gemini session corruption for ${sessionKey}; resetting session ${corruptedSessionId ?? "(unknown)"}`,
+        );
+        const didReset = await params.resetSessionAfterRoleOrderingConflict(message);
+        if (didReset) {
+          params.replyOperation?.fail("run_failed", err);
+          return {
+            kind: "final",
+            payload: markAgentRunFailureReplyPayload({
+              text: "⚠️ Session history was corrupted. I've reset the conversation - please try again!",
+            }),
+          };
+        }
+      }
       if (providerRequestError) {
-        takePendingLifecycleTerminal()?.emit("error", err);
         params.replyOperation?.fail("run_failed", err);
         return {
           kind: "final",
@@ -3227,8 +2525,8 @@ export async function runAgentTurnWithFallback(params: {
         };
       }
 
-      if (isTransientHttp && consumeTransientHttpRetry()) {
-        pendingLifecycleTerminal = undefined;
+      if (isTransientHttp && !didRetryTransientHttpError) {
+        didRetryTransientHttpError = true;
         // Retry the full runWithModelFallback() cycle — transient errors
         // (502/521/etc.) typically affect the whole provider, so falling
         // back to an alternate model first would not help. Instead we wait
@@ -3251,6 +2549,20 @@ export async function runAgentTurnWithFallback(params: {
       const isPureTransientSummary = isFallbackSummary
         ? isPureTransientRateLimitSummary(err)
         : false;
+      const authFailureSummaryText = buildFallbackSummaryAuthFailureMessage({
+        err,
+        provider: params.followupRun.run.provider,
+        model: params.followupRun.run.model,
+        authProfileId: params.followupRun.run.authProfileId,
+      });
+      const directAuthFailureText =
+        authFailureSummaryText ??
+        buildDirectAuthFailureMessage({
+          message,
+          provider: params.followupRun.run.provider,
+          model: params.followupRun.run.model,
+          authProfileId: params.followupRun.run.authProfileId,
+        });
       const isRateLimit = isFallbackSummary
         ? isPureTransientSummary
         : isRateLimitErrorMessage(message);
@@ -3258,101 +2570,47 @@ export async function runAgentTurnWithFallback(params: {
         !isFallbackSummary || isPureTransientSummary
           ? formatRateLimitOrOverloadedErrorCopy(message)
           : undefined;
-      const authFailureAttempts = isFallbackSummaryError(err)
-        ? err.attempts.map((attempt) => ({
-            provider: attempt.provider,
-            model: attempt.model,
-            error: attempt.error,
-            reason: attempt.reason || undefined,
-            status: typeof attempt.status === "number" ? attempt.status : undefined,
-            code: attempt.code || undefined,
-          }))
-        : fallbackAttempts;
-      const selectedAuthFailureAttempt = authFailureAttempts[0];
-      const authFailureSummaryText = selectedAuthFailureAttempt
-        ? buildTerminalAuthFailureNotice({
-            selectedProvider: selectedAuthFailureAttempt.provider,
-            selectedModel: selectedAuthFailureAttempt.model,
-            attempts: authFailureAttempts,
-            authProfileId: params.followupRun.run.authProfileId,
-          })
-        : null;
       const safeMessage = isTransientHttp
         ? sanitizeUserFacingText(message, { errorContext: true })
         : message;
       const trimmedMessage = safeMessage.replace(/\.\s*$/, "");
       const externalRunFailureReply =
         !isBilling &&
+        !directAuthFailureText &&
         !(isRateLimit && !isOverloadedErrorMessage(message)) &&
         !rateLimitOrOverloadedCopy &&
         !isContextOverflow &&
         !shouldSurfaceToControlUi
-          ? buildExternalRunFailureReply(
-              { message, error: err },
-              {
-                includeDetails: isVerboseFailureDetailEnabled(params.resolvedVerboseLevel),
-                isHeartbeat: params.isHeartbeat,
-              },
-            )
+          ? buildExternalRunFailureReply(message, {
+              includeDetails: isVerboseFailureDetailEnabled(params.resolvedVerboseLevel),
+              isHeartbeat: params.isHeartbeat,
+            })
           : undefined;
       const genericFallbackText = params.isHeartbeat
         ? HEARTBEAT_EXTERNAL_RUN_FAILURE_TEXT
         : GENERIC_EXTERNAL_RUN_FAILURE_TEXT;
       const fallbackText = isBilling
-        ? resolveBillingFailureReplyText(err)
-        : authFailureSummaryText
-          ? authFailureSummaryText
-        : isRateLimit && !isOverloadedErrorMessage(message)
-          ? buildRateLimitCooldownMessage(err)
-          : rateLimitOrOverloadedCopy
-            ? rateLimitOrOverloadedCopy
-            : isContextOverflow
-              ? "⚠️ Context overflow — prompt too large for this model. Try a shorter message or a larger-context model."
-              : shouldSurfaceToControlUi
-                ? `⚠️ Agent failed before reply: ${trimmedMessage}.\nLogs: openclaw logs --follow`
-                : (externalRunFailureReply?.text ?? genericFallbackText);
+        ? BILLING_ERROR_USER_MESSAGE
+        : directAuthFailureText
+          ? directAuthFailureText
+          : isRateLimit && !isOverloadedErrorMessage(message)
+            ? buildRateLimitCooldownMessage(err)
+            : rateLimitOrOverloadedCopy
+              ? rateLimitOrOverloadedCopy
+              : isContextOverflow
+                ? "⚠️ Context overflow — prompt too large for this model. Try a shorter message or a larger-context model."
+                : isRoleOrderingError
+                  ? "⚠️ Message ordering conflict - please try again. If this persists, use /new to start a fresh session."
+                  : shouldSurfaceToControlUi
+                    ? `⚠️ Agent failed before reply: ${trimmedMessage}.\nLogs: openclaw logs --follow`
+                    : (externalRunFailureReply?.text ?? genericFallbackText);
       const userVisibleFallbackText = resolveExternalRunFailureTextForConversation({
         text: fallbackText,
         sessionCtx: params.sessionCtx,
         isGenericRunnerFailure: externalRunFailureReply?.isGenericRunnerFailure ?? false,
         cfg: params.followupRun.run.config,
       });
-      const abortedSignal =
-        params.replyOperation?.abortSignal.aborted === true
-          ? params.replyOperation.abortSignal
-          : params.opts?.abortSignal?.aborted === true
-            ? params.opts.abortSignal
-            : undefined;
-      const abortLifecycleFields = {
-        ...resolveAgentRunAbortLifecycleFields(abortedSignal),
-        ...(isReplyOperationRestartAbort(params.replyOperation)
-          ? {
-              aborted: true as const,
-              stopReason: AGENT_RUN_RESTART_ABORT_STOP_REASON,
-            }
-          : {}),
-      };
 
-      const failedLifecycleTerminal = takePendingLifecycleTerminal();
-      if (failedLifecycleTerminal) {
-        failedLifecycleTerminal.emit("error", err, {
-          fallbackExhaustedFailure: true,
-        });
-      } else {
-        emitAgentEvent({
-          runId,
-          lifecycleGeneration,
-          ...(params.sessionKey ? { sessionKey: params.sessionKey } : {}),
-          stream: "lifecycle",
-          data: {
-            phase: "error",
-            error: message,
-            endedAt: Date.now(),
-            ...abortLifecycleFields,
-            fallbackExhaustedFailure: true,
-          },
-        });
-      }
       params.replyOperation?.fail("run_failed", err);
       return {
         kind: "final",
@@ -3414,12 +2672,7 @@ export async function runAgentTurnWithFallback(params: {
       if (formattedErrorCandidate) {
         runResult.payloads = [
           markAgentRunFailureReplyPayload({
-            text: resolveExternalRunFailureTextForConversation({
-              text: formattedErrorCandidate,
-              sessionCtx: params.sessionCtx,
-              isGenericRunnerFailure: false,
-              cfg: params.followupRun.run.config,
-            }),
+            text: formattedErrorCandidate,
             isError: true,
           }),
         ];
@@ -3433,13 +2686,9 @@ export async function runAgentTurnWithFallback(params: {
     runResult,
     fallbackProvider,
     fallbackModel,
-    ...(fallbackExhausted ? { fallbackExhausted: true as const } : {}),
     fallbackAttempts,
     didLogHeartbeatStrip,
     autoCompactionCount,
     directlySentBlockKeys: directlySentBlockKeys.size > 0 ? directlySentBlockKeys : undefined,
-    directlySentBlockPayloads: directlySentBlockPayloads.filter(
-      (payload): payload is ReplyPayload => payload !== undefined,
-    ),
   };
 }

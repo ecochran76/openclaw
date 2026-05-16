@@ -89,6 +89,13 @@ async function readPersistedStore(agentDir: string): Promise<AuthProfileStore> {
   return readAuthProfileStoreForTest(agentDir);
 }
 
+async function readPersistedState(agentDir: string): Promise<Pick<AuthProfileStore, "usageStats">> {
+  return JSON.parse(await fs.readFile(path.join(agentDir, "auth-state.json"), "utf8")) as Pick<
+    AuthProfileStore,
+    "usageStats"
+  >;
+}
+
 function mockRotatedOpenAICodexRefresh() {
   refreshProviderOAuthCredentialWithPluginMock.mockResolvedValueOnce({
     type: "oauth",
@@ -922,6 +929,34 @@ describe("resolveApiKeyForProfile openai refresh fallback", () => {
       access: "retried-access-token",
       refresh: "retried-refresh-token",
     });
+  });
+
+  it("marks refresh_token_reused as auth_permanent when no fresher token is recoverable", async () => {
+    const profileId = "openai-codex:default";
+    saveAuthProfileStore(
+      createExpiredOauthStore({
+        profileId,
+        provider: "openai-codex",
+      }),
+      agentDir,
+    );
+    getOAuthApiKeyMock.mockImplementationOnce(async () => {
+      throw new Error(
+        '401 {"error":{"message":"Your refresh token has already been used to generate a new access token.","code":"refresh_token_reused"}}',
+      );
+    });
+
+    await expect(
+      resolveApiKeyForProfile({
+        store: ensureAuthProfileStore(agentDir),
+        profileId,
+        agentDir,
+      }),
+    ).rejects.toThrow(/OAuth token refresh failed for openai-codex/);
+
+    const state = await readPersistedState(agentDir);
+    expect(state.usageStats?.[profileId]?.disabledReason).toBe("auth_permanent");
+    expect(state.usageStats?.[profileId]?.disabledUntil).toBeGreaterThan(Date.now());
   });
 
   it("keeps throwing for non-codex providers on the same refresh error", async () => {

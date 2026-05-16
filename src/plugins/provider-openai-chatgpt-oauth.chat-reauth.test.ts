@@ -1,5 +1,6 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
 import {
+  OPENAI_CODEX_SCOPE,
   completeOpenAICodexManualAuthorization,
   createOpenAICodexManualAuthorization,
   looksLikeOpenAICodexCallbackInput,
@@ -39,6 +40,7 @@ describe("provider-openai-chatgpt chat reauth", () => {
     expect(auth.authorizationUrl).toContain(
       "redirect_uri=http%3A%2F%2Flocalhost%3A1455%2Fauth%2Fcallback",
     );
+    expect(new URL(auth.authorizationUrl).searchParams.get("scope")).toBe(OPENAI_CODEX_SCOPE);
     expect(auth.authorizationUrl).toContain("originator=pi");
   });
 
@@ -58,7 +60,7 @@ describe("provider-openai-chatgpt chat reauth", () => {
     );
     const auth = await openAICodexChatReauthCapability.createPendingAuthorization();
 
-    expect(openAICodexChatReauthCapability.provider).toBe("openai");
+    expect(openAICodexChatReauthCapability.provider).toBe("openai-codex");
     expect(openAICodexChatReauthCapability.looksLikeCallbackInput("?code=test&state=state-1")).toBe(
       true,
     );

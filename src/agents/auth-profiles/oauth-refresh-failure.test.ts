@@ -17,6 +17,7 @@ describe("oauth refresh failure hints", () => {
       classifyOAuthRefreshFailure("OAuth token refresh failed for openai: invalid_grant"),
     ).toEqual({
       provider: "openai",
+      authProfileId: null,
       reason: "invalid_grant",
     });
     expect(buildOAuthRefreshFailureLoginCommand("openai")).toBe(
@@ -34,6 +35,19 @@ describe("oauth refresh failure hints", () => {
       ),
     ).toEqual({
       provider: "openai",
+      authProfileId: null,
+      reason: "invalid_grant",
+    });
+  });
+
+  it("extracts profile ids from profile-scoped refresh failures", () => {
+    expect(
+      classifyOAuthRefreshFailure(
+        "OAuth token refresh failed for openai-codex (openai-codex:dillan): invalid_grant",
+      ),
+    ).toEqual({
+      provider: "openai-codex",
+      authProfileId: "openai-codex:dillan",
       reason: "invalid_grant",
     });
   });

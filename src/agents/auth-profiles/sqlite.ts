@@ -24,6 +24,7 @@ import { OPENCLAW_SQLITE_BUSY_TIMEOUT_MS } from "../../state/openclaw-state-db.j
 import { resolveUserPath } from "../../utils.js";
 import { resolveRegisteredAgentIdForDir } from "../agent-dir-registry.js";
 import { resolveDefaultAgentDir } from "../agent-scope-config.js";
+import { AUTH_STATE_FILENAME } from "./path-constants.js";
 
 type AuthProfileDatabase = Pick<
   OpenClawAgentKyselyDatabase,
@@ -225,6 +226,15 @@ export function writePersistedAuthProfileStateRaw(
   agentDir?: string,
   database?: OpenClawAgentDatabase,
 ): void {
+  if (!database) {
+    const statePath = path.join(resolveAgentDir(agentDir), AUTH_STATE_FILENAME);
+    if (payload) {
+      fs.mkdirSync(path.dirname(statePath), { recursive: true });
+      fs.writeFileSync(statePath, `${JSON.stringify(payload, null, 2)}\n`, "utf8");
+    } else {
+      fs.rmSync(statePath, { force: true });
+    }
+  }
   const write = (target: OpenClawAgentDatabase) => {
     const db = getAuthProfileKysely(target.db);
     if (!payload) {

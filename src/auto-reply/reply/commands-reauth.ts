@@ -1,4 +1,8 @@
-import { ensureAuthProfileStore } from "../../agents/auth-profiles.js";
+import {
+  clearAuthProfileCooldown,
+  ensureAuthProfileStore,
+  promoteAuthProfileInOrder,
+} from "../../agents/auth-profiles.js";
 import { normalizeProviderId } from "../../agents/model-selection.js";
 import { formatCliCommand } from "../../cli/command-format.js";
 import { updateConfig } from "../../commands/models/shared.js";
@@ -316,6 +320,12 @@ function formatThreadReauthUnsupported(profileId: string, provider: string): str
   ].join("\n");
 }
 
+function shouldSyncOAuthCredentialsToSiblingAgents(provider: string): boolean {
+  // OpenAI Codex refresh tokens rotate on use. Copying one fresh token into
+  // sibling agents lets concurrent refreshes invalidate each other.
+  return normalizeProviderId(provider) !== "openai-codex";
+}
+
 async function persistOAuthCredentials(params: {
   commandParams: Parameters<CommandHandler>[0];
   provider: string;
@@ -327,17 +337,28 @@ async function persistOAuthCredentials(params: {
     params.creds,
     params.commandParams.agentDir,
     {
-      syncSiblingAgents: true,
+      syncSiblingAgents: shouldSyncOAuthCredentialsToSiblingAgents(params.provider),
       profileId: params.profileId,
     },
   );
-  await updateConfig((cfg) =>
+  await clearAuthProfileCooldown({
+    store: ensureAuthProfileStore(params.commandParams.agentDir),
+    profileId,
+    agentDir: params.commandParams.agentDir,
+  });
+  const updatedConfig = await updateConfig((cfg) =>
     applyAuthProfileConfig(cfg, {
       profileId,
       provider: params.provider,
       mode: "oauth",
     }),
   );
+  params.commandParams.cfg = updatedConfig;
+  await promoteAuthProfileInOrder({
+    agentDir: params.commandParams.agentDir,
+    provider: params.provider,
+    profileId,
+  });
   return profileId;
 }
 
@@ -372,6 +393,9 @@ function formatPostReauthProbeFailure(probe: PostReauthProbeResult): string {
 }
 
 function formatPostReauthProbeSuccess(probe: PostReauthProbeResult): string {
+  if (probe.status === "already_ok") {
+    return `🔐 Re-auth already complete for ${probe.profileId}. Stored credentials are usable; cleared the stale pending login-code request.`;
+  }
   if (probe.status === "ok") {
     return `🔐 Re-auth complete for ${probe.profileId}. Live probe passed.`;
   }
@@ -386,6 +410,50 @@ function isRecoverableDeviceCodeTokenExchangeError(error: unknown): boolean {
       message.includes("invalid_request_error") ||
       message.includes("Invalid request"))
   );
+}
+
+function hasUsableStoredOAuthCredentials(params: {
+  commandParams: Parameters<CommandHandler>[0];
+  pending: PendingOAuthReauth;
+}): boolean {
+  const { commandParams, pending } = params;
+  if (pending.flow !== "device_code" || !commandParams.agentDir) {
+    return false;
+  }
+  try {
+    const store = ensureAuthProfileStore(commandParams.agentDir);
+    const profile = store.profiles[pending.profileId];
+    if (!profile || profile.type !== "oauth") {
+      return false;
+    }
+    if (normalizeProviderId(profile.provider) !== normalizeProviderId(pending.provider)) {
+      return false;
+    }
+    return (
+      typeof profile.expires === "number" &&
+      Number.isFinite(profile.expires) &&
+      profile.expires > Date.now()
+    );
+  } catch {
+    return false;
+  }
+}
+
+async function completeDeviceCodeReauthFromStoredCredentials(params: {
+  commandParams: Parameters<CommandHandler>[0];
+  pending: PendingOAuthReauth;
+}): Promise<PostReauthProbeResult | null> {
+  if (!hasUsableStoredOAuthCredentials(params)) {
+    return null;
+  }
+  stopDeviceCodeReauthWatcher(params.commandParams, params.pending);
+  clearPendingReauth(params.commandParams);
+  await persistSessionEntry(params.commandParams);
+  return {
+    ok: true,
+    profileId: params.pending.profileId,
+    status: "already_ok",
+  };
 }
 
 async function replaceDeviceCodePendingWithCallback(params: {
@@ -411,7 +479,13 @@ async function replaceDeviceCodePendingWithCallback(params: {
   };
   stopDeviceCodeReauthWatcher(params.commandParams, params.pending);
   params.commandParams.sessionEntry!.pendingOAuthReauth = fallback;
-  await persistSessionEntry(params.commandParams);
+  const persisted = await persistSessionEntry(params.commandParams);
+  if (!persisted) {
+    params.commandParams.sessionEntry!.pendingOAuthReauth = params.pending;
+    throw new Error(
+      `Could not persist browser OAuth fallback for ${params.pending.profileId}. Reply /reauth --oauth ${params.pending.profileId} to start a new browser OAuth flow.`,
+    );
+  }
   return fallback;
 }
 
@@ -602,6 +676,16 @@ function startDeviceCodeReauthWatcher(params: {
     } catch (error) {
       finish();
       if (isRecoverableDeviceCodeTokenExchangeError(error)) {
+        const alreadyCompleted = await completeDeviceCodeReauthFromStoredCredentials({
+          commandParams: params.commandParams,
+          pending: params.pending,
+        });
+        if (alreadyCompleted) {
+          await params.commandParams.opts?.onBlockReply?.({
+            text: formatPostReauthProbeSuccess(alreadyCompleted),
+          });
+          return;
+        }
         try {
           const fallback = await replaceDeviceCodePendingWithCallback({
             commandParams: params.commandParams,
@@ -795,20 +879,39 @@ export const handleReauthCommand: CommandHandler = async (params, allowTextComma
           }
         } catch (error) {
           if (isRecoverableDeviceCodeTokenExchangeError(error)) {
-            const fallback = await replaceDeviceCodePendingWithCallback({
+            const alreadyCompleted = await completeDeviceCodeReauthFromStoredCredentials({
               commandParams: params,
               pending,
-              capability,
             });
-            if (fallback) {
+            if (alreadyCompleted) {
               return {
                 shouldContinue: false,
-                reply: {
-                  text: [
-                    `⚠️ Device-code re-auth failed for ${pending.profileId}; falling back to browser OAuth.`,
-                    formatPendingReauthMessage(fallback),
-                  ].join("\n\n"),
-                },
+                reply: { text: formatPostReauthProbeSuccess(alreadyCompleted) },
+              };
+            }
+            try {
+              const fallback = await replaceDeviceCodePendingWithCallback({
+                commandParams: params,
+                pending,
+                capability,
+              });
+              if (fallback) {
+                return {
+                  shouldContinue: false,
+                  reply: {
+                    text: [
+                      `⚠️ Device-code re-auth failed for ${pending.profileId}; falling back to browser OAuth.`,
+                      formatPendingReauthMessage(fallback),
+                    ].join("\n\n"),
+                  },
+                };
+              }
+            } catch (fallbackError) {
+              const message =
+                fallbackError instanceof Error ? fallbackError.message : String(fallbackError);
+              return {
+                shouldContinue: false,
+                reply: { text: `⚠️ ${message}` },
               };
             }
           }
@@ -862,9 +965,18 @@ export const handleReauthCommand: CommandHandler = async (params, allowTextComma
   const store = params.agentDir
     ? ensureAuthProfileStore(params.agentDir, { allowKeychainPrompt: false })
     : null;
-  const existing = store?.profiles[profileId];
+  const resolvedProfileId =
+    parsed.requestedProfileId && !parsed.requestedProfileId.includes(":") && store
+      ? (Object.entries(store.profiles).find(
+          ([candidateProfileId, credential]) =>
+            candidateProfileId.endsWith(`:${parsed.requestedProfileId}`) &&
+            credential.type === "oauth" &&
+            Boolean(getChatReauthCapability(credential.provider)),
+        )?.[0] ?? profileId)
+      : profileId;
+  const existing = store?.profiles[resolvedProfileId];
   const provider = resolveChatReauthProvider({
-    profileId,
+    profileId: resolvedProfileId,
     storedProvider: existing?.provider,
     sessionAuthProfileOverride: params.sessionEntry.authProfileOverride,
   });
@@ -879,14 +991,14 @@ export const handleReauthCommand: CommandHandler = async (params, allowTextComma
   if (!capability) {
     return {
       shouldContinue: false,
-      reply: { text: formatThreadReauthUnsupported(profileId, provider) },
+      reply: { text: formatThreadReauthUnsupported(resolvedProfileId, provider) },
     };
   }
   if (existing && existing.type !== "oauth") {
     return {
       shouldContinue: false,
       reply: {
-        text: `⚠️ ${profileId} uses ${existing.type}, not OAuth. Re-auth is only available for OAuth profiles.`,
+        text: `⚠️ ${resolvedProfileId} uses ${existing.type}, not OAuth. Re-auth is only available for OAuth profiles.`,
       },
     };
   }
@@ -898,7 +1010,7 @@ export const handleReauthCommand: CommandHandler = async (params, allowTextComma
   const pending: PendingOAuthReauth = {
     kind: "oauth",
     provider,
-    profileId,
+    profileId: resolvedProfileId,
     ...authorization,
   };
   const previousPending = params.sessionEntry.pendingOAuthReauth;

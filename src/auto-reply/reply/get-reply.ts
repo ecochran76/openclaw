@@ -109,6 +109,7 @@ const replyResolverTimingLog = createSubsystemLogger("auto-reply/reply-resolver-
 const commandsCoreRuntimeLoader = createLazyImportLoader(
   () => import("./commands-core.runtime.js"),
 );
+const statusCommandRuntimeLoader = createLazyImportLoader(() => import("./commands-status.js"));
 
 function loadSessionResetModelRuntime() {
   return sessionResetModelRuntimeLoader.load();
@@ -128,6 +129,10 @@ function loadLinkUnderstandingApplyRuntime() {
 
 function loadCommandsCoreRuntime() {
   return commandsCoreRuntimeLoader.load();
+}
+
+function loadStatusCommandRuntime() {
+  return statusCommandRuntimeLoader.load();
 }
 
 const hookRunnerGlobalLoader = createLazyImportLoader(
@@ -174,6 +179,10 @@ function hasLinkCandidate(ctx: MsgContext): boolean {
     return false;
   }
   return /\bhttps?:\/\/\S+/i.test(message);
+}
+
+function isExactStatusQuestion(text: string | undefined): boolean {
+  return text?.trim().toLowerCase() === "status?";
 }
 
 async function applyMediaUnderstandingIfNeeded(params: {
@@ -679,6 +688,51 @@ export async function getReplyFromConfig(
   }
 
   if (
+    isExactStatusQuestion(triggerBodyNormalized) &&
+    shouldUseReplyFastDirectiveExecution({
+      isFastTestBootstrap: useFastTestRuntime,
+      isGroup,
+      isHeartbeat: opts?.isHeartbeat === true,
+      resetTriggered,
+      triggerBodyNormalized,
+    })
+  ) {
+    const statusCommand = buildFastReplyCommandContext({
+      ctx,
+      cfg,
+      agentId,
+      sessionKey,
+      isGroup,
+      triggerBodyNormalized,
+      commandAuthorized,
+    });
+    const { buildStatusReply } = await loadStatusCommandRuntime();
+    return await traceGetReplyPhase("reply.status_question_fast_path", () =>
+      buildStatusReply({
+        cfg,
+        command: statusCommand,
+        sessionEntry,
+        sessionKey,
+        parentSessionKey: sessionEntry.parentSessionKey ?? sessionCtx.ParentSessionKey,
+        sessionScope,
+        storePath,
+        provider,
+        model,
+        workspaceDir,
+        contextTokens: agentCfg?.contextTokens,
+        resolvedThinkLevel: undefined,
+        resolvedVerboseLevel: normalizeVerboseLevel(agentCfg?.verboseDefault),
+        resolvedReasoningLevel: "off",
+        resolvedElevatedLevel: "off",
+        resolveDefaultThinkingLevel: async () => undefined,
+        isGroup,
+        defaultGroupActivation: () => "always",
+        mediaDecisions: finalized.MediaUnderstandingDecisions,
+      }),
+    );
+  }
+
+  if (
     shouldUseReplyFastDirectiveExecution({
       isFastTestBootstrap: useFastTestRuntime,
       isGroup,
@@ -827,6 +881,33 @@ export async function getReplyFromConfig(
     directiveResult.result;
   provider = resolvedProvider;
   model = resolvedModel;
+
+  if (isExactStatusQuestion(triggerBodyNormalized)) {
+    const { buildStatusReply } = await loadStatusCommandRuntime();
+    return await traceGetReplyPhase("reply.status_question_fast_path", () =>
+      buildStatusReply({
+        cfg,
+        command,
+        sessionEntry,
+        sessionKey,
+        parentSessionKey: sessionEntry.parentSessionKey ?? sessionCtx.ParentSessionKey,
+        sessionScope,
+        storePath,
+        provider,
+        model,
+        workspaceDir,
+        contextTokens,
+        resolvedThinkLevel,
+        resolvedVerboseLevel,
+        resolvedReasoningLevel,
+        resolvedElevatedLevel,
+        resolveDefaultThinkingLevel: modelState.resolveDefaultThinkingLevel,
+        isGroup,
+        defaultGroupActivation: () => defaultActivation,
+        mediaDecisions: finalized.MediaUnderstandingDecisions,
+      }),
+    );
+  }
 
   const maybeEmitMissingResetHooks = async () => {
     if (!resetTriggered || !command.isAuthorizedSender || command.resetHookTriggered) {

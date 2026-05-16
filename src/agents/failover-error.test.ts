@@ -1084,6 +1084,16 @@ describe("failover-error", () => {
     ).toBe("auth_permanent");
   });
 
+  it("401 with an unparsable ChatGPT auth token returns auth_permanent", () => {
+    expect(
+      resolveFailoverReasonFromError({
+        status: 401,
+        message:
+          '{"detail":"Could not parse your authentication token. Please try signing in again."}',
+      }),
+    ).toBe("auth_permanent");
+  });
+
   it("403 OpenRouter 'Key limit exceeded' returns billing (model fallback trigger)", () => {
     // GitHub: openclaw/openclaw#53849 — OpenRouter returns 403 with "Key limit exceeded"
     // when the monthly key spending limit is reached. This must trigger billing failover

@@ -4,12 +4,16 @@ import type { ReplyPayload } from "../reply-payload.js";
 
 const hoisted = vi.hoisted(() => {
   const ensureAuthProfileStoreMock = vi.fn();
+  const clearAuthProfileCooldownMock = vi.fn();
+  const promoteAuthProfileInOrderMock = vi.fn();
   const writeOAuthCredentialsMock = vi.fn();
   const updateConfigMock = vi.fn();
   const getChatReauthCapabilityMock = vi.fn();
   const runAuthProbesMock = vi.fn();
   return {
     ensureAuthProfileStoreMock,
+    clearAuthProfileCooldownMock,
+    promoteAuthProfileInOrderMock,
     writeOAuthCredentialsMock,
     updateConfigMock,
     getChatReauthCapabilityMock,
@@ -18,7 +22,9 @@ const hoisted = vi.hoisted(() => {
 });
 
 vi.mock("../../agents/auth-profiles.js", () => ({
+  clearAuthProfileCooldown: hoisted.clearAuthProfileCooldownMock,
   ensureAuthProfileStore: hoisted.ensureAuthProfileStoreMock,
+  promoteAuthProfileInOrder: hoisted.promoteAuthProfileInOrderMock,
 }));
 
 vi.mock("../../plugins/provider-auth-helpers.js", () => ({
@@ -56,6 +62,8 @@ describe("/reauth commands", () => {
 
   beforeEach(() => {
     hoisted.ensureAuthProfileStoreMock.mockReset();
+    hoisted.clearAuthProfileCooldownMock.mockReset();
+    hoisted.promoteAuthProfileInOrderMock.mockReset();
     hoisted.writeOAuthCredentialsMock.mockReset();
     hoisted.updateConfigMock.mockReset();
     hoisted.getChatReauthCapabilityMock.mockReset();
@@ -74,11 +82,11 @@ describe("/reauth commands", () => {
     }));
     hoisted.ensureAuthProfileStoreMock.mockReturnValue({
       profiles: {
-        "openai:dillan": { provider: "openai", type: "oauth", access: "a" },
+        "openai-codex:dillan": { provider: "openai-codex", type: "oauth", access: "a" },
       },
     });
     hoisted.getChatReauthCapabilityMock.mockReturnValue({
-      provider: "openai",
+      provider: "openai-codex",
       looksLikeCallbackInput: vi.fn(() => false),
       createPendingAuthorization,
       completePendingAuthorization: vi.fn(),
@@ -92,14 +100,14 @@ describe("/reauth commands", () => {
 
     const result = await handleReauthCommand(params, true);
 
-    expect(result?.reply?.text).toContain("Re-auth pending for openai:dillan");
+    expect(result?.reply?.text).toContain("Re-auth pending for openai-codex:dillan");
     expect(result?.reply?.text).toContain("https://auth.example.test/device");
     expect(result?.reply?.text).toContain("Code: CODE-123");
     expect(createPendingAuthorization).toHaveBeenCalledWith({
       originator: "pi",
       preferredFlow: undefined,
     });
-    expect(params.sessionEntry.pendingOAuthReauth?.profileId).toBe("openai:dillan");
+    expect(params.sessionEntry.pendingOAuthReauth?.profileId).toBe("openai-codex:dillan");
     expect(params.sessionEntry.pendingOAuthReauth?.flow).toBe("device_code");
   });
 
@@ -115,18 +123,18 @@ describe("/reauth commands", () => {
     }));
     hoisted.ensureAuthProfileStoreMock.mockReturnValue({
       profiles: {
-        "openai:work": { provider: "openai", type: "oauth", access: "a" },
+        "openai-codex:work": { provider: "openai-codex", type: "oauth", access: "a" },
       },
     });
     hoisted.getChatReauthCapabilityMock.mockReturnValue({
-      provider: "openai",
+      provider: "openai-codex",
       looksLikeCallbackInput: vi.fn(() => false),
       createPendingAuthorization,
       completePendingAuthorization: vi.fn(),
       pollPendingAuthorization: vi.fn(),
     });
 
-    const params = buildCommandTestParams("/reauth --oauth openai:work", cfg);
+    const params = buildCommandTestParams("/reauth --oauth openai-codex:work", cfg);
     params.agentDir = "/tmp/agent";
     params.sessionEntry = { sessionId: "s1", updatedAt: 1 };
     params.sessionStore = {};
@@ -137,11 +145,11 @@ describe("/reauth commands", () => {
       originator: "pi",
       preferredFlow: "callback",
     });
-    expect(result?.reply?.text).toContain("Re-auth pending for openai:work");
+    expect(result?.reply?.text).toContain("Re-auth pending for openai-codex:work");
     expect(result?.reply?.text).toContain("Open this OAuth URL");
     expect(result?.reply?.text).toContain("/reauth callback");
     expect(result?.reply?.text).toContain("https://auth.example.test/oauth");
-    expect(params.sessionEntry.pendingOAuthReauth?.profileId).toBe("openai:work");
+    expect(params.sessionEntry.pendingOAuthReauth?.profileId).toBe("openai-codex:work");
     expect(params.sessionEntry.pendingOAuthReauth?.flow).toBe("callback");
   });
 
@@ -150,7 +158,7 @@ describe("/reauth commands", () => {
     vi.setSystemTime(new Date("2026-04-30T12:00:00Z"));
     hoisted.ensureAuthProfileStoreMock.mockReturnValue({
       profiles: {
-        "openai:dillan": { provider: "openai", type: "oauth", access: "a" },
+        "openai-codex:dillan": { provider: "openai-codex", type: "oauth", access: "a" },
       },
     });
     const pollPendingAuthorization = vi.fn(async () => ({
@@ -160,7 +168,7 @@ describe("/reauth commands", () => {
       accountId: "acct_123",
     }));
     hoisted.getChatReauthCapabilityMock.mockReturnValue({
-      provider: "openai",
+      provider: "openai-codex",
       looksLikeCallbackInput: vi.fn(() => false),
       createPendingAuthorization: vi.fn(() => ({
         flow: "device_code",
@@ -174,7 +182,7 @@ describe("/reauth commands", () => {
       completePendingAuthorization: vi.fn(),
       pollPendingAuthorization,
     });
-    hoisted.writeOAuthCredentialsMock.mockResolvedValue("openai:dillan");
+    hoisted.writeOAuthCredentialsMock.mockResolvedValue("openai-codex:dillan");
     hoisted.updateConfigMock.mockResolvedValue(cfg);
     const onBlockReply = vi.fn(async () => undefined);
 
@@ -193,14 +201,14 @@ describe("/reauth commands", () => {
 
     expect(pollPendingAuthorization).toHaveBeenCalledOnce();
     expect(onBlockReply).toHaveBeenCalledWith({
-      text: "🔐 Re-auth credentials updated for openai:dillan. Live probe was not run for this conversation context.",
+      text: "🔐 Re-auth credentials updated for openai-codex:dillan. Live probe was not run for this conversation context.",
     });
     expect(params.sessionEntry.pendingOAuthReauth).toBeUndefined();
   });
 
   it("finishes a pending device-code flow on status after user approval", async () => {
     hoisted.getChatReauthCapabilityMock.mockReturnValue({
-      provider: "openai",
+      provider: "openai-codex",
       looksLikeCallbackInput: vi.fn(() => false),
       createPendingAuthorization: vi.fn(),
       completePendingAuthorization: vi.fn(),
@@ -211,7 +219,7 @@ describe("/reauth commands", () => {
         accountId: "acct_123",
       })),
     });
-    hoisted.writeOAuthCredentialsMock.mockResolvedValue("openai:dillan");
+    hoisted.writeOAuthCredentialsMock.mockResolvedValue("openai-codex:dillan");
     hoisted.updateConfigMock.mockResolvedValue(cfg);
 
     const params = buildCommandTestParams("/reauth status", cfg);
@@ -221,8 +229,8 @@ describe("/reauth commands", () => {
       updatedAt: 1,
       pendingOAuthReauth: {
         kind: "oauth",
-        provider: "openai",
-        profileId: "openai:dillan",
+        provider: "openai-codex",
+        profileId: "openai-codex:dillan",
         flow: "device_code",
         deviceAuthId: "device-1",
         userCode: "CODE-123",
@@ -237,13 +245,85 @@ describe("/reauth commands", () => {
     const result = await handleReauthCommand(params, true);
 
     expect(result?.reply?.text).toBe(
-      "🔐 Re-auth credentials updated for openai:dillan. Live probe was not run for this conversation context.",
+      "🔐 Re-auth credentials updated for openai-codex:dillan. Live probe was not run for this conversation context.",
     );
     expect(hoisted.writeOAuthCredentialsMock).toHaveBeenCalledWith(
-      "openai",
+      "openai-codex",
       expect.objectContaining({ access: "access-token" }),
       "/tmp/agent",
-      expect.objectContaining({ profileId: "openai:dillan", syncSiblingAgents: true }),
+      expect.objectContaining({ profileId: "openai-codex:dillan", syncSiblingAgents: false }),
+    );
+    expect(hoisted.clearAuthProfileCooldownMock).toHaveBeenCalledWith(
+      expect.objectContaining({
+        profileId: "openai-codex:dillan",
+        agentDir: "/tmp/agent",
+      }),
+    );
+    expect(hoisted.promoteAuthProfileInOrderMock).toHaveBeenCalledWith({
+      agentDir: "/tmp/agent",
+      provider: "openai-codex",
+      profileId: "openai-codex:dillan",
+    });
+    expect(params.sessionEntry.pendingOAuthReauth).toBeUndefined();
+  });
+
+  it("does not re-poll a completed device-code flow into OAuth fallback", async () => {
+    const createPendingAuthorization = vi.fn(async () => ({
+      flow: "callback",
+      state: "state-1",
+      verifier: "verifier-1",
+      authorizationUrl: "https://auth.example.test/oauth",
+      redirectUri: "http://localhost:1455/auth/callback",
+      createdAt: Date.now(),
+      expiresAt: Date.now() + 60_000,
+    }));
+    hoisted.ensureAuthProfileStoreMock.mockReturnValue({
+      profiles: {
+        "openai-codex:soylei": {
+          provider: "openai-codex",
+          type: "oauth",
+          oauthRef: "ref:soylei",
+          expires: Date.now() + 60_000,
+        },
+      },
+    });
+    hoisted.getChatReauthCapabilityMock.mockReturnValue({
+      provider: "openai-codex",
+      looksLikeCallbackInput: vi.fn(() => false),
+      createPendingAuthorization,
+      completePendingAuthorization: vi.fn(),
+      pollPendingAuthorization: vi.fn(async () => {
+        throw new Error(
+          'OpenAI device token exchange failed: HTTP 400 { "error": { "code": "token_exchange_user_error", "type": "invalid_request_error" } }',
+        );
+      }),
+    });
+
+    const params = buildCommandTestParams("/reauth status", cfg);
+    params.agentDir = "/tmp/agent";
+    params.sessionEntry = {
+      sessionId: "s1",
+      updatedAt: 1,
+      pendingOAuthReauth: {
+        kind: "oauth",
+        provider: "openai-codex",
+        profileId: "openai-codex:soylei",
+        flow: "device_code",
+        deviceAuthId: "device-1",
+        userCode: "CODE-123",
+        verificationUrl: "https://auth.example.test/device",
+        intervalMs: 5_000,
+        createdAt: Date.now(),
+        expiresAt: Date.now() + 60_000,
+      },
+    };
+    params.sessionStore = {};
+
+    const result = await handleReauthCommand(params, true);
+
+    expect(createPendingAuthorization).not.toHaveBeenCalled();
+    expect(result?.reply?.text).toBe(
+      "🔐 Re-auth already complete for openai-codex:soylei. Stored credentials are usable; cleared the stale pending login-code request.",
     );
     expect(params.sessionEntry.pendingOAuthReauth).toBeUndefined();
   });
@@ -301,6 +381,54 @@ describe("/reauth commands", () => {
     expect(result?.reply?.text).toContain("https://auth.example.test/oauth");
     expect(params.sessionEntry.pendingOAuthReauth?.flow).toBe("callback");
     expect(params.sessionEntry.pendingOAuthReauth?.profileId).toBe("openai-codex:soylei");
+  });
+
+  it("does not issue a callback fallback URL when the fallback cannot be persisted", async () => {
+    hoisted.getChatReauthCapabilityMock.mockReturnValue({
+      provider: "openai-codex",
+      looksLikeCallbackInput: vi.fn(() => false),
+      createPendingAuthorization: vi.fn(async () => ({
+        flow: "callback",
+        state: "state-1",
+        verifier: "verifier-1",
+        authorizationUrl: "https://auth.example.test/oauth",
+        redirectUri: "http://localhost:1455/auth/callback",
+        createdAt: Date.now(),
+        expiresAt: Date.now() + 60_000,
+      })),
+      completePendingAuthorization: vi.fn(),
+      pollPendingAuthorization: vi.fn(async () => {
+        throw new Error(
+          'OpenAI device token exchange failed: HTTP 400 { "error": { "code": "token_exchange_user_error", "type": "invalid_request_error" } }',
+        );
+      }),
+    });
+
+    const params = buildCommandTestParams("/reauth status", cfg);
+    params.agentDir = "/tmp/agent";
+    params.sessionEntry = {
+      sessionId: "s1",
+      updatedAt: 1,
+      pendingOAuthReauth: {
+        kind: "oauth",
+        provider: "openai-codex",
+        profileId: "openai-codex:soylei",
+        flow: "device_code",
+        deviceAuthId: "device-1",
+        userCode: "CODE-123",
+        verificationUrl: "https://auth.example.test/device",
+        intervalMs: 5_000,
+        createdAt: Date.now(),
+        expiresAt: Date.now() + 60_000,
+      },
+    };
+
+    const result = await handleReauthCommand(params, true);
+
+    expect(result?.reply?.text).toContain("Could not persist browser OAuth fallback");
+    expect(result?.reply?.text).toContain("/reauth --oauth openai-codex:soylei");
+    expect(result?.reply?.text).not.toContain("https://auth.example.test/oauth");
+    expect(params.sessionEntry.pendingOAuthReauth?.flow).toBe("device_code");
   });
 
   it("falls back to callback OAuth when the device-code watcher hits token exchange user error", async () => {
@@ -362,7 +490,7 @@ describe("/reauth commands", () => {
 
   it("completes a pasted callback flow", async () => {
     hoisted.getChatReauthCapabilityMock.mockReturnValue({
-      provider: "openai",
+      provider: "openai-codex",
       looksLikeCallbackInput: vi.fn(() => true),
       createPendingAuthorization: vi.fn(),
       completePendingAuthorization: vi.fn(async () => ({
@@ -372,7 +500,7 @@ describe("/reauth commands", () => {
         accountId: "acct_123",
       })),
     });
-    hoisted.writeOAuthCredentialsMock.mockResolvedValue("openai:dillan");
+    hoisted.writeOAuthCredentialsMock.mockResolvedValue("openai-codex:dillan");
     hoisted.updateConfigMock.mockResolvedValue(cfg);
 
     const params = buildCommandTestParams(
@@ -385,8 +513,8 @@ describe("/reauth commands", () => {
       updatedAt: 1,
       pendingOAuthReauth: {
         kind: "oauth",
-        provider: "openai",
-        profileId: "openai:dillan",
+        provider: "openai-codex",
+        profileId: "openai-codex:dillan",
         flow: "callback",
         state: "state-1",
         verifier: "verifier-1",
@@ -401,20 +529,20 @@ describe("/reauth commands", () => {
     const result = await handlePendingReauthInput(params, true);
 
     expect(result?.reply?.text).toBe(
-      "🔐 Re-auth credentials updated for openai:dillan. Live probe was not run for this conversation context.",
+      "🔐 Re-auth credentials updated for openai-codex:dillan. Live probe was not run for this conversation context.",
     );
     expect(hoisted.writeOAuthCredentialsMock).toHaveBeenCalledWith(
-      "openai",
+      "openai-codex",
       expect.objectContaining({ access: "access-token" }),
       "/tmp/agent",
-      expect.objectContaining({ profileId: "openai:dillan", syncSiblingAgents: true }),
+      expect.objectContaining({ profileId: "openai-codex:dillan", syncSiblingAgents: false }),
     );
     expect(params.sessionEntry.pendingOAuthReauth).toBeUndefined();
   });
 
   it("reports callback credential update when the live post-reauth probe fails", async () => {
     hoisted.getChatReauthCapabilityMock.mockReturnValue({
-      provider: "openai",
+      provider: "openai-codex",
       looksLikeCallbackInput: vi.fn(() => true),
       createPendingAuthorization: vi.fn(),
       completePendingAuthorization: vi.fn(async () => ({
@@ -424,15 +552,15 @@ describe("/reauth commands", () => {
         accountId: "acct_123",
       })),
     });
-    hoisted.writeOAuthCredentialsMock.mockResolvedValue("openai:work");
+    hoisted.writeOAuthCredentialsMock.mockResolvedValue("openai-codex:work");
     hoisted.updateConfigMock.mockResolvedValue(cfg);
     hoisted.runAuthProbesMock.mockResolvedValue({
       results: [
         {
-          provider: "openai",
-          model: "openai/gpt-5.5",
-          profileId: "openai:work",
-          label: "openai:work",
+          provider: "openai-codex",
+          model: "openai-codex/gpt-5.5",
+          profileId: "openai-codex:work",
+          label: "openai-codex:work",
           source: "profile",
           mode: "oauth",
           status: "auth",
@@ -447,15 +575,15 @@ describe("/reauth commands", () => {
     );
     params.agentId = "graphiti-agent";
     params.agentDir = "/tmp/agent";
-    params.provider = "openai";
+    params.provider = "openai-codex";
     params.model = "gpt-5.5";
     params.sessionEntry = {
       sessionId: "message-session",
       updatedAt: 1,
       pendingOAuthReauth: {
         kind: "oauth",
-        provider: "openai",
-        profileId: "openai:work",
+        provider: "openai-codex",
+        profileId: "openai-codex:work",
         flow: "callback",
         state: "state-1",
         verifier: "verifier-1",
@@ -475,15 +603,23 @@ describe("/reauth commands", () => {
       expect.objectContaining({
         agentId: "graphiti-agent",
         agentDir: "/tmp/agent",
-        providers: ["openai"],
-        modelCandidates: ["openai/gpt-5.5"],
+        providers: ["openai-codex"],
+        modelCandidates: ["openai-codex/gpt-5.5"],
         options: expect.objectContaining({
-          provider: "openai",
-          profileIds: ["openai:work"],
+          provider: "openai-codex",
+          profileIds: ["openai-codex:work"],
         }),
       }),
     );
-    expect(result?.reply?.text).toContain("Re-auth credentials were updated for openai:work");
+    expect(hoisted.promoteAuthProfileInOrderMock).toHaveBeenCalledWith({
+      agentDir: "/tmp/agent",
+      provider: "openai-codex",
+      profileId: "openai-codex:work",
+    });
+    expect(hoisted.promoteAuthProfileInOrderMock.mock.invocationCallOrder[0]).toBeLessThan(
+      hoisted.runAuthProbesMock.mock.invocationCallOrder[0] ?? 0,
+    );
+    expect(result?.reply?.text).toContain("Re-auth credentials were updated for openai-codex:work");
     expect(result?.reply?.text).toContain("status auth");
     expect(result?.reply?.text).toContain("401 status code");
     expect(params.sessionEntry.pendingOAuthReauth).toBeUndefined();
@@ -491,7 +627,7 @@ describe("/reauth commands", () => {
 
   it("completes a pasted callback flow from another session key by state", async () => {
     hoisted.getChatReauthCapabilityMock.mockReturnValue({
-      provider: "openai",
+      provider: "openai-codex",
       looksLikeCallbackInput: vi.fn(() => true),
       createPendingAuthorization: vi.fn(),
       completePendingAuthorization: vi.fn(async () => ({
@@ -501,7 +637,7 @@ describe("/reauth commands", () => {
         accountId: "acct_123",
       })),
     });
-    hoisted.writeOAuthCredentialsMock.mockResolvedValue("openai:work");
+    hoisted.writeOAuthCredentialsMock.mockResolvedValue("openai-codex:work");
     hoisted.updateConfigMock.mockResolvedValue(cfg);
 
     const pendingSessionEntry = {
@@ -509,8 +645,8 @@ describe("/reauth commands", () => {
       updatedAt: 1,
       pendingOAuthReauth: {
         kind: "oauth" as const,
-        provider: "openai",
-        profileId: "openai:work",
+        provider: "openai-codex",
+        profileId: "openai-codex:work",
         flow: "callback" as const,
         state: "state-1",
         verifier: "verifier-1",
@@ -535,13 +671,13 @@ describe("/reauth commands", () => {
     const result = await handlePendingReauthInput(params, true);
 
     expect(result?.reply?.text).toBe(
-      "🔐 Re-auth credentials updated for openai:work. Live probe was not run for this conversation context.",
+      "🔐 Re-auth credentials updated for openai-codex:work. Live probe was not run for this conversation context.",
     );
     expect(hoisted.writeOAuthCredentialsMock).toHaveBeenCalledWith(
-      "openai",
+      "openai-codex",
       expect.objectContaining({ access: "access-token" }),
       "/tmp/agent",
-      expect.objectContaining({ profileId: "openai:work", syncSiblingAgents: true }),
+      expect.objectContaining({ profileId: "openai-codex:work", syncSiblingAgents: false }),
     );
     expect(pendingSessionEntry.pendingOAuthReauth).toBeUndefined();
     expect(params.sessionEntry.pendingOAuthReauth).toBeUndefined();
@@ -549,7 +685,7 @@ describe("/reauth commands", () => {
 
   it("completes a callback via explicit reauth command", async () => {
     hoisted.getChatReauthCapabilityMock.mockReturnValue({
-      provider: "openai",
+      provider: "openai-codex",
       looksLikeCallbackInput: vi.fn(() => true),
       createPendingAuthorization: vi.fn(),
       completePendingAuthorization: vi.fn(async () => ({
@@ -559,7 +695,7 @@ describe("/reauth commands", () => {
         accountId: "acct_123",
       })),
     });
-    hoisted.writeOAuthCredentialsMock.mockResolvedValue("openai:work");
+    hoisted.writeOAuthCredentialsMock.mockResolvedValue("openai-codex:work");
     hoisted.updateConfigMock.mockResolvedValue(cfg);
 
     const pendingSessionEntry = {
@@ -567,8 +703,8 @@ describe("/reauth commands", () => {
       updatedAt: 1,
       pendingOAuthReauth: {
         kind: "oauth" as const,
-        provider: "openai",
-        profileId: "openai:work",
+        provider: "openai-codex",
+        profileId: "openai-codex:work",
         flow: "callback" as const,
         state: "state-1",
         verifier: "verifier-1",
@@ -594,13 +730,13 @@ describe("/reauth commands", () => {
 
     expect(result?.shouldContinue).toBe(false);
     expect(result?.reply?.text).toBe(
-      "🔐 Re-auth credentials updated for openai:work. Live probe was not run for this conversation context.",
+      "🔐 Re-auth credentials updated for openai-codex:work. Live probe was not run for this conversation context.",
     );
     expect(hoisted.writeOAuthCredentialsMock).toHaveBeenCalledWith(
-      "openai",
+      "openai-codex",
       expect.objectContaining({ access: "access-token" }),
       "/tmp/agent",
-      expect.objectContaining({ profileId: "openai:work", syncSiblingAgents: true }),
+      expect.objectContaining({ profileId: "openai-codex:work", syncSiblingAgents: false }),
     );
     expect(pendingSessionEntry.pendingOAuthReauth).toBeUndefined();
   });
@@ -608,7 +744,7 @@ describe("/reauth commands", () => {
   it("does not exchange a stale explicit callback against the current pending verifier", async () => {
     const completePendingAuthorization = vi.fn();
     hoisted.getChatReauthCapabilityMock.mockReturnValue({
-      provider: "openai",
+      provider: "openai-codex",
       looksLikeCallbackInput: vi.fn(() => true),
       createPendingAuthorization: vi.fn(),
       completePendingAuthorization,
@@ -624,8 +760,8 @@ describe("/reauth commands", () => {
       updatedAt: 1,
       pendingOAuthReauth: {
         kind: "oauth",
-        provider: "openai",
-        profileId: "openai:work",
+        provider: "openai-codex",
+        profileId: "openai-codex:work",
         flow: "callback",
         state: "new-state",
         verifier: "new-verifier",
@@ -649,7 +785,7 @@ describe("/reauth commands", () => {
 
   it("matches Slack-escaped callback state in explicit reauth command", async () => {
     hoisted.getChatReauthCapabilityMock.mockReturnValue({
-      provider: "openai",
+      provider: "openai-codex",
       looksLikeCallbackInput: vi.fn(() => true),
       createPendingAuthorization: vi.fn(),
       completePendingAuthorization: vi.fn(async () => ({
@@ -659,7 +795,7 @@ describe("/reauth commands", () => {
         accountId: "acct_123",
       })),
     });
-    hoisted.writeOAuthCredentialsMock.mockResolvedValue("openai:work");
+    hoisted.writeOAuthCredentialsMock.mockResolvedValue("openai-codex:work");
     hoisted.updateConfigMock.mockResolvedValue(cfg);
 
     const params = buildCommandTestParams(
@@ -672,8 +808,8 @@ describe("/reauth commands", () => {
       updatedAt: 1,
       pendingOAuthReauth: {
         kind: "oauth",
-        provider: "openai",
-        profileId: "openai:work",
+        provider: "openai-codex",
+        profileId: "openai-codex:work",
         flow: "callback",
         state: "state-1",
         verifier: "verifier-1",
@@ -690,14 +826,14 @@ describe("/reauth commands", () => {
     const result = await handleReauthCommand(params, true);
 
     expect(result?.reply?.text).toBe(
-      "🔐 Re-auth credentials updated for openai:work. Live probe was not run for this conversation context.",
+      "🔐 Re-auth credentials updated for openai-codex:work. Live probe was not run for this conversation context.",
     );
     expect(params.sessionEntry.pendingOAuthReauth).toBeUndefined();
   });
 
   it("matches double-escaped Slack callback state in explicit reauth command", async () => {
     hoisted.getChatReauthCapabilityMock.mockReturnValue({
-      provider: "openai",
+      provider: "openai-codex",
       looksLikeCallbackInput: vi.fn(() => true),
       createPendingAuthorization: vi.fn(),
       completePendingAuthorization: vi.fn(async () => ({
@@ -707,7 +843,7 @@ describe("/reauth commands", () => {
         accountId: "acct_123",
       })),
     });
-    hoisted.writeOAuthCredentialsMock.mockResolvedValue("openai:work");
+    hoisted.writeOAuthCredentialsMock.mockResolvedValue("openai-codex:work");
     hoisted.updateConfigMock.mockResolvedValue(cfg);
 
     const params = buildCommandTestParams(
@@ -720,8 +856,8 @@ describe("/reauth commands", () => {
       updatedAt: 1,
       pendingOAuthReauth: {
         kind: "oauth",
-        provider: "openai",
-        profileId: "openai:work",
+        provider: "openai-codex",
+        profileId: "openai-codex:work",
         flow: "callback",
         state: "state-1",
         verifier: "verifier-1",
@@ -738,14 +874,14 @@ describe("/reauth commands", () => {
     const result = await handleReauthCommand(params, true);
 
     expect(result?.reply?.text).toBe(
-      "🔐 Re-auth credentials updated for openai:work. Live probe was not run for this conversation context.",
+      "🔐 Re-auth credentials updated for openai-codex:work. Live probe was not run for this conversation context.",
     );
     expect(params.sessionEntry.pendingOAuthReauth).toBeUndefined();
   });
 
   it("does not route an unmatched explicit callback to the agent", async () => {
     hoisted.getChatReauthCapabilityMock.mockReturnValue({
-      provider: "openai",
+      provider: "openai-codex",
       looksLikeCallbackInput: vi.fn(() => true),
       createPendingAuthorization: vi.fn(),
       completePendingAuthorization: vi.fn(),

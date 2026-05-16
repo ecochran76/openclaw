@@ -1,11 +1,6 @@
-/**
- * OAuth refresh failure classification and operator hints.
- * Parses provider/reason codes from refresh failures and formats safe login
- * commands without trusting raw provider text.
- */
 import { normalizeProviderId } from "@openclaw/model-catalog-core/provider-id";
-import { sanitizeForLog } from "../../../packages/terminal-core/src/ansi.js";
 import { formatCliCommand } from "../../cli/command-format.js";
+import { sanitizeForLog } from "../../../packages/terminal-core/src/ansi.js";
 
 export type OAuthRefreshFailureReason =
   | "refresh_token_reused"
@@ -16,6 +11,7 @@ export type OAuthRefreshFailureReason =
 
 type OAuthRefreshFailure = {
   provider: string | null;
+  authProfileId: string | null;
   reason: OAuthRefreshFailureReason | null;
 };
 
@@ -34,7 +30,9 @@ export class OAuthRefreshFailureError extends Error {
 
 const OAUTH_REFRESH_FAILURE_PROVIDER_RE =
   /OAuth token refresh failed for ([^:(\s]+)(?: \([^)]*\))?:/i;
+const OAUTH_REFRESH_FAILURE_PROFILE_RE = /OAuth token refresh failed for [^:(\s]+ \(([^)\s]+)\):/i;
 const SAFE_PROVIDER_ID_RE = /^[a-z0-9][a-z0-9._-]*$/;
+const SAFE_PROFILE_ID_RE = /^[a-z0-9][a-z0-9._:-]*$/;
 
 function isOAuthRefreshFailureMessage(message: string): boolean {
   const lower = message.toLowerCase();
@@ -50,14 +48,23 @@ function extractOAuthRefreshFailureProvider(message: string): string | null {
   return provider && provider.length > 0 ? provider : null;
 }
 
+function extractOAuthRefreshFailureProfileId(message: string): string | null {
+  const profileId = message.match(OAUTH_REFRESH_FAILURE_PROFILE_RE)?.[1]?.trim();
+  return profileId && profileId.length > 0 ? profileId : null;
+}
+
 function sanitizeOAuthRefreshFailureProvider(provider: string | null | undefined): string | null {
-  // Only return normalized provider ids that are safe to embed in shell guidance.
   const sanitized = provider ? sanitizeForLog(provider).replaceAll("`", "").trim() : "";
   const normalized = normalizeProviderId(sanitized);
   return normalized && SAFE_PROVIDER_ID_RE.test(normalized) ? normalized : null;
 }
 
-/** Classify a raw OAuth refresh failure message into a stable reason code. */
+function sanitizeOAuthRefreshFailureProfileId(profileId: string | null | undefined): string | null {
+  const sanitized = profileId ? sanitizeForLog(profileId).replaceAll("`", "").trim() : "";
+  const normalized = sanitized.toLowerCase();
+  return normalized && SAFE_PROFILE_ID_RE.test(normalized) ? normalized : null;
+}
+
 export function classifyOAuthRefreshFailureReason(
   message: string,
 ): OAuthRefreshFailureReason | null {
@@ -80,32 +87,33 @@ export function classifyOAuthRefreshFailureReason(
   return null;
 }
 
-/** Classify provider/reason from a user-facing OAuth refresh failure message. */
 export function classifyOAuthRefreshFailure(message: string): OAuthRefreshFailure | null {
   if (!isOAuthRefreshFailureMessage(message)) {
     return null;
   }
   return {
     provider: sanitizeOAuthRefreshFailureProvider(extractOAuthRefreshFailureProvider(message)),
+    authProfileId: sanitizeOAuthRefreshFailureProfileId(
+      extractOAuthRefreshFailureProfileId(message),
+    ),
     reason: classifyOAuthRefreshFailureReason(message),
   };
 }
 
-/** Classify provider/reason from the structured OAuth refresh failure error. */
 export function classifyOAuthRefreshFailureError(err: unknown): OAuthRefreshFailure | null {
   if (!(err instanceof OAuthRefreshFailureError)) {
     return null;
   }
   return {
     provider: sanitizeOAuthRefreshFailureProvider(err.provider),
+    authProfileId: null,
     reason: err.reason,
   };
 }
 
-/** Build the login command operators should run after OAuth refresh failure. */
 export function buildOAuthRefreshFailureLoginCommand(provider: string | null | undefined): string {
-  const sanitizedProvider = sanitizeOAuthRefreshFailureProvider(provider);
-  return sanitizedProvider
-    ? formatCliCommand(`openclaw models auth login --provider ${sanitizedProvider}`)
+  const safeProvider = sanitizeOAuthRefreshFailureProvider(provider);
+  return safeProvider
+    ? formatCliCommand(`openclaw models auth login --provider ${safeProvider}`)
     : formatCliCommand("openclaw models auth login");
 }

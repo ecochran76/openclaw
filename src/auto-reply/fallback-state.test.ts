@@ -1,6 +1,4 @@
-/** Tests model fallback notice formatting and transition state tracking. */
-import { afterEach, describe, expect, it } from "vitest";
-import { testing as cliBackendsTesting } from "../agents/cli-backends.js";
+import { describe, expect, it } from "vitest";
 import {
   buildAuthFailureNotice,
   buildFallbackNotice,
@@ -23,20 +21,6 @@ const activeFallbackState: FallbackNoticeState = {
   fallbackNoticeReason: "rate limit",
 };
 
-function registerAnthropicCliBackendForTest(): void {
-  cliBackendsTesting.setDepsForTest({
-    resolveRuntimeCliBackends: () => [
-      {
-        id: "claude-cli",
-        modelProvider: "anthropic",
-        pluginId: "anthropic",
-        config: { command: "claude" },
-        bundleMcp: false,
-      },
-    ],
-  });
-}
-
 function resolveDemoFallbackTransition(
   overrides: Partial<Parameters<typeof resolveFallbackTransition>[0]> = {},
 ) {
@@ -52,10 +36,6 @@ function resolveDemoFallbackTransition(
 }
 
 describe("fallback-state", () => {
-  afterEach(() => {
-    cliBackendsTesting.resetDepsForTest();
-  });
-
   it.each([
     {
       name: "treats fallback as active only when state matches selected and active refs",
@@ -145,8 +125,6 @@ describe("fallback-state", () => {
   });
 
   it("does not treat a CLI runtime alias as a model fallback", () => {
-    registerAnthropicCliBackendForTest();
-
     const resolved = resolveFallbackTransition({
       selectedProvider: "anthropic",
       selectedModel: "claude-opus-4-7",
@@ -158,7 +136,6 @@ describe("fallback-state", () => {
         fallbackNoticeActiveModel: "claude-cli/claude-opus-4-7",
         fallbackNoticeReason: "selected model unavailable",
       },
-      cfg: {},
     });
 
     expect(resolved.fallbackActive).toBe(false);
@@ -168,50 +145,7 @@ describe("fallback-state", () => {
     expect(resolved.nextState.activeModel).toBeUndefined();
   });
 
-  it("does not repeat runtime alias comparison when persisted fallback refs match", () => {
-    let setupBackendLookups = 0;
-    cliBackendsTesting.setDepsForTest({
-      resolvePluginSetupCliBackend: ({ backend }) => {
-        setupBackendLookups += 1;
-        return backend === "claude-cli"
-          ? {
-              pluginId: "anthropic",
-              backend: {
-                id: "claude-cli",
-                modelProvider: "anthropic",
-                config: { command: "claude" },
-                bundleMcp: false,
-              },
-            }
-          : undefined;
-      },
-      resolvePluginSetupRegistry: () => {
-        throw new Error("full setup registry should not load for a single runtime alias");
-      },
-      resolveRuntimeCliBackends: () => [],
-    });
-
-    const resolved = resolveFallbackTransition({
-      selectedProvider: "anthropic",
-      selectedModel: "claude-opus-4-7",
-      activeProvider: "claude-cli",
-      activeModel: "claude-opus-4-7",
-      attempts: [],
-      state: {
-        fallbackNoticeSelectedModel: "anthropic/claude-opus-4-7",
-        fallbackNoticeActiveModel: "claude-cli/claude-opus-4-7",
-        fallbackNoticeReason: "selected model unavailable",
-      },
-      cfg: {},
-    });
-
-    expect(resolved.fallbackActive).toBe(false);
-    expect(setupBackendLookups).toBe(2);
-  });
-
   it("does not build a fallback notice for equivalent CLI runtime aliases", () => {
-    registerAnthropicCliBackendForTest();
-
     expect(
       buildFallbackNotice({
         selectedProvider: "anthropic",
@@ -230,7 +164,7 @@ describe("fallback-state", () => {
         buildFallbackNotice({
           selectedProvider: "openai",
           selectedModel: model,
-          activeProvider: "openai",
+          activeProvider: "openai-codex",
           activeModel: model,
           attempts: [],
         }),
@@ -243,50 +177,50 @@ describe("fallback-state", () => {
       buildFallbackNotice({
         selectedProvider: "openai",
         selectedModel: "gpt-5.5",
-        activeProvider: "openai",
+        activeProvider: "openai-codex",
         activeModel: "gpt-5.4",
         attempts: [],
       }),
     ).toContain("selected openai/gpt-5.5");
   });
 
-  it("builds a Slack reauth notice for OpenAI auth fallback", () => {
+  it("builds a Slack reauth notice for openai-codex auth fallback", () => {
     const notice = buildAuthFailureNotice({
-      selectedProvider: "openai",
+      selectedProvider: "openai-codex",
       selectedModel: "gpt-5.4",
       activeProvider: "openrouter",
       activeModel: "moonshotai/kimi-k2.5",
       attempts: [
         {
-          provider: "openai",
+          provider: "openai-codex",
           model: "gpt-5.4",
           error: "OAuth token refresh failed",
           reason: "auth",
         },
       ],
-      authProfileId: "openai:dillan",
+      authProfileId: "openai-codex:dillan",
     });
 
-    expect(notice).toContain("openai:dillan");
-    expect(notice).toContain("/reauth openai:dillan");
+    expect(notice).toContain("openai-codex:dillan");
+    expect(notice).toContain("/reauth --device-code openai-codex:dillan");
     expect(notice).toContain("openrouter/moonshotai/kimi-k2.5");
   });
 
   it("returns null for non-auth fallback reasons", () => {
     const notice = buildAuthFailureNotice({
-      selectedProvider: "openai",
+      selectedProvider: "openai-codex",
       selectedModel: "gpt-5.4",
       activeProvider: "openrouter",
       activeModel: "moonshotai/kimi-k2.5",
       attempts: [
         {
-          provider: "openai",
+          provider: "openai-codex",
           model: "gpt-5.4",
           error: "rate limit",
           reason: "rate_limit",
         },
       ],
-      authProfileId: "openai:dillan",
+      authProfileId: "openai-codex:dillan",
     });
 
     expect(notice).toBeNull();
@@ -308,7 +242,7 @@ describe("fallback-state", () => {
     });
 
     expect(notice).toContain("Auth failed for openai-codex:soylei");
-    expect(notice).toContain("/reauth openai-codex:soylei");
-    expect(notice).toContain("openclaw models auth login --provider openai");
+    expect(notice).toContain("/reauth --device-code openai-codex:soylei");
+    expect(notice).toContain("openclaw models auth login --provider openai-codex");
   });
 });

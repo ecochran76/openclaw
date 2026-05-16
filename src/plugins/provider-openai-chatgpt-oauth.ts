@@ -1,17 +1,21 @@
-// Bridges OpenAI ChatGPT OAuth credentials into provider plugin auth.
 import { createHash, randomBytes } from "node:crypto";
-import type { OAuthCredentials } from "../llm/oauth.js";
-import { resolveOpenAICodexAccountId } from "../llm/utils/oauth/openai-chatgpt-jwt.js";
-import { loadActivatedBundledPluginPublicSurfaceModuleSync } from "../plugin-sdk/facade-runtime.js";
+import { loginOpenAICodex, type OAuthCredentials } from "../llm/oauth.js";
+import { formatErrorMessage } from "../infra/errors.js";
+import { ensureGlobalUndiciEnvProxyDispatcher } from "../infra/net/undici-global-dispatcher.js";
 import type { RuntimeEnv } from "../runtime.js";
 import type { WizardPrompter } from "../wizard/prompts.js";
-import { resolveProviderRuntimePlugin } from "./provider-hook-runtime.js";
-import { createVpsAwareOAuthHandlers } from "./provider-oauth-flow.js";
 import type { ChatReauthCapability } from "./provider-auth-types.js";
-import type { ProviderAuthContext } from "./types.js";
+import type { OAuthPrompt } from "./provider-oauth-flow.js";
+import { createVpsAwareOAuthHandlers } from "./provider-oauth-flow.js";
+import {
+  formatOpenAIOAuthTlsPreflightFix,
+  runOpenAIOAuthTlsPreflight,
+} from "./provider-openai-chatgpt-oauth-tls.js";
 
-const OPENAI_CODEX_PROVIDER_ID = "openai";
-const OPENAI_CODEX_OAUTH_METHOD_ID = "oauth";
+const manualInputPromptMessage = "Paste the authorization code (or full redirect URL):";
+const openAICodexOAuthOriginator = "openclaw";
+const localManualFallbackDelayMs = 15_000;
+const localManualFallbackGraceMs = 1_000;
 const OPENAI_CODEX_CLIENT_ID = "app_EMoamEEZ73f0CkXaXp7hrann";
 const OPENAI_CODEX_AUTHORIZE_URL = "https://auth.openai.com/oauth/authorize";
 const OPENAI_CODEX_TOKEN_URL = "https://auth.openai.com/oauth/token";
@@ -23,12 +27,14 @@ const OPENAI_CODEX_DEVICE_CALLBACK_URL = "https://auth.openai.com/deviceauth/cal
 const OPENAI_CODEX_DEVICE_CODE_TIMEOUT_MS = 15 * 60_000;
 const OPENAI_CODEX_DEVICE_CODE_DEFAULT_INTERVAL_MS = 5_000;
 export const OPENAI_CODEX_REDIRECT_URI = "http://localhost:1455/auth/callback";
-const OPENAI_CODEX_SCOPE = "openid profile email offline_access";
+export const OPENAI_CODEX_SCOPE =
+  "openid profile email offline_access api.connectors.read api.connectors.invoke";
+const OPENAI_CODEX_JWT_CLAIM_PATH = "https://api.openai.com/auth";
 
-type OpenAICodexOAuthBridgeContext = ProviderAuthContext & {
-  signal?: AbortSignal;
-  onManualCodeInput?: () => Promise<string>;
-};
+type OpenAICodexOAuthFailureCode =
+  | "callback_timeout"
+  | "callback_validation_failed"
+  | "unsupported_region";
 type OpenAICodexDeviceFailureCode = "device_code_unavailable";
 
 export type OpenAICodexManualAuthorization = {
@@ -50,41 +56,39 @@ type OpenAICodexDeviceAuthorization = {
   expiresAt: number;
 };
 
-type OpenAICodexOAuthLoginParams = {
-  prompter: WizardPrompter;
-  runtime: RuntimeEnv;
-  isRemote: boolean;
-  openUrl: (url: string) => Promise<void>;
-  signal?: AbortSignal;
-  onManualCodeInput?: () => Promise<string>;
-  localBrowserMessage?: string;
-};
-
-type OpenAICodexOAuthFacade = {
-  loginOpenAICodexOAuth: (
-    params: OpenAICodexOAuthLoginParams & Pick<ProviderAuthContext, "oauth">,
-  ) => Promise<OAuthCredentials | null>;
-};
-
-function loadOpenAICodexOAuthFacade(): OpenAICodexOAuthFacade {
-  return loadActivatedBundledPluginPublicSurfaceModuleSync<OpenAICodexOAuthFacade>({
-    dirName: "openai",
-    artifactBasename: "api.js",
+function waitForDelayOrLoginSettle(params: {
+  delayMs: number;
+  waitForLoginToSettle: Promise<void>;
+}): Promise<"delay" | "settled"> {
+  return new Promise((resolve) => {
+    let finished = false;
+    const finish = (outcome: "delay" | "settled") => {
+      if (finished) {
+        return;
+      }
+      finished = true;
+      clearTimeout(timeoutHandle);
+      resolve(outcome);
+    };
+    const timeoutHandle = setTimeout(() => finish("delay"), params.delayMs);
+    params.waitForLoginToSettle.then(
+      () => finish("settled"),
+      () => finish("settled"),
+    );
   });
 }
 
-function isOAuthCredential(value: unknown): value is OAuthCredentials {
-  if (!value || typeof value !== "object") {
-    return false;
-  }
-  const record = value as Record<string, unknown>;
-  return (
-    record.type === "oauth" &&
-    record.provider === OPENAI_CODEX_PROVIDER_ID &&
-    typeof record.access === "string" &&
-    typeof record.refresh === "string" &&
-    typeof record.expires === "number"
-  );
+function createNeverSettlingPromptResult(): Promise<string> {
+  return new Promise<string>(() => undefined);
+}
+
+function createOpenAICodexOAuthError(
+  code: OpenAICodexOAuthFailureCode,
+  message: string,
+  cause?: unknown,
+): Error & { code: OpenAICodexOAuthFailureCode } {
+  const error = new Error(`OpenAI Codex OAuth failed (${code}): ${message}`, { cause });
+  return Object.assign(error, { code });
 }
 
 function createOpenAICodexDeviceError(
@@ -105,85 +109,99 @@ function isOpenAICodexDeviceUnavailableError(
   );
 }
 
-function parseManualAuthorizationInput(
-  input: string,
-  expectedState: string,
-): { code: string; state: string } {
-  const trimmed = normalizeManualAuthorizationInput(input);
-  if (!trimmed) {
-    throw new Error("Missing OAuth redirect URL.");
+function rewriteOpenAICodexOAuthError(error: unknown): Error {
+  const message = formatErrorMessage(error);
+  if (/unsupported_country_region_territory/i.test(message)) {
+    return createOpenAICodexOAuthError(
+      "unsupported_region",
+      [
+        "OpenAI rejected the token exchange for this country, region, or network route.",
+        "If you normally use a proxy, verify HTTPS_PROXY, HTTP_PROXY, or ALL_PROXY is set for the OpenClaw process and then retry `openclaw models auth login --provider openai-codex`.",
+      ].join(" "),
+      error,
+    );
+  }
+  if (/state mismatch|missing authorization code/i.test(message)) {
+    return createOpenAICodexOAuthError("callback_validation_failed", message, error);
+  }
+  return error instanceof Error ? error : new Error(message);
+}
+
+function createManualCodeInputHandler(params: {
+  isRemote: boolean;
+  onPrompt: (prompt: OAuthPrompt) => Promise<string>;
+  runtime: RuntimeEnv;
+  updateProgress: (message: string) => void;
+  stopProgress: (message?: string) => void;
+  waitForLoginToSettle: Promise<void>;
+  hasBrowserAuthStarted: () => boolean;
+}): (() => Promise<string>) | undefined {
+  let manualFallbackPromise: Promise<string> | undefined;
+  if (params.isRemote) {
+    return async () => {
+      manualFallbackPromise ??= params.onPrompt({
+        message: manualInputPromptMessage,
+      });
+      return await manualFallbackPromise;
+    };
   }
 
+  const runLocalManualFallback = async () => {
+    if (!params.hasBrowserAuthStarted()) {
+      params.updateProgress(
+        "Local OAuth callback was unavailable. Paste the redirect URL to continue…",
+      );
+      params.runtime.log(
+        "OpenAI Codex OAuth local callback did not start; switching to manual entry immediately.",
+      );
+      params.stopProgress("Manual OAuth entry required");
+      return await params.onPrompt({
+        message: manualInputPromptMessage,
+      });
+    }
+
+    const outcome = await waitForDelayOrLoginSettle({
+      delayMs: localManualFallbackDelayMs,
+      waitForLoginToSettle: params.waitForLoginToSettle,
+    });
+    if (outcome === "settled") {
+      // markLoginSettled() runs in loginOpenAICodexOAuth's finally block, so
+      // reaching this branch means the outer login call has already completed.
+      // Return a never-settling promise to suppress an unnecessary manual
+      // prompt without feeding placeholder input back into the upstream flow.
+      return await createNeverSettlingPromptResult();
+    }
+
+    const settledDuringGraceWindow = await waitForDelayOrLoginSettle({
+      delayMs: localManualFallbackGraceMs,
+      waitForLoginToSettle: params.waitForLoginToSettle,
+    });
+    if (settledDuringGraceWindow === "settled") {
+      return await createNeverSettlingPromptResult();
+    }
+
+    params.updateProgress("Browser callback did not finish. Paste the redirect URL to continue…");
+    params.runtime.log(
+      `OpenAI Codex OAuth callback did not arrive within ${localManualFallbackDelayMs}ms; switching to manual entry (callback_timeout).`,
+    );
+    params.stopProgress("Manual OAuth entry required");
+    return await params.onPrompt({
+      message: manualInputPromptMessage,
+    });
+  };
+
+  return async () => {
+    manualFallbackPromise ??= runLocalManualFallback();
+    return await manualFallbackPromise;
+  };
+}
+
+function decodeBase64UrlJson(value: string): unknown {
   try {
-    const url = new URL(trimmed);
-    const code = url.searchParams.get("code")?.trim();
-    const state = url.searchParams.get("state")?.trim();
-    if (!code) {
-      throw new Error("Missing authorization code in redirect URL.");
-    }
-    if (!state || state !== expectedState) {
-      throw new Error("Invalid OAuth state.");
-    }
-    return { code, state };
-  } catch (error) {
-    if (!(error instanceof TypeError)) {
-      throw error;
-    }
+    return JSON.parse(Buffer.from(value, "base64url").toString("utf8"));
+  } catch {
+    return null;
   }
-
-  const params = new URLSearchParams(
-    trimmed.startsWith("?") ? trimmed.slice(1) : trimmed.replace(/^[^?]*\?/, ""),
-  );
-  const code = params.get("code")?.trim();
-  const state = params.get("state")?.trim();
-  if (!code) {
-    throw new Error("Missing authorization code in redirect URL.");
-  }
-  if (!state || state !== expectedState) {
-    throw new Error("Invalid OAuth state.");
-  }
-  return { code, state };
-}
-
-function decodeChatEscapes(input: string): string {
-  let decoded = input;
-  for (let i = 0; i < 3; i += 1) {
-    const next = decoded.replace(/&amp;/g, "&");
-    if (next === decoded) {
-      break;
-    }
-    decoded = next;
-  }
-  return decoded;
-}
-
-function trimCallbackCandidate(input: string): string {
-  return (
-    decodeChatEscapes(input.trim())
-      .replace(/[>)\]}.,]+$/, "")
-      .split("|")[0]
-      ?.trim() ?? ""
-  );
-}
-
-function normalizeManualAuthorizationInput(input: string): string {
-  const trimmed = decodeChatEscapes(input.trim());
-  if (!trimmed) {
-    return "";
-  }
-  const slackLink = trimmed.match(/<([^>|]+)(?:\|[^>]+)?>/);
-  if (slackLink?.[1]) {
-    return trimCallbackCandidate(slackLink[1]);
-  }
-  const urlMatch = trimmed.match(/https?:\/\/[^\s<>]+/i);
-  if (urlMatch?.[0]) {
-    return trimCallbackCandidate(urlMatch[0]);
-  }
-  const queryIndex = trimmed.indexOf("?code=");
-  if (queryIndex >= 0) {
-    return trimCallbackCandidate(trimmed.slice(queryIndex));
-  }
-  return trimmed;
 }
 
 function parseJsonObject(text: string): Record<string, unknown> | null {
@@ -240,46 +258,15 @@ function formatOpenAIDeviceCodeHttpError(params: {
     : `${params.prefix}: HTTP ${params.status}`;
 }
 
-export function looksLikeOpenAICodexCallbackInput(input: string): boolean {
-  const trimmed = normalizeManualAuthorizationInput(input);
-  if (!trimmed) {
-    return false;
-  }
-  return (
-    /\/auth\/callback\?/i.test(trimmed) ||
-    (trimmed.includes("code=") && trimmed.includes("state=")) ||
-    trimmed.startsWith("?code=")
-  );
-}
-
-export function createOpenAICodexManualAuthorization(params?: {
-  originator?: string;
-  now?: number;
-  ttlMs?: number;
-}): OpenAICodexManualAuthorization {
-  const verifier = randomBytes(32).toString("base64url");
-  const challenge = createHash("sha256").update(verifier).digest("base64url");
-  const state = randomBytes(16).toString("hex");
-  const now = params?.now ?? Date.now();
-  const url = new URL(OPENAI_CODEX_AUTHORIZE_URL);
-  url.searchParams.set("response_type", "code");
-  url.searchParams.set("client_id", OPENAI_CODEX_CLIENT_ID);
-  url.searchParams.set("redirect_uri", OPENAI_CODEX_REDIRECT_URI);
-  url.searchParams.set("scope", OPENAI_CODEX_SCOPE);
-  url.searchParams.set("code_challenge", challenge);
-  url.searchParams.set("code_challenge_method", "S256");
-  url.searchParams.set("state", state);
-  url.searchParams.set("id_token_add_organizations", "true");
-  url.searchParams.set("codex_cli_simplified_flow", "true");
-  url.searchParams.set("originator", params?.originator?.trim() || "pi");
-  return {
-    state,
-    verifier,
-    authorizationUrl: url.toString(),
-    redirectUri: OPENAI_CODEX_REDIRECT_URI,
-    createdAt: now,
-    expiresAt: now + (params?.ttlMs ?? 15 * 60 * 1000),
-  };
+function extractAccountId(accessToken: string): string | null {
+  const payload = decodeBase64UrlJson(accessToken.split(".")[1] ?? "");
+  const auth =
+    payload && typeof payload === "object"
+      ? (payload as Record<string, unknown>)[OPENAI_CODEX_JWT_CLAIM_PATH]
+      : null;
+  const authRecord = auth && typeof auth === "object" ? (auth as Record<string, unknown>) : null;
+  const accountId = authRecord?.chatgpt_account_id;
+  return typeof accountId === "string" && accountId.trim() ? accountId.trim() : null;
 }
 
 async function createOpenAICodexDeviceAuthorization(params?: {
@@ -396,7 +383,7 @@ async function exchangeOpenAICodexDeviceAuthorization(params: {
   if (!access || !refresh) {
     throw new Error("OpenAI token exchange succeeded but did not return OAuth tokens.");
   }
-  const accountId = resolveOpenAICodexAccountId(access);
+  const accountId = extractAccountId(access);
   if (!accountId) {
     throw new Error("Failed to extract accountId from token.");
   }
@@ -405,6 +392,129 @@ async function exchangeOpenAICodexDeviceAuthorization(params: {
     refresh,
     expires: Date.now() + (expiresInMs ?? 0),
     accountId,
+  };
+}
+
+function parseManualAuthorizationInput(
+  input: string,
+  expectedState: string,
+): { code: string; state: string } {
+  const trimmed = normalizeManualAuthorizationInput(input);
+  if (!trimmed) {
+    throw new Error("Missing OAuth redirect URL.");
+  }
+
+  try {
+    const url = new URL(trimmed);
+    const code = url.searchParams.get("code")?.trim();
+    const state = url.searchParams.get("state")?.trim();
+    if (!code) {
+      throw new Error("Missing authorization code in redirect URL.");
+    }
+    if (!state || state !== expectedState) {
+      throw new Error("Invalid OAuth state.");
+    }
+    return { code, state };
+  } catch (error) {
+    if (!(error instanceof TypeError)) {
+      throw error;
+    }
+  }
+
+  const params = new URLSearchParams(
+    trimmed.startsWith("?") ? trimmed.slice(1) : trimmed.replace(/^[^?]*\?/, ""),
+  );
+  const code = params.get("code")?.trim();
+  const state = params.get("state")?.trim();
+  if (!code) {
+    throw new Error("Missing authorization code in redirect URL.");
+  }
+  if (!state || state !== expectedState) {
+    throw new Error("Invalid OAuth state.");
+  }
+  return { code, state };
+}
+
+function decodeChatEscapes(input: string): string {
+  let decoded = input;
+  for (let i = 0; i < 3; i += 1) {
+    const next = decoded.replace(/&amp;/g, "&");
+    if (next === decoded) {
+      break;
+    }
+    decoded = next;
+  }
+  return decoded;
+}
+
+function trimCallbackCandidate(input: string): string {
+  return (
+    decodeChatEscapes(input.trim())
+      .replace(/[>)\]}.,]+$/, "")
+      .split("|")[0]
+      ?.trim() ?? ""
+  );
+}
+
+function normalizeManualAuthorizationInput(input: string): string {
+  const trimmed = decodeChatEscapes(input.trim());
+  if (!trimmed) {
+    return "";
+  }
+  const slackLink = trimmed.match(/<([^>|]+)(?:\|[^>]+)?>/);
+  if (slackLink?.[1]) {
+    return trimCallbackCandidate(slackLink[1]);
+  }
+  const urlMatch = trimmed.match(/https?:\/\/[^\s<>]+/i);
+  if (urlMatch?.[0]) {
+    return trimCallbackCandidate(urlMatch[0]);
+  }
+  const queryIndex = trimmed.indexOf("?code=");
+  if (queryIndex >= 0) {
+    return trimCallbackCandidate(trimmed.slice(queryIndex));
+  }
+  return trimmed;
+}
+
+export function looksLikeOpenAICodexCallbackInput(input: string): boolean {
+  const trimmed = normalizeManualAuthorizationInput(input);
+  if (!trimmed) {
+    return false;
+  }
+  return (
+    /\/auth\/callback\?/i.test(trimmed) ||
+    (trimmed.includes("code=") && trimmed.includes("state=")) ||
+    trimmed.startsWith("?code=")
+  );
+}
+
+export function createOpenAICodexManualAuthorization(params?: {
+  originator?: string;
+  now?: number;
+  ttlMs?: number;
+}): OpenAICodexManualAuthorization {
+  const verifier = randomBytes(32).toString("base64url");
+  const challenge = createHash("sha256").update(verifier).digest("base64url");
+  const state = randomBytes(16).toString("hex");
+  const now = params?.now ?? Date.now();
+  const url = new URL(OPENAI_CODEX_AUTHORIZE_URL);
+  url.searchParams.set("response_type", "code");
+  url.searchParams.set("client_id", OPENAI_CODEX_CLIENT_ID);
+  url.searchParams.set("redirect_uri", OPENAI_CODEX_REDIRECT_URI);
+  url.searchParams.set("scope", OPENAI_CODEX_SCOPE);
+  url.searchParams.set("code_challenge", challenge);
+  url.searchParams.set("code_challenge_method", "S256");
+  url.searchParams.set("state", state);
+  url.searchParams.set("id_token_add_organizations", "true");
+  url.searchParams.set("codex_cli_simplified_flow", "true");
+  url.searchParams.set("originator", params?.originator?.trim() || "pi");
+  return {
+    state,
+    verifier,
+    authorizationUrl: url.toString(),
+    redirectUri: OPENAI_CODEX_REDIRECT_URI,
+    createdAt: now,
+    expiresAt: now + (params?.ttlMs ?? 15 * 60 * 1000),
   };
 }
 
@@ -443,7 +553,7 @@ export async function completeOpenAICodexManualAuthorization(params: {
   ) {
     throw new Error("Token exchange returned an incomplete OAuth payload.");
   }
-  const accountId = resolveOpenAICodexAccountId(json.access_token);
+  const accountId = extractAccountId(json.access_token);
   if (!accountId) {
     throw new Error("Failed to extract accountId from token.");
   }
@@ -456,7 +566,7 @@ export async function completeOpenAICodexManualAuthorization(params: {
 }
 
 export const openAICodexChatReauthCapability: ChatReauthCapability = {
-  provider: OPENAI_CODEX_PROVIDER_ID,
+  provider: "openai-codex",
   looksLikeCallbackInput: looksLikeOpenAICodexCallbackInput,
   createPendingAuthorization: async (params) => {
     if (params?.preferredFlow === "callback") {
@@ -466,7 +576,7 @@ export const openAICodexChatReauthCapability: ChatReauthCapability = {
       };
     }
     try {
-      return await createOpenAICodexDeviceAuthorization(params);
+      return await createOpenAICodexDeviceAuthorization();
     } catch (error) {
       if (!isOpenAICodexDeviceUnavailableError(error)) {
         throw error;
@@ -480,47 +590,115 @@ export const openAICodexChatReauthCapability: ChatReauthCapability = {
   completePendingAuthorization: async ({ input, pending }) =>
     await completeOpenAICodexManualAuthorization({
       input,
-      state: pending.state,
-      verifier: pending.verifier,
+      state: pending.state ?? "",
+      verifier: pending.verifier ?? "",
       redirectUri: pending.redirectUri,
     }),
   pollPendingAuthorization: async ({ pending }) => {
-    const authorization = await pollOpenAICodexDeviceAuthorization(pending);
-    return authorization ? await exchangeOpenAICodexDeviceAuthorization(authorization) : null;
+    const authorization = await pollOpenAICodexDeviceAuthorization({
+      deviceAuthId: pending.deviceAuthId,
+      userCode: pending.userCode,
+      expiresAt: pending.expiresAt,
+    });
+    if (!authorization) {
+      return null;
+    }
+    return await exchangeOpenAICodexDeviceAuthorization(authorization);
   },
 };
 
-/** @deprecated OpenAI Codex OAuth is owned by the OpenAI plugin auth hook. */
-export async function loginOpenAICodexOAuth(
-  params: OpenAICodexOAuthLoginParams,
-): Promise<OAuthCredentials | null> {
-  const oauthHandlers = {
-    createVpsAwareHandlers: createVpsAwareOAuthHandlers,
-  };
-  const provider = resolveProviderRuntimePlugin({
-    provider: OPENAI_CODEX_PROVIDER_ID,
-    config: {},
-    bundledProviderVitestCompat: true,
-  });
-  const oauth = provider?.auth?.find((method) => method.id === OPENAI_CODEX_OAUTH_METHOD_ID);
-  if (!oauth) {
-    return await loadOpenAICodexOAuthFacade().loginOpenAICodexOAuth({
-      ...params,
-      oauth: oauthHandlers,
-    });
+export async function loginOpenAICodexOAuth(params: {
+  prompter: WizardPrompter;
+  runtime: RuntimeEnv;
+  isRemote: boolean;
+  openUrl: (url: string) => Promise<void>;
+  localBrowserMessage?: string;
+}): Promise<OAuthCredentials | null> {
+  const { prompter, runtime, isRemote, openUrl, localBrowserMessage } = params;
+
+  ensureGlobalUndiciEnvProxyDispatcher();
+
+  const preflight = await runOpenAIOAuthTlsPreflight();
+  if (!preflight.ok && preflight.kind === "tls-cert") {
+    const hint = formatOpenAIOAuthTlsPreflightFix(preflight);
+    await prompter.note(hint, "OAuth prerequisites");
+    runtime.error(hint);
+    throw new Error(`OpenAI Codex OAuth prerequisites failed: ${preflight.message}`);
   }
 
-  const context: OpenAICodexOAuthBridgeContext = {
-    config: {},
-    prompter: params.prompter,
-    runtime: params.runtime,
-    isRemote: params.isRemote,
-    openUrl: params.openUrl,
-    signal: params.signal,
-    onManualCodeInput: params.onManualCodeInput,
-    oauth: oauthHandlers,
+  await prompter.note(
+    isRemote
+      ? [
+          "You are running in a remote/VPS environment.",
+          "A URL will be shown for you to open in your LOCAL browser.",
+          "Open it, sign in, then paste the redirect URL here.",
+          "If this OpenClaw process can receive the browser callback, sign-in may finish automatically before you paste.",
+        ].join("\n")
+      : [
+          "Browser will open for OpenAI authentication.",
+          "If the callback doesn't auto-complete, paste the redirect URL.",
+          "OpenAI OAuth uses localhost:1455 for the callback.",
+        ].join("\n"),
+    "OpenAI Codex OAuth",
+  );
+
+  const spin = prompter.progress("Starting OAuth flow…");
+  let progressActive = true;
+  const updateProgress = (message: string) => {
+    if (progressActive) {
+      spin.update(message);
+    }
   };
-  const result = await oauth.run(context);
-  const credential = result.profiles[0]?.credential;
-  return isOAuthCredential(credential) ? credential : null;
+  const stopProgress = (message?: string) => {
+    if (progressActive) {
+      progressActive = false;
+      spin.stop(message);
+    }
+  };
+  let browserAuthStarted = false;
+  let markLoginSettled!: () => void;
+  const waitForLoginToSettle = new Promise<void>((resolve) => {
+    markLoginSettled = resolve;
+  });
+  try {
+    const { onAuth: baseOnAuth, onPrompt } = createVpsAwareOAuthHandlers({
+      isRemote,
+      prompter,
+      runtime,
+      spin,
+      openUrl,
+      localBrowserMessage: localBrowserMessage ?? "Complete sign-in in browser…",
+      manualPromptMessage: manualInputPromptMessage,
+    });
+    const onAuth: typeof baseOnAuth = async (event) => {
+      browserAuthStarted = true;
+      await baseOnAuth(event);
+    };
+
+    const creds = await loginOpenAICodex({
+      onAuth,
+      onPrompt,
+      originator: openAICodexOAuthOriginator,
+      onManualCodeInput: createManualCodeInputHandler({
+        isRemote,
+        onPrompt,
+        runtime,
+        updateProgress,
+        stopProgress,
+        waitForLoginToSettle,
+        hasBrowserAuthStarted: () => browserAuthStarted,
+      }),
+      onProgress: (msg: string) => updateProgress(msg),
+    });
+    stopProgress("OpenAI OAuth complete");
+    return creds ?? null;
+  } catch (err) {
+    stopProgress("OpenAI OAuth failed");
+    const rewrittenError = rewriteOpenAICodexOAuthError(err);
+    runtime.error(String(rewrittenError));
+    await prompter.note("Trouble with OAuth? See https://docs.openclaw.ai/start/faq", "OAuth help");
+    throw rewrittenError;
+  } finally {
+    markLoginSettled();
+  }
 }

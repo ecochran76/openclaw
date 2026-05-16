@@ -44,6 +44,7 @@ import {
   resolvePersistedAuthProfileOwnerAgentDir,
 } from "./store.js";
 import type { AuthProfileCredential, AuthProfileStore, OAuthCredential } from "./types.js";
+import { markAuthProfileFailure } from "./usage.js";
 
 export {
   isSafeToCopyOAuthIdentity,
@@ -204,7 +205,9 @@ async function refreshOAuthCredential(
     return await refreshChutesTokens({ credential });
   }
 
-  const oauthProvider = resolveOAuthProvider(credential.provider);
+  const oauthProvider = resolveOAuthProvider(
+    credential.provider === "openai-codex" ? "openai" : credential.provider,
+  );
   if (!oauthProvider || typeof getOAuthApiKey !== "function") {
     return null;
   }
@@ -503,6 +506,24 @@ export async function resolveApiKeyForProfile(
         }
       } catch {
         // keep original error
+      }
+    }
+    if (isRefreshTokenReusedError(surfacedCause)) {
+      try {
+        await markAuthProfileFailure({
+          store: refreshedStore,
+          profileId,
+          reason: "auth_permanent",
+          cfg,
+          agentDir: params.agentDir,
+        });
+      } catch (markError) {
+        log.debug("failed to mark OAuth refresh-token-reuse auth profile failure", {
+          provider: cred.provider,
+          profileId,
+          agentDir: params.agentDir,
+          error: formatErrorMessage(markError),
+        });
       }
     }
 

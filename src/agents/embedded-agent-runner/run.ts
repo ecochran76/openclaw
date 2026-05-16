@@ -3551,6 +3551,7 @@ async function runEmbeddedAgentInternal(
               ? attemptAuthProfileStore.profiles?.[lastProfileId]?.type
               : undefined,
             authProfileId: lastProfileId,
+            promptError: attempt.promptError,
             verboseLevel: params.verboseLevel,
             reasoningLevel: params.reasoningLevel,
             thinkingLevel: params.thinkLevel,

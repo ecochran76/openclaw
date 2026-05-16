@@ -2,39 +2,19 @@ import { describe, expect, it } from "vitest";
 import { formatAuthRecoveryHint } from "./reauth-guidance.js";
 
 describe("formatAuthRecoveryHint", () => {
-  it("prefers thread reauth for openai profiles", () => {
+  it("prefers thread reauth for openai-codex profiles", () => {
     expect(
       formatAuthRecoveryHint({
-        provider: "openai",
-        authProfileId: "openai:dillan",
-        allowChatReauth: true,
-      }),
-    ).toBe("Reply /reauth openai:dillan in this thread to refresh it here.");
-  });
-
-  it("can include a CLI fallback for openai thread reauth", () => {
-    expect(
-      formatAuthRecoveryHint({
-        provider: "openai",
-        authProfileId: "openai:dillan",
-        allowChatReauth: true,
-        includeCliAlternative: true,
-      }),
-    ).toContain("Reply /reauth openai:dillan in this thread to refresh it here, or run");
-  });
-
-  it("guides chat reauth when the openai profile is unknown", () => {
-    expect(
-      formatAuthRecoveryHint({
-        provider: "openai",
+        provider: "openai-codex",
+        authProfileId: "openai-codex:dillan",
         allowChatReauth: true,
       }),
     ).toBe(
-      "Reply /reauth <profile-id> in this thread to refresh an OpenAI ChatGPT/Codex profile here.",
+      "Reply /reauth --device-code openai-codex:dillan in this thread to refresh it here; supported providers will post a device code or chat-safe auth flow.",
     );
   });
 
-  it("keeps legacy openai-codex guidance on canonical openai login", () => {
+  it("can include a CLI fallback for openai-codex thread reauth", () => {
     expect(
       formatAuthRecoveryHint({
         provider: "openai-codex",
@@ -42,7 +22,20 @@ describe("formatAuthRecoveryHint", () => {
         allowChatReauth: true,
         includeCliAlternative: true,
       }),
-    ).toContain("openclaw models auth login --provider openai --profile-id openai-codex:dillan");
+    ).toContain(
+      "Reply /reauth --device-code openai-codex:dillan in this thread to refresh it here; supported providers will post a device code or chat-safe auth flow, or run",
+    );
+  });
+
+  it("guides chat reauth when the openai-codex profile is unknown", () => {
+    expect(
+      formatAuthRecoveryHint({
+        provider: "openai-codex",
+        allowChatReauth: true,
+      }),
+    ).toBe(
+      "Reply /reauth <profile-id> in this thread to refresh an OpenAI ChatGPT/Codex profile here.",
+    );
   });
 
   it("uses CLI reauth for non-codex provider profiles", () => {

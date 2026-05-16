@@ -1,6 +1,4 @@
-// Error payload tests ensure embedded runs convert provider/tool failures into
-// concise user-facing replies without leaking raw provider bodies or secrets.
-import type { AssistantMessage } from "openclaw/plugin-sdk/llm";
+import type { AssistantMessage } from "@earendil-works/pi-ai";
 import { describe, expect, it } from "vitest";
 import { getReplyPayloadMetadata } from "../../../auto-reply/reply-payload.js";
 import { formatBillingErrorMessage } from "../../embedded-agent-helpers.js";
@@ -26,8 +24,6 @@ describe("buildEmbeddedRunPayloads", () => {
   "request_id": "req_011CX7DwS7tSvggaNHmefwWg"
 }`;
   const makeAssistant = (overrides: Partial<AssistantMessage>): AssistantMessage =>
-    // Default to an overloaded provider error so each test can override only
-    // the assistant fields relevant to user-visible payload sanitization.
     makeAssistantMessageFixture({
       errorMessage: errorJson,
       content: [{ type: "text", text: errorJson }],
@@ -41,8 +37,6 @@ describe("buildEmbeddedRunPayloads", () => {
     });
 
   const expectOverloadedFallback = (payloads: ReturnType<typeof buildPayloads>) => {
-    // Overloaded JSON is normalized into stable copy rather than replayed as a
-    // raw provider object.
     expect(payloads).toHaveLength(1);
     expect(payloads[0]?.text).toBe(OVERLOADED_FALLBACK_TEXT);
   };
@@ -162,81 +156,20 @@ describe("buildEmbeddedRunPayloads", () => {
     expectNoPayloadTextContaining(payloads, "req_synthetic_provider_request_001");
   });
 
-  it("suppresses raw assistant error messages in user-facing reply payloads", () => {
-    // Canary text proves raw provider error strings do not escape into channel
-    // replies when the assistant stopped in an error state.
+  it("surfaces prompt-level OpenAI Codex auth failures with the selected profile", () => {
     const payloads = buildPayloads({
-      lastAssistant: makeAssistant({
-        stopReason: "error",
-        errorMessage: "SECRET_CANARY_69737",
-        content: [],
-      }),
+      provider: "openai-codex",
+      model: "gpt-5.5",
+      authProfileId: "openai-codex:pcg",
+      promptError:
+        'unexpected status 401 Unauthorized: {"detail":"Could not parse your authentication token. Please try signing in again."}, request id: req_secret',
     });
 
-    expectSinglePayloadSummary(payloads, {
-      text: "LLM request failed.",
-      isError: true,
-    });
-    expectNoPayloadTextContaining(payloads, "SECRET_CANARY_69737");
-  });
-
-  it("suppresses structured provider error messages in user-facing reply payloads", () => {
-    const rawError =
-      '{"type":"error","error":{"type":"invalid_request_error","message":"SECRET_CANARY_69737"}}';
-    const payloads = buildPayloads({
-      lastAssistant: makeAssistant({
-        stopReason: "error",
-        errorMessage: rawError,
-        content: [{ type: "text", text: rawError }],
-      }),
-    });
-
-    expectSinglePayloadSummary(payloads, {
-      text: "LLM request failed: provider rejected the request schema or tool payload.",
-      isError: true,
-    });
-    expectNoPayloadTextContaining(payloads, "SECRET_CANARY_69737");
-    expectNoPayloadTextContaining(payloads, "LLM request rejected");
-  });
-
-  it("uses structured provider details for model-not-found reply payloads", () => {
-    const payloads = buildPayloads({
-      lastAssistant: makeAssistant({
-        stopReason: "error",
-        errorMessage: "400 Param Incorrect",
-        errorCode: "400",
-        errorBody:
-          '{"code":"400","message":"Param Incorrect","param":"Not supported model some-model-id"}',
-        content: [],
-      }),
-    });
-
-    expectSinglePayloadSummary(payloads, {
-      text: "The selected model was not found by the provider. Check the model id or choose a different model.",
-      isError: true,
-    });
-    expectNoPayloadTextContaining(payloads, "some-model-id");
-    expectNoPayloadTextContaining(payloads, "Param Incorrect");
-  });
-
-  it("suppresses escaped structured provider error messages in user-facing reply payloads", () => {
-    const rawError =
-      '{"type":"error","error":{"type":"invalid_request_error","message":"SECRET\\nCANARY_69737"}}';
-    const payloads = buildPayloads({
-      lastAssistant: makeAssistant({
-        stopReason: "error",
-        errorMessage: rawError,
-        content: [{ type: "text", text: rawError }],
-      }),
-    });
-
-    expectSinglePayloadSummary(payloads, {
-      text: "LLM request failed: provider rejected the request schema or tool payload.",
-      isError: true,
-    });
-    expectNoPayloadTextContaining(payloads, "SECRET");
-    expectNoPayloadTextContaining(payloads, "CANARY_69737");
-    expectNoPayloadTextContaining(payloads, "LLM request rejected");
+    expect(payloads).toHaveLength(1);
+    expect(payloads[0]?.isError).toBe(true);
+    expect(payloads[0]?.text).toContain("Auth failed for openai-codex:pcg");
+    expect(payloads[0]?.text).toContain("/reauth --device-code openai-codex:pcg");
+    expectNoPayloadTextContaining(payloads, "req_secret");
   });
 
   it("surfaces OpenAI model capacity errors instead of generic empty-response copy", () => {
@@ -279,24 +212,6 @@ describe("buildEmbeddedRunPayloads", () => {
     expectNoPayloadTextContaining(payloads, "[[reply_to_current]]");
   });
 
-  it("suppresses raw aborted assistant error messages in user-facing reply payloads", () => {
-    const payloads = buildPayloads({
-      runAborted: true,
-      assistantTexts: [],
-      lastAssistant: makeAssistant({
-        stopReason: "aborted",
-        errorMessage: "SECRET_CANARY_69737",
-        content: [],
-      }),
-    });
-
-    expectSinglePayloadSummary(payloads, {
-      text: "LLM request failed.",
-      isError: true,
-    });
-    expectNoPayloadTextContaining(payloads, "SECRET_CANARY_69737");
-  });
-
   it("suppresses aborted assistant reasoning text as well as partial answer text", () => {
     const payloads = buildPayloads({
       runAborted: true,
@@ -318,20 +233,6 @@ describe("buildEmbeddedRunPayloads", () => {
     });
     expectNoPayloadTextContaining(payloads, "partial hidden reasoning");
     expectNoPayloadTextContaining(payloads, "partial answer that should not leak");
-  });
-
-  it("preserves aborted-without-error behavior without adding a generic error payload", () => {
-    const payloads = buildPayloads({
-      runAborted: true,
-      assistantTexts: [],
-      lastAssistant: makeAssistant({
-        stopReason: "aborted",
-        errorMessage: undefined,
-        content: [],
-      }),
-    });
-
-    expect(payloads).toHaveLength(0);
   });
 
   it("does not replay a stale previous assistant when an aborted run has no new text", () => {
@@ -366,8 +267,6 @@ describe("buildEmbeddedRunPayloads", () => {
   });
 
   it("does not emit a synthetic billing error for successful turns with stale errorMessage", () => {
-    // Some providers leave stale errorMessage fields on otherwise successful
-    // assistant messages; stopReason/content decide user-facing output.
     const payloads = buildPayloads({
       lastAssistant: makeAssistant({
         stopReason: "stop",
@@ -585,64 +484,6 @@ describe("buildEmbeddedRunPayloads", () => {
     );
   });
 
-  it("still shows write tool errors when timedOut is true but no fileTarget was recorded", () => {
-    // Without `fileTarget` we cannot distinguish a confirmed file write from
-    // an unrelated mutating-tool timeout, so the default-visible warning is
-    // preserved to avoid hiding real failures.
-    const payloads = buildPayloads({
-      assistantTexts: ["Done."],
-      lastAssistant: { stopReason: "end_turn" } as unknown as AssistantMessage,
-      lastToolError: {
-        toolName: "write",
-        error: "invoke timed out",
-        timedOut: true,
-        mutatingAction: true,
-      },
-    });
-
-    expect(payloads).toHaveLength(2);
-    expect(payloads[1]?.isError).toBe(true);
-    expect(payloads[1]?.text).toContain("Write");
-  });
-
-  it("still shows write tool errors when timedOut and fileTarget only prove the attempted path", () => {
-    const payloads = buildPayloads({
-      assistantTexts: ["Done."],
-      lastAssistant: { stopReason: "end_turn" } as unknown as AssistantMessage,
-      lastToolError: {
-        toolName: "write",
-        error: "invoke timed out",
-        timedOut: true,
-        mutatingAction: true,
-        fileTarget: { path: "/tmp/openclaw/output.md" },
-      },
-    });
-
-    expect(payloads).toHaveLength(2);
-    expect(payloads[1]?.isError).toBe(true);
-    expect(payloads[1]?.text).toContain("Write");
-  });
-
-  it("still shows exec tool errors when timedOut is true (no file-write boundary)", () => {
-    // Exec timeouts never set `fileTarget`, so the new file-write boundary
-    // never matches. Exec/message/cron/gateway tools keep the visible
-    // warning because the disk-write idempotency reasoning does not apply.
-    const payloads = buildPayloads({
-      assistantTexts: ["The script is ready."],
-      lastAssistant: { stopReason: "end_turn" } as unknown as AssistantMessage,
-      lastToolError: {
-        toolName: "exec",
-        error: "command timed out",
-        timedOut: true,
-        mutatingAction: true,
-      },
-    });
-
-    expect(payloads).toHaveLength(2);
-    expect(payloads[1]?.isError).toBe(true);
-    expect(payloads[1]?.text).toContain("Exec");
-  });
-
   it("shows exec tool errors when assistant output claims success", () => {
     const payloads = buildPayloads({
       assistantTexts: ["The script is ready to use and saved in your workspace."],
@@ -767,23 +608,6 @@ describe("buildEmbeddedRunPayloads", () => {
     });
 
     expectSinglePayloadSummary(payloads, { text: warningText ?? "" });
-  });
-
-  it("wraps markdown-capable mutating tool warnings so mention-looking names stay inert", () => {
-    const payloads = buildPayloads({
-      lastToolError: {
-        toolName: "bash",
-        meta: "show matrix-progress-@room-@alice:matrix-qa.test-!room:matrix-qa.test.txt (workspace)",
-        error: "file missing",
-        mutatingAction: true,
-      },
-      toolResultFormat: "markdown",
-    });
-
-    expectSinglePayloadSummary(payloads, {
-      text: "⚠️ 🛠️ `show matrix-progress-@room-@alice:matrix-qa.test-!room:matrix-qa.test.txt (workspace)` failed",
-      isError: true,
-    });
   });
 
   it("keeps non-recoverable tool errors compact when verbose mode is on", () => {

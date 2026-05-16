@@ -12,6 +12,7 @@ import { normalizeStringEntries } from "@openclaw/normalization-core/string-norm
 import { resolveProviderIdForAuth } from "../provider-auth-aliases.js";
 import { normalizeAuthProfileCredential } from "./credential-normalize.js";
 import { dedupeProfileIds, listProfilesForProvider } from "./profile-list.js";
+import { savePersistedAuthProfileState } from "./state.js";
 import {
   ensureAuthProfileStoreForLocalUpdate,
   loadAuthProfileStoreForAgentFile,
@@ -308,6 +309,7 @@ export async function syncAuthProfile(params: {
       },
     });
     if (updated) {
+      savePersistedAuthProfileState(updated, targetAgentDir);
       updatedAgentDirs.push(targetAgentDir);
     } else {
       skippedAgentDirs.push(targetAgentDir);

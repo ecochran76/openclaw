@@ -411,6 +411,58 @@ describe("getReplyFromConfig fast test bootstrap", () => {
     expect(vi.mocked(runPreparedReplyMock)).not.toHaveBeenCalled();
   });
 
+  it("handles exact status question without starting a model reply", async () => {
+    const home = await fs.mkdtemp(path.join(os.tmpdir(), "openclaw-status-question-fast-"));
+    const cfg = markCompleteReplyConfig({
+      agents: {
+        defaults: {
+          model: "openai/gpt-5.5",
+          workspace: path.join(home, "workspace"),
+        },
+      },
+      session: { store: path.join(home, "sessions.json") },
+    } as OpenClawConfig);
+    vi.mocked(resolveDefaultModelMock).mockReturnValueOnce({
+      defaultProvider: "openai",
+      defaultModel: "gpt-5.5",
+      aliasIndex: emptyAliasIndex(),
+    });
+    mocks.resolveReplyDirectives.mockResolvedValueOnce(
+      createGetReplyContinueDirectivesResult({
+        body: "status?",
+        abortKey: "agent:main:slack:c0ahqqcg7j4",
+        from: "slack:user:U123",
+        to: "slack:C0AHQQCG7J4",
+        senderId: "U123",
+        commandSource: "text",
+        senderIsOwner: true,
+        resetHookTriggered: false,
+      }),
+    );
+
+    const reply = await getReplyFromConfig(
+      buildGetReplyCtx({
+        Body: "status?",
+        BodyForAgent: "status?",
+        RawBody: "status?",
+        CommandBody: "status?",
+        CommandSource: "text",
+        CommandAuthorized: true,
+        SessionKey: "agent:main:slack:c0ahqqcg7j4",
+      }),
+      undefined,
+      cfg,
+    );
+
+    expect(Array.isArray(reply)).toBe(false);
+    if (!reply || Array.isArray(reply)) {
+      throw new Error("expected status reply text");
+    }
+    expect(reply.text).toContain("OpenClaw");
+    expect(mocks.resolveReplyDirectives).not.toHaveBeenCalled();
+    expect(vi.mocked(runPreparedReplyMock)).not.toHaveBeenCalled();
+  });
+
   it("uses configured agent thinking defaults for native /status", async () => {
     const home = await fs.mkdtemp(path.join(os.tmpdir(), "openclaw-native-status-agent-think-"));
     const targetSessionKey = "agent:main:telegram:123";

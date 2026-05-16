@@ -13,12 +13,24 @@ export const AUTH_STORE_VERSION = 1;
 
 /** @deprecated Anthropic provider-owned CLI profile id; do not use from third-party plugins. */
 export const CLAUDE_CLI_PROFILE_ID = "anthropic:claude-cli";
-/** @deprecated OpenAI provider-owned CLI profile id; do not use from third-party plugins. */
-export const CODEX_CLI_PROFILE_ID = "openai:codex-cli";
+/** @deprecated OpenAI Codex provider-owned CLI profile id; do not use from third-party plugins. */
+export const CODEX_CLI_PROFILE_ID = "openai-codex:codex-cli";
 /** Default OpenAI/Codex OAuth profile id used for migrated stores. */
-export const OPENAI_CODEX_DEFAULT_PROFILE_ID = "openai:default";
+export const OPENAI_CODEX_DEFAULT_PROFILE_ID = "openai-codex:default";
 /** @deprecated MiniMax provider-owned CLI profile id; do not use from third-party plugins. */
 export const MINIMAX_CLI_PROFILE_ID = "minimax-portal:minimax-cli";
+
+/** Auth-store file lock policy for per-store writes. */
+export const AUTH_STORE_LOCK_OPTIONS = {
+  retries: {
+    retries: 10,
+    factor: 2,
+    minTimeout: 100,
+    maxTimeout: 10_000,
+    randomize: true,
+  },
+  stale: 30_000,
+} as const;
 
 // Invariant: OAUTH_REFRESH_CALL_TIMEOUT_MS < OAUTH_REFRESH_LOCK_OPTIONS.stale
 // so a legitimate refresh's critical section always finishes well before
