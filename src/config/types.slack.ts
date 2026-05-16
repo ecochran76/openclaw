@@ -240,6 +240,8 @@ export type SlackAccountConfig = {
    * Legacy key: channels.slack.dm.allowFrom.
    */
   allowFrom?: Array<string | number>;
+  /** Compatibility no-op for stale doctor/plugin metadata; Slack routes groups via channels.*.users. */
+  groupAllowFrom?: Array<string | number>;
   /** Default delivery target for CLI --deliver when no explicit --reply-to is provided. */
   defaultTo?: string;
   dm?: SlackDmConfig;

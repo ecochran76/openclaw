@@ -131,6 +131,25 @@ describe('account dmPolicy="allowlist" uses inherited allowFrom', () => {
       "allowFrom",
     );
   });
+
+  it("accepts Slack groupAllowFrom as stale doctor metadata compatibility", () => {
+    expect(
+      SlackConfigSchema.safeParse({
+        allowFrom: ["U123"],
+        groupAllowFrom: ["U123"],
+        botToken: "xoxb-top",
+        appToken: "xapp-top",
+        accounts: {
+          work: {
+            allowFrom: ["U456"],
+            groupAllowFrom: ["U456"],
+            botToken: "xoxb-work",
+            appToken: "xapp-work",
+          },
+        },
+      }).success,
+    ).toBe(true);
+  });
 });
 
 describe("Discord mentionAliases schema", () => {

@@ -1036,6 +1036,9 @@ export const SlackAccountSchema = z
     // inheritance in multi-account setups (shallow merge works; nested dm object doesn't).
     dmPolicy: DmPolicySchema.optional(),
     allowFrom: z.array(z.union([z.string(), z.number()])).optional(),
+    // Compatibility guard for stale doctor/plugin metadata. Slack channel routing
+    // uses channels.*.users, but older repair paths may write this sender key.
+    groupAllowFrom: z.array(z.union([z.string(), z.number()])).optional(),
     defaultTo: z.string().optional(),
     dm: SlackDmSchema.optional(),
     channels: z.record(z.string(), SlackChannelSchema.optional()).optional(),
