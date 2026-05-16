@@ -1575,6 +1575,7 @@ export async function runCodexAppServerAttempt(
   let turnCompletionIdleTimeoutMessage: string | undefined;
   let clientClosedPromptError: string | undefined;
   let clientClosedAbort = false;
+  let terminalErrorPrompt: string | undefined;
   let lifecycleStarted = false;
   let lifecycleTerminalEmitted = false;
   let resolveCompletion: (() => void) | undefined;
@@ -2169,7 +2170,8 @@ export async function runCodexAppServerAttempt(
     const isTerminalErrorNotification =
       isCurrentTurnNotification &&
       notification.method === "error" &&
-      !isRetryableErrorNotification(notification.params);
+      (!isRetryableErrorNotification(notification.params) ||
+        isHighConfidenceAuthErrorNotification(notification.params));
     if (isCurrentTurnNotification && notification.method === "error") {
       if (!isTerminalErrorNotification) {
         disarmTurnCompletionIdleWatch();
@@ -2235,6 +2237,9 @@ export async function runCodexAppServerAttempt(
       isTerminalTurnNotificationForTurn(notification, turnId) || isTerminalErrorNotification;
     if (isTurnTerminal) {
       terminalTurnNotificationQueued = true;
+    }
+    if (isTerminalErrorNotification) {
+      terminalErrorPrompt = readCodexErrorNotificationMessage(notification.params);
     }
     try {
       await waitForCodexNotificationDispatchTurn();
@@ -2955,7 +2960,7 @@ export async function runCodexAppServerAttempt(
         ? turnCompletionIdleTimeoutMessage
         : timedOut
           ? "codex app-server attempt timed out"
-          : result.promptError);
+          : (result.promptError ?? terminalErrorPrompt));
     const finalPromptErrorMessage =
       typeof finalPromptError === "string"
         ? finalPromptError
@@ -2983,7 +2988,9 @@ export async function runCodexAppServerAttempt(
       });
     }
     const finalPromptErrorSource =
-      timedOut || clientClosedPromptError ? "prompt" : result.promptErrorSource;
+      timedOut || clientClosedPromptError
+        ? "prompt"
+        : (result.promptErrorSource ?? (terminalErrorPrompt ? "prompt" : null));
     const codexAppServerFailureKind = clientClosedPromptError
       ? "client_closed_before_turn_completed"
       : turnCompletionIdleTimedOut
@@ -4795,6 +4802,22 @@ function isRetryableErrorNotification(value: JsonValue | undefined): boolean {
     return false;
   }
   return readBoolean(value, "willRetry") === true || readBoolean(value, "will_retry") === true;
+}
+
+function isHighConfidenceAuthErrorNotification(value: JsonValue | undefined): boolean {
+  const message = readCodexErrorNotificationMessage(value) ?? "";
+  return /could not parse your authentication token/i.test(message);
+}
+
+function readCodexErrorNotificationMessage(value: JsonValue | undefined): string | undefined {
+  if (!isJsonObject(value)) {
+    return undefined;
+  }
+  const error = value.error;
+  if (!isJsonObject(error)) {
+    return undefined;
+  }
+  return readString(error, "message");
 }
 
 function isTerminalTurnStatus(status: string | undefined): boolean {

@@ -7388,6 +7388,37 @@ describe("runCodexAppServerAttempt", () => {
     });
   });
 
+  it("treats unparsable auth token errors as terminal even when Codex marks them retryable", async () => {
+    const sessionFile = path.join(tempDir, "session.jsonl");
+    const workspaceDir = path.join(tempDir, "workspace");
+    const harness = createStartedThreadHarness();
+
+    const params = createParams(sessionFile, workspaceDir);
+    params.timeoutMs = 10_000;
+    const run = runCodexAppServerAttempt(params, {
+      pluginConfig: { appServer: { turnTerminalIdleTimeoutMs: 60_000 } },
+    });
+    await harness.waitForMethod("turn/start");
+    await harness.notify({
+      method: "error",
+      params: {
+        threadId: "thread-1",
+        turnId: "turn-1",
+        error: {
+          message:
+            'unexpected status 401 Unauthorized: {"detail":"Could not parse your authentication token. Please try signing in again."}',
+        },
+        willRetry: true,
+      },
+    });
+
+    await expect(run).resolves.toMatchObject({
+      promptError:
+        'unexpected status 401 Unauthorized: {"detail":"Could not parse your authentication token. Please try signing in again."}',
+      promptErrorSource: "prompt",
+    });
+  });
+
   it("fails fast when codex stalls after a ChatGPT auth refresh response", async () => {
     const sessionFile = path.join(tempDir, "session.jsonl");
     const workspaceDir = path.join(tempDir, "workspace");
