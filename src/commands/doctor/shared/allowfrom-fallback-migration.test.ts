@@ -99,6 +99,21 @@ describe("doctor group allowFrom fallback migration", () => {
     });
   });
 
+  it("skips Slack route allowlists even when stale metadata reports sender fallback", () => {
+    const cfg = {
+      channels: {
+        slack: {
+          allowFrom: ["U-parent"],
+          accounts: {
+            soylei: { allowFrom: ["U-soylei"] },
+          },
+        },
+      },
+    };
+
+    expect(maybeRepairGroupAllowFromFallback(cfg)).toEqual({ config: cfg, changes: [] });
+  });
+
   it("skips disabled channels, disabled accounts, and channels without fallback", () => {
     const cfg = {
       channels: {

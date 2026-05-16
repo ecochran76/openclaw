@@ -15,6 +15,7 @@ const ACCOUNT_GROUP_ALLOW_FROM_PATH = [
   ACCOUNT_SCHEMA_WILDCARD,
   "groupAllowFrom",
 ] as const;
+const ROUTE_GROUP_ALLOWLIST_CHANNELS = new Set(["slack"]);
 
 type ChannelRecord = Record<string, unknown>;
 type SchemaPath = readonly string[];
@@ -165,6 +166,12 @@ export function maybeRepairGroupAllowFromFallback(cfg: OpenClawConfig): {
       continue;
     }
     if (isDisabled(channelConfig)) {
+      continue;
+    }
+    // Slack group access is route-scoped through channels.*.users. Stale
+    // external plugin metadata can otherwise make doctor propose an invalid
+    // sender-style groupAllowFrom repair for Slack accounts.
+    if (ROUTE_GROUP_ALLOWLIST_CHANNELS.has(channelName)) {
       continue;
     }
     if (!getDoctorChannelCapabilities(channelName).groupAllowFromFallbackToAllowFrom) {
