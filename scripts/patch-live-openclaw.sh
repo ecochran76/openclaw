@@ -18,6 +18,7 @@ set -euo pipefail
 #   OPENCLAW_PATCH_RESTART_FLAG_FILE=/tmp/openclaw-patch-restart-needed.flag
 #   OPENCLAW_PATCH_CLI_TIMEOUT_SEC=180
 #   OPENCLAW_PATCH_RESTART_TIMEOUT_SEC=180
+#   OPENCLAW_PATCH_EXTERNAL_PLUGINS=auto|slack,discord
 
 DRY_RUN=0
 PATCH_EXPECT_BRANCH="${OPENCLAW_PATCH_EXPECT_BRANCH:-}"
@@ -26,6 +27,8 @@ PATCH_SKIP_RESTART="${OPENCLAW_PATCH_SKIP_RESTART:-0}"
 PATCH_RESTART_FLAG_FILE="${OPENCLAW_PATCH_RESTART_FLAG_FILE:-}"
 PATCH_CLI_TIMEOUT_SEC="${OPENCLAW_PATCH_CLI_TIMEOUT_SEC:-180}"
 PATCH_RESTART_TIMEOUT_SEC="${OPENCLAW_PATCH_RESTART_TIMEOUT_SEC:-180}"
+PATCH_EXTERNAL_PLUGINS_SPEC="${OPENCLAW_PATCH_EXTERNAL_PLUGINS:-}"
+PATCH_EXTERNAL_PLUGIN_IDS=()
 
 while [[ $# -gt 0 ]]; do
   case "$1" in
@@ -45,6 +48,14 @@ while [[ $# -gt 0 ]]; do
       PATCH_SKIP_RESTART=1
       shift
       ;;
+    --patch-external-plugins)
+      PATCH_EXTERNAL_PLUGINS_SPEC="${PATCH_EXTERNAL_PLUGINS_SPEC:-auto}"
+      shift
+      ;;
+    --patch-external-plugin)
+      PATCH_EXTERNAL_PLUGIN_IDS+=("$2")
+      shift 2
+      ;;
     -h|--help)
       cat <<'EOF'
 Usage: patch-live-openclaw.sh [options]
@@ -54,6 +65,8 @@ Options:
   --expect-branch <name>       Warn/error if current git branch differs
   --require-expected-branch    Treat branch mismatch as fatal
   --skip-restart               Install bits but do not restart gateway service
+  --patch-external-plugins     Rebuild/install matching installed external plugins
+  --patch-external-plugin <id> Rebuild/install one external plugin from extensions/<id>
   -h, --help                   Show help
 EOF
       exit 0
@@ -89,16 +102,11 @@ run() {
   fi
 }
 
-pack_tarball() {
-  local pack_json filename
-  if [[ "$DRY_RUN" == "1" ]]; then
-    printf '[dry-run] %s\n' "'$NPM_BIN' pack --ignore-scripts --json --pack-destination '$PACK_DIR'"
-    return 0
-  fi
-
-  pack_json="$("$NPM_BIN" pack --ignore-scripts --json --pack-destination "$PACK_DIR")"
-  filename="$(printf '%s' "$pack_json" | node -e '
+parse_npm_pack_tarball_path() {
+  local pack_json="$1"
+  printf '%s' "$pack_json" | PACK_DIR="$PACK_DIR" node -e '
 const fs = require("fs");
+const path = require("path");
 const raw = fs.readFileSync(0, "utf8");
 let parsed;
 try {
@@ -113,15 +121,33 @@ if (typeof filename !== "string" || filename.trim().length === 0) {
   console.error("error: npm pack --json produced no filename");
   process.exit(1);
 }
-process.stdout.write(filename);
-')"
+process.stdout.write(path.join(process.env.PACK_DIR ?? "", filename));
+'
+}
 
-  if [[ -z "$filename" ]]; then
-    echo "error: npm pack --json produced no filename" >&2
-    exit 1
+pack_tarball() {
+  local pack_json
+  if [[ "$DRY_RUN" == "1" ]]; then
+    printf '[dry-run] %s\n' "'$NPM_BIN' pack --ignore-scripts --json --pack-destination '$PACK_DIR'"
+    return 0
   fi
 
-  printf '%s\n' "$PACK_DIR/$filename"
+  pack_json="$("$NPM_BIN" pack --ignore-scripts --json --pack-destination "$PACK_DIR")"
+  parse_npm_pack_tarball_path "$pack_json"
+}
+
+pack_plugin_tarball() {
+  local plugin_dir="$1"
+  local pack_json
+  if [[ "$DRY_RUN" == "1" ]]; then
+    printf '[dry-run] node scripts/lib/plugin-npm-package-manifest.mjs --run %q -- %q pack --ignore-scripts --json --pack-destination %q\n' \
+      "$plugin_dir" "$NPM_BIN" "$PACK_DIR" >&2
+    printf '%s\n' "$PACK_DIR/$(basename "$plugin_dir")-dry-run.tgz"
+    return 0
+  fi
+
+  pack_json="$(node scripts/lib/plugin-npm-package-manifest.mjs --run "$plugin_dir" -- "$NPM_BIN" pack --ignore-scripts --json --pack-destination "$PACK_DIR")"
+  parse_npm_pack_tarball_path "$pack_json"
 }
 
 send_patch_notification() {
@@ -232,6 +258,113 @@ if command -v direnv >/dev/null 2>&1 &&
 fi
 exec openclaw "$@"
 ' bash "$@"
+}
+
+collect_publishable_plugin_packages() {
+  node -e '
+const fs = require("fs");
+const path = require("path");
+const repoRoot = process.argv[1];
+const extensionsRoot = path.join(repoRoot, "extensions");
+if (!fs.existsSync(extensionsRoot)) process.exit(0);
+for (const entry of fs.readdirSync(extensionsRoot, { withFileTypes: true })) {
+  if (!entry.isDirectory()) continue;
+  const dir = path.join("extensions", entry.name);
+  const packagePath = path.join(repoRoot, dir, "package.json");
+  if (!fs.existsSync(packagePath)) continue;
+  const packageJson = JSON.parse(fs.readFileSync(packagePath, "utf8"));
+  if (packageJson.openclaw?.release?.publishToNpm !== true) continue;
+  const manifestPath = path.join(repoRoot, dir, "openclaw.plugin.json");
+  let id = entry.name;
+  if (fs.existsSync(manifestPath)) {
+    const manifest = JSON.parse(fs.readFileSync(manifestPath, "utf8"));
+    if (typeof manifest.id === "string" && manifest.id) id = manifest.id;
+  }
+  console.log([id, dir, packageJson.name ?? "", packageJson.version ?? ""].join("\t"));
+}
+' "$REPO_DIR"
+}
+
+append_csv_plugin_ids() {
+  local spec="$1"
+  local old_ifs item
+  old_ifs="$IFS"
+  IFS=','
+  for item in $spec; do
+    item="${item#"${item%%[![:space:]]*}"}"
+    item="${item%"${item##*[![:space:]]}"}"
+    [[ -n "$item" ]] || continue
+    PATCH_EXTERNAL_PLUGIN_IDS+=("$item")
+  done
+  IFS="$old_ifs"
+}
+
+collect_external_plugin_patch_targets() {
+  local spec="$PATCH_EXTERNAL_PLUGINS_SPEC"
+  local id dir package_name version explicit_id external_plugin_dir
+  local explicit_ids=()
+
+  if [[ -n "$spec" && "$spec" != "auto" && "$spec" != "1" && "$spec" != "true" ]]; then
+    append_csv_plugin_ids "$spec"
+  fi
+
+  if [[ ${#PATCH_EXTERNAL_PLUGIN_IDS[@]} -gt 0 ]]; then
+    for explicit_id in "${PATCH_EXTERNAL_PLUGIN_IDS[@]}"; do
+      while IFS=$'\t' read -r id dir package_name version; do
+        [[ "$id" == "$explicit_id" || "$(basename "$dir")" == "$explicit_id" || "$package_name" == "$explicit_id" ]] || continue
+        explicit_ids+=("$id"$'\t'"$dir"$'\t'"$package_name"$'\t'"$version")
+      done < <(collect_publishable_plugin_packages)
+    done
+    printf '%s\n' "${explicit_ids[@]:-}"
+    return 0
+  fi
+
+  if [[ -z "$spec" ]]; then
+    return 0
+  fi
+
+  while IFS=$'\t' read -r id dir package_name version; do
+    [[ -n "$id" && -n "$dir" ]] || continue
+    external_plugin_dir="$OPENCLAW_ENV_DIR/extensions/$id"
+    if [[ -d "$external_plugin_dir" ]]; then
+      printf '%s\t%s\t%s\t%s\n' "$id" "$dir" "$package_name" "$version"
+    fi
+  done < <(collect_publishable_plugin_packages)
+}
+
+patch_external_plugins_if_requested() {
+  local targets=()
+  local id dir package_name version plugin_tgz
+
+  while IFS= read -r target; do
+    [[ -n "$target" ]] || continue
+    targets+=("$target")
+  done < <(collect_external_plugin_patch_targets)
+
+  if [[ ${#targets[@]} -eq 0 ]]; then
+    if [[ -n "$PATCH_EXTERNAL_PLUGINS_SPEC" || ${#PATCH_EXTERNAL_PLUGIN_IDS[@]} -gt 0 ]]; then
+      echo "info: no matching installed external plugins found for live patch"
+    fi
+    return 0
+  fi
+
+  echo "info: external plugin patch targets:"
+  for target in "${targets[@]}"; do
+    IFS=$'\t' read -r id dir package_name version <<<"$target"
+    printf '  - %s (%s %s) from %s\n' "$id" "${package_name:-package}" "${version:-unknown}" "$dir"
+  done
+
+  for target in "${targets[@]}"; do
+    IFS=$'\t' read -r id dir package_name version <<<"$target"
+    echo "info: building plugin runtime for $id"
+    run "node scripts/lib/plugin-npm-runtime-build.mjs '$dir'"
+    plugin_tgz="$(pack_plugin_tarball "$dir")"
+    echo "info: installing plugin tarball for $id: $plugin_tgz"
+    run_openclaw_cli_bounded "$PATCH_CLI_TIMEOUT_SEC" plugins install "$plugin_tgz" --force
+  done
+
+  echo "info: refreshing plugin registry after external plugin patch"
+  run_openclaw_cli_bounded "$PATCH_CLI_TIMEOUT_SEC" plugins registry --refresh
 }
 
 resolve_npm_bin() {
@@ -492,6 +625,7 @@ if [[ "$DRY_RUN" == "1" ]]; then
   for install_npm_bin in "${INSTALL_NPM_BINS[@]}"; do
     echo "[dry-run] would install latest $PACK_DIR/openclaw-*.tgz globally with $install_npm_bin"
   done
+  patch_external_plugins_if_requested
   echo "done (dry-run)"
   exit 0
 fi
@@ -511,6 +645,7 @@ for install_npm_bin in "${INSTALL_NPM_BINS[@]}"; do
 done
 run_openclaw_cli_bounded "$PATCH_CLI_TIMEOUT_SEC" --version
 verify_installed_openclaw_bins
+patch_external_plugins_if_requested
 
 GATEWAY_STATUS_JSON="$(openclaw_cli gateway status --json 2>/dev/null || true)"
 GATEWAY_SERVICE_LOADED="$(printf '%s' "$GATEWAY_STATUS_JSON" | parse_gateway_service_loaded)"

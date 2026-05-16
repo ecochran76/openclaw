@@ -209,6 +209,12 @@ openclaw plugins inspect slack --runtime --json
 rg -n "slack turn live trace|starting agent turn|agent turn completed" ~/.openclaw/extensions/slack -g '*.js'
 ```
 
+For live patching after an external plugin boundary changes, include the plugin-aware patch step:
+
+```bash
+scripts/patch-live-openclaw.sh --expect-branch ec-main --require-expected-branch --patch-external-plugins
+```
+
 ## When to update this file
 
 Update this index when:
