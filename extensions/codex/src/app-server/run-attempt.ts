@@ -1576,11 +1576,15 @@ export async function runCodexAppServerAttempt(
   let clientClosedPromptError: string | undefined;
   let clientClosedAbort = false;
   let terminalErrorPrompt: string | undefined;
+  let rejectAuthRefreshResponseStall: ((error: Error) => void) | undefined;
   let lifecycleStarted = false;
   let lifecycleTerminalEmitted = false;
   let resolveCompletion: (() => void) | undefined;
   const completion = new Promise<void>((resolve) => {
     resolveCompletion = resolve;
+  });
+  const authRefreshResponseStall = new Promise<never>((_, reject) => {
+    rejectAuthRefreshResponseStall = reject;
   });
   let notificationQueue: Promise<void> = Promise.resolve();
   const turnCompletionIdleTimeoutMs = resolveCodexTurnCompletionIdleTimeoutMs(
@@ -1853,6 +1857,7 @@ export async function runCodexAppServerAttempt(
       lastActivityReason: turnCompletionLastActivityReason,
       ...turnCompletionLastActivityDetails,
     });
+    rejectAuthRefreshResponseStall?.(new Error(turnCompletionIdleTimeoutMessage));
     runAbortController.abort("auth_refresh_response_idle_timeout");
   };
 
@@ -1947,7 +1952,6 @@ export async function runCodexAppServerAttempt(
     const elapsedMs = Math.max(0, Date.now() - authRefreshResponseLastActivityAt);
     const delayMs = Math.max(1, authRefreshResponseIdleTimeoutMs - elapsedMs);
     authRefreshResponseIdleTimer = setTimeout(fireAuthRefreshResponseIdleTimeout, delayMs);
-    authRefreshResponseIdleTimer.unref?.();
   }
 
   const touchTurnCompletionActivity = (
@@ -2648,20 +2652,23 @@ export async function runCodexAppServerAttempt(
   let turn: CodexTurnStartResponse | undefined;
   const startCodexTurn = async (): Promise<CodexTurnStartResponse> =>
     assertCodexTurnStartResponse(
-      await client.request(
-        "turn/start",
-        buildTurnStartParams(params, {
-          threadId: thread.threadId,
-          cwd: codexExecutionCwd,
-          appServer: pluginAppServer,
-          promptText: codexTurnPromptText,
-          sandboxPolicy: codexSandboxPolicy,
-          environmentSelection: codexEnvironmentSelection,
-          heartbeatCollaborationInstructions:
-            workspaceBootstrapContext.heartbeatCollaborationInstructions,
-        }),
-        { timeoutMs: params.timeoutMs, signal: runAbortController.signal },
-      ),
+      await Promise.race([
+        client.request(
+          "turn/start",
+          buildTurnStartParams(params, {
+            threadId: thread.threadId,
+            cwd: codexExecutionCwd,
+            appServer: pluginAppServer,
+            promptText: codexTurnPromptText,
+            sandboxPolicy: codexSandboxPolicy,
+            environmentSelection: codexEnvironmentSelection,
+            heartbeatCollaborationInstructions:
+              workspaceBootstrapContext.heartbeatCollaborationInstructions,
+          }),
+          { timeoutMs: params.timeoutMs, signal: runAbortController.signal },
+        ),
+        authRefreshResponseStall,
+      ]),
     );
   try {
     runAgentHarnessLlmInputHook({
