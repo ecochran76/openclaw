@@ -1615,7 +1615,6 @@ export async function runCodexAppServerAttempt(
   let turnTerminalIdleWatchArmed = false;
   let authRefreshResponseIdleTimer: ReturnType<typeof setTimeout> | undefined;
   let authRefreshResponseWatchArmed = false;
-  let authRefreshResponseWatchPendingTurnStart = false;
   let authRefreshResponseLastActivityAt = Date.now();
   let turnCompletionLastActivityAt = Date.now();
   let turnCompletionLastActivityReason = "startup";
@@ -2533,11 +2532,7 @@ export async function runCodexAppServerAttempt(
         scheduleTurnProgressWatches();
       }
       if (request.method === "account/chatgptAuthTokens/refresh") {
-        if (turnId && projector) {
-          armAuthRefreshResponseIdleWatch();
-        } else {
-          authRefreshResponseWatchPendingTurnStart = true;
-        }
+        armAuthRefreshResponseIdleWatch();
       }
     }
   });
@@ -2680,7 +2675,11 @@ export async function runCodexAppServerAttempt(
       stream: "codex_app_server.lifecycle",
       data: { phase: "turn_starting", threadId: thread.threadId },
     });
-    turn = await startCodexTurn();
+    turn = await withCodexAbortSignal({
+      signal: runAbortController.signal,
+      abortMessage: "codex app-server turn/start aborted",
+      operation: startCodexTurn,
+    });
   } catch (error) {
     let turnStartError = error;
     if (
@@ -2715,7 +2714,11 @@ export async function runCodexAppServerAttempt(
           data: { phase: "thread_ready_retry", threadId: thread.threadId },
         });
         try {
-          turn = await startCodexTurn();
+          turn = await withCodexAbortSignal({
+            signal: runAbortController.signal,
+            abortMessage: "codex app-server turn/start aborted",
+            operation: startCodexTurn,
+          });
         } catch (retryError) {
           turnStartError = retryError;
         }
@@ -2809,6 +2812,16 @@ export async function runCodexAppServerAttempt(
           systemPromptReport,
         });
       }
+      if (turnCompletionIdleTimedOut && turnCompletionIdleTimeoutMessage) {
+        return buildCodexTurnStartFailureResult({
+          params,
+          message: turnCompletionIdleTimeoutMessage,
+          messagesSnapshot: buildTurnStartFailureMessages(),
+          systemPromptReport,
+          timedOut: true,
+          idleTimedOut: true,
+        });
+      }
       throw turnStartError;
     }
   }
@@ -2870,10 +2883,6 @@ export async function runCodexAppServerAttempt(
     clearTurnTerminalIdleTimer();
     resolveCompletion?.();
   });
-  if (authRefreshResponseWatchPendingTurnStart) {
-    authRefreshResponseWatchPendingTurnStart = false;
-    armAuthRefreshResponseIdleWatch();
-  }
   emitLifecycleStart();
   const activeProjector = projector;
   turnTerminalIdleWatchArmed = true;
@@ -3213,12 +3222,14 @@ function buildCodexTurnStartFailureResult(params: {
   message: string;
   messagesSnapshot: AgentMessage[];
   systemPromptReport: ReturnType<typeof buildCodexSystemPromptReport>;
+  timedOut?: boolean;
+  idleTimedOut?: boolean;
 }): EmbeddedRunAttemptResult {
   return {
     aborted: false,
     externalAbort: false,
-    timedOut: false,
-    idleTimedOut: false,
+    timedOut: params.timedOut ?? false,
+    idleTimedOut: params.idleTimedOut ?? false,
     timedOutDuringCompaction: false,
     timedOutDuringToolExecution: false,
     promptError: params.message,
@@ -4247,6 +4258,29 @@ async function withCodexStartupTimeout<T>(params: {
     if (timeout) {
       clearTimeout(timeout);
     }
+    abortCleanup?.();
+  }
+}
+
+async function withCodexAbortSignal<T>(params: {
+  signal: AbortSignal;
+  abortMessage: string;
+  operation: () => Promise<T>;
+}): Promise<T> {
+  if (params.signal.aborted) {
+    throw new Error(params.abortMessage);
+  }
+  let abortCleanup: (() => void) | undefined;
+  try {
+    return await Promise.race([
+      params.operation(),
+      new Promise<never>((_, reject) => {
+        const abortListener = () => reject(new Error(params.abortMessage));
+        params.signal.addEventListener("abort", abortListener, { once: true });
+        abortCleanup = () => params.signal.removeEventListener("abort", abortListener);
+      }),
+    ]);
+  } finally {
     abortCleanup?.();
   }
 }

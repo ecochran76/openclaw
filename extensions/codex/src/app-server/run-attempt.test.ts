@@ -7392,7 +7392,7 @@ describe("runCodexAppServerAttempt", () => {
     const sessionFile = path.join(tempDir, "session.jsonl");
     const workspaceDir = path.join(tempDir, "workspace");
     const agentDir = path.join(tempDir, "agent");
-    const authProfileId = "openai-codex:ecochran76";
+    const authProfileId = "openai-codex:pcg";
     await fs.mkdir(agentDir, { recursive: true });
     await fs.writeFile(
       path.join(agentDir, "auth-profiles.json"),
@@ -7400,9 +7400,9 @@ describe("runCodexAppServerAttempt", () => {
         version: 1,
         profiles: {
           [authProfileId]: {
-            type: "token",
+            type: "oauth",
             provider: "openai-codex",
-            token: "stale-chatgpt-access-token",
+            access: "stale-chatgpt-access-token",
             email: "eric@example.test",
           },
         },
@@ -7439,7 +7439,7 @@ describe("runCodexAppServerAttempt", () => {
     expect(result.promptError).toContain("may need re-authentication");
   });
 
-  it("arms the auth-refresh stall guard when Codex refreshes before turn/start returns", async () => {
+  it("fails fast when Codex refreshes auth while turn/start is still pending", async () => {
     const sessionFile = path.join(tempDir, "session.jsonl");
     const workspaceDir = path.join(tempDir, "workspace");
     const agentDir = path.join(tempDir, "agent");
@@ -7451,9 +7451,9 @@ describe("runCodexAppServerAttempt", () => {
         version: 1,
         profiles: {
           [authProfileId]: {
-            type: "token",
+            type: "oauth",
             provider: "openai-codex",
-            token: "stale-chatgpt-access-token",
+            access: "stale-chatgpt-access-token",
             email: "pcg@example.test",
           },
         },
@@ -7490,8 +7490,6 @@ describe("runCodexAppServerAttempt", () => {
       accessToken: "stale-chatgpt-access-token",
       chatgptAccountId: "pcg@example.test",
     });
-    releaseTurnStart?.(turnStartResult());
-
     await expect(run).resolves.toMatchObject({
       promptErrorSource: "prompt",
       timedOut: true,
@@ -7499,6 +7497,7 @@ describe("runCodexAppServerAttempt", () => {
     const result = await run;
     expect(result.promptError).toContain("did not emit a turn event after refreshing ChatGPT");
     expect(result.promptError).toContain(authProfileId);
+    releaseTurnStart?.(turnStartResult());
   });
 
   it("fires llm_output and agent_end when turn/start fails", async () => {
