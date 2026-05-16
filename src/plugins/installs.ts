@@ -18,6 +18,52 @@ const CLAWHUB_TRUST_INSTALL_RECORD_FIELDS = [
   "clawhubTrustAcknowledgedAt",
 ] as const satisfies readonly (keyof PluginInstallRecord)[];
 
+const INSTALL_RECORD_DERIVED_FIELDS = [
+  "resolvedName",
+  "resolvedVersion",
+  "resolvedSpec",
+  "integrity",
+  "shasum",
+  "resolvedAt",
+  "artifactKind",
+  "artifactFormat",
+  "npmIntegrity",
+  "npmShasum",
+  "npmTarballName",
+  "clawhubUrl",
+  "clawhubPackage",
+  "clawhubFamily",
+  "clawhubChannel",
+  "clawpackSha256",
+  "clawpackSpecVersion",
+  "clawpackManifestSha256",
+  "clawpackSize",
+  "gitUrl",
+  "gitRef",
+  "gitCommit",
+] as const satisfies readonly (keyof PluginInstallRecord)[];
+
+const INSTALL_RECORD_CLEAR_WHEN_OMITTED_FIELDS = [
+  ...INSTALL_RECORD_DERIVED_FIELDS,
+  ...CLAWHUB_TRUST_INSTALL_RECORD_FIELDS,
+] as const satisfies readonly (keyof PluginInstallRecord)[];
+
+function mergePluginInstallRecord(
+  previous: PluginInstallRecord | undefined,
+  next: PluginInstallRecord,
+): PluginInstallRecord {
+  const merged: PluginInstallRecord = {
+    ...previous,
+    ...next,
+  };
+  for (const field of INSTALL_RECORD_CLEAR_WHEN_OMITTED_FIELDS) {
+    if (next[field] === undefined) {
+      delete merged[field];
+    }
+  }
+  return merged;
+}
+
 /** Builds install record fields from resolved npm package metadata. */
 export function buildNpmResolutionInstallFields(
   resolution?: NpmSpecResolution,
@@ -51,14 +97,12 @@ export function recordPluginInstall(
   update: PluginInstallUpdate,
 ): OpenClawConfig {
   const { pluginId, ...record } = update;
-  const previous = clearStaleInstallRecordFields(cfg.plugins?.installs?.[pluginId]);
   const installs = {
     ...cfg.plugins?.installs,
-    [pluginId]: {
-      ...previous,
+    [pluginId]: mergePluginInstallRecord(cfg.plugins?.installs?.[pluginId], {
       ...record,
       installedAt: record.installedAt ?? new Date().toISOString(),
-    },
+    }),
   };
 
   return {
@@ -71,15 +115,4 @@ export function recordPluginInstall(
       },
     },
   };
-}
-
-function clearStaleInstallRecordFields(record: PluginInstallRecord | undefined) {
-  if (!record) {
-    return undefined;
-  }
-  const next: PluginInstallRecord = { ...record };
-  for (const field of CLAWHUB_TRUST_INSTALL_RECORD_FIELDS) {
-    delete next[field];
-  }
-  return next;
 }

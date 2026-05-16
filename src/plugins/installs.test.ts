@@ -192,4 +192,53 @@ describe("recordPluginInstall", () => {
       installedAt: "2026-05-15T00:00:03.000Z",
     });
   });
+
+  it("clears stale derived metadata when replacing an install record", () => {
+    vi.useFakeTimers();
+    vi.setSystemTime(new Date("2026-05-11T04:00:00.000Z"));
+
+    const next = recordPluginInstall(
+      {
+        plugins: {
+          installs: {
+            slack: {
+              source: "npm",
+              spec: "@openclaw/slack",
+              installPath: "/tmp/old-slack",
+              version: "2026.5.12",
+              resolvedName: "@openclaw/slack",
+              resolvedVersion: "2026.5.12",
+              resolvedSpec: "@openclaw/slack@2026.5.12",
+              integrity: "sha512-old",
+              shasum: "old-sha",
+              resolvedAt: "2026-05-10T00:00:00.000Z",
+              artifactKind: "npm-pack",
+              artifactFormat: "tgz",
+              npmIntegrity: "sha512-old-pack",
+              npmShasum: "old-pack-sha",
+              npmTarballName: "openclaw-slack-2026.5.12.tgz",
+              installedAt: "2026-05-10T00:00:00.000Z",
+            },
+          },
+        },
+      },
+      {
+        pluginId: "slack",
+        source: "archive",
+        spec: "@openclaw/slack",
+        sourcePath: "/tmp/openclaw-slack-2026.5.16.tgz",
+        installPath: "/tmp/new-slack",
+        version: "2026.5.16",
+      },
+    );
+
+    expect(next.plugins?.installs?.slack).toEqual({
+      source: "archive",
+      spec: "@openclaw/slack",
+      sourcePath: "/tmp/openclaw-slack-2026.5.16.tgz",
+      installPath: "/tmp/new-slack",
+      version: "2026.5.16",
+      installedAt: "2026-05-11T04:00:00.000Z",
+    });
+  });
 });
