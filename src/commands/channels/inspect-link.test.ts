@@ -4,6 +4,7 @@ import path from "node:path";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import type { SessionEntry } from "../../config/sessions/types.js";
 import {
+  buildAdmissionReport,
   buildInspectLinkIngressReport,
   buildRelatedSlackMessages,
   buildSessionMatches,
@@ -159,6 +160,56 @@ describe("buildInspectLinkIngressReport", () => {
       ts: "1778010362.706599",
       user: "U123",
       textPreview: "please investigate",
+    });
+  });
+});
+
+describe("buildAdmissionReport", () => {
+  it("reports admitted when a scanned transcript contains the linked timestamp", () => {
+    const report = buildAdmissionReport({
+      linkedMessage: {
+        ts: "1779124819.383009",
+        user: "U123",
+        text: "<@U_BOT> please fix this",
+      },
+      linkedNeedles: ["1779124819.383009", "please fix this"],
+      fileMatches: [
+        {
+          agentId: "soylei-website",
+          path: "/tmp/session.jsonl",
+          bytes: 100,
+          hits: ["1779124819.383009"],
+        },
+      ],
+    });
+
+    expect(report).toMatchObject({
+      verdict: "admitted",
+      evidence: ["session.jsonl:1779124819.383009"],
+    });
+  });
+
+  it("reports no admission record when Slack returned the message but sessions lack it", () => {
+    const report = buildAdmissionReport({
+      linkedMessage: {
+        ts: "1779124819.383009",
+        user: "U123",
+        text: "<@U_BOT> please fix this",
+      },
+      linkedNeedles: ["1779124819.383009", "please fix this"],
+      fileMatches: [
+        {
+          agentId: "soylei-website",
+          path: "/tmp/session.jsonl",
+          bytes: 100,
+          hits: ["1779054888.591249"],
+        },
+      ],
+    });
+
+    expect(report).toMatchObject({
+      verdict: "no-openclaw-admission-record",
+      evidence: [],
     });
   });
 });

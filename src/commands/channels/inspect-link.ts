@@ -44,6 +44,10 @@ type ChannelAccountLike = Record<string, unknown> & {
   lastStartAt?: number | null;
   lastInboundAt?: number | null;
   lastTransportActivityAt?: number | null;
+  lastConnectedAt?: number | null;
+  lastDisconnect?: { at?: number; error?: string } | null;
+  healthState?: string;
+  lastError?: string | null;
   connected?: boolean;
   running?: boolean;
 };
@@ -80,6 +84,12 @@ type TrajectorySummary = {
   incompleteRuns: Array<{ runId: string; startedAt?: string }>;
 };
 
+type AdmissionReport = {
+  verdict: "admitted" | "no-openclaw-admission-record" | "linked-message-not-found" | "not-scanned";
+  explanation: string;
+  evidence: string[];
+};
+
 type InspectIngressReport = {
   channel: "slack";
   accountId: string;
@@ -96,9 +106,13 @@ type InspectIngressReport = {
   account: {
     running?: boolean;
     connected?: boolean;
+    healthState?: string;
     lastStartAt?: number | null;
+    lastConnectedAt?: number | null;
+    lastDisconnect?: { at?: number; error?: string } | null;
     lastInboundAt?: number | null;
     lastTransportActivityAt?: number | null;
+    lastError?: string | null;
   };
   verdict:
     | "linked-message-not-found"
@@ -117,6 +131,7 @@ type InspectLinkReport = {
   parsed: ParsedSlackPermalink;
   relatedSlackMessages: RelatedSlackMessage[];
   ingress: InspectIngressReport;
+  admission: AdmissionReport;
   sessionScan: {
     storesScanned: Array<{ agentId: string; storePath: string }>;
     sessionMatches: SessionMatch[];
@@ -189,6 +204,21 @@ function textPreview(raw: unknown): string | undefined {
     return undefined;
   }
   return collapsed.length > 120 ? `${collapsed.slice(0, 117)}...` : collapsed;
+}
+
+function textNeedles(raw: unknown): string[] {
+  if (typeof raw !== "string") {
+    return [];
+  }
+  const compact = raw.replace(/\s+/g, " ").trim();
+  if (!compact) {
+    return [];
+  }
+  const mentionStripped = compact
+    .replace(/<@[A-Z0-9]+>/gi, "")
+    .replace(/\s+/g, " ")
+    .trim();
+  return stringValues([compact, mentionStripped]);
 }
 
 function getAccountsForChannel(
@@ -303,9 +333,13 @@ export function buildInspectLinkIngressReport(params: {
   const accountSummary = {
     running: account?.running,
     connected: account?.connected,
+    healthState: account?.healthState,
     lastStartAt: account?.lastStartAt,
+    lastConnectedAt: account?.lastConnectedAt,
+    lastDisconnect: account?.lastDisconnect,
     lastInboundAt: account?.lastInboundAt,
     lastTransportActivityAt: account?.lastTransportActivityAt,
+    lastError: account?.lastError,
   };
   if (!params.linkedMessage) {
     return {
@@ -605,6 +639,47 @@ async function collectFileMatches(params: {
   return scanned.filter((match): match is FileMatch => Boolean(match));
 }
 
+export function buildAdmissionReport(params: {
+  linkedMessage?: MessageLike;
+  linkedNeedles: string[];
+  fileMatches: FileMatch[];
+}): AdmissionReport {
+  if (!params.linkedMessage) {
+    return {
+      verdict: "linked-message-not-found",
+      explanation:
+        "Slack history did not return the linked message, so admission cannot be checked.",
+      evidence: [],
+    };
+  }
+  if (params.linkedNeedles.length === 0) {
+    return {
+      verdict: "not-scanned",
+      explanation: "No linked-message timestamp or text needle was available for transcript scan.",
+      evidence: [],
+    };
+  }
+  const evidence = params.fileMatches.flatMap((match) =>
+    match.hits
+      .filter((hit) => params.linkedNeedles.includes(hit))
+      .map((hit) => `${path.basename(match.path)}:${hit}`),
+  );
+  if (evidence.length > 0) {
+    return {
+      verdict: "admitted",
+      explanation:
+        "A transcript or trajectory sidecar contains the linked message timestamp or text.",
+      evidence,
+    };
+  }
+  return {
+    verdict: "no-openclaw-admission-record",
+    explanation:
+      "Slack history returned the linked message, but no scanned OpenClaw transcript or trajectory sidecar contains that exact message timestamp or text.",
+    evidence: [],
+  };
+}
+
 function formatTimestamp(raw: number | undefined): string {
   if (typeof raw !== "number" || !Number.isFinite(raw)) {
     return "n/a";
@@ -618,6 +693,23 @@ export function formatChannelsInspectLinkReport(report: InspectLinkReport): stri
   lines.push(`Thread: ${report.parsed.threadTs ?? "n/a"}`);
   lines.push(`Account: ${report.accountId}`);
   lines.push(`Ingress: ${report.ingress.verdict} - ${report.ingress.explanation}`);
+  lines.push(`Admission: ${report.admission.verdict} - ${report.admission.explanation}`);
+  if (report.admission.evidence.length > 0) {
+    lines.push(`Admission evidence: ${report.admission.evidence.join(", ")}`);
+  }
+  lines.push(`Health: ${report.ingress.account.healthState ?? "unknown"}`);
+  lines.push(
+    `Last connected: ${formatTimestamp(report.ingress.account.lastConnectedAt ?? undefined)}`,
+  );
+  const disconnect = report.ingress.account.lastDisconnect;
+  if (disconnect) {
+    lines.push(
+      `Last disconnect: ${formatTimestamp(disconnect.at)}${disconnect.error ? ` error=${disconnect.error}` : ""}`,
+    );
+  }
+  if (report.ingress.account.lastError) {
+    lines.push(`Last error: ${report.ingress.account.lastError}`);
+  }
   if (report.relatedSlackMessages.length > 0) {
     lines.push("");
     lines.push(theme.heading("Related Slack Messages"));
@@ -760,12 +852,15 @@ export async function channelsInspectLinkCommand(
     accountId,
     relatedSlackMessages,
   });
+  const linkedNeedles = stringValues([parsed.messageTs, ...textNeedles(linkedMessage?.text)]);
   const needles = stringValues([
+    ...linkedNeedles,
     parsed.messageTs,
     parsed.threadTs,
     ...relatedSlackMessages.map((message) => message.ts),
   ]);
   const fileMatches = await collectFileMatches({ matches: sessionMatches.slice(0, 20), needles });
+  const admission = buildAdmissionReport({ linkedMessage, linkedNeedles, fileMatches });
   const report: InspectLinkReport = {
     ok: true,
     channel: "slack",
@@ -773,6 +868,7 @@ export async function channelsInspectLinkCommand(
     parsed,
     relatedSlackMessages,
     ingress,
+    admission,
     sessionScan: {
       storesScanned: targets.map((target) => ({
         agentId: target.agentId,
