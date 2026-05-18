@@ -56,6 +56,15 @@ Set options:
   --reply-channel <name>    Optional delivery channel, for example slack.
   --reply-account <id>      Optional delivery account id.
   --reply-to <target>       Optional delivery target.
+  --active-reaction <emoji> Optional reaction to set while the trigger is active.
+  --reaction-message-id <id>
+                            Message id/ts to react to while active.
+  --reaction-target <target>
+                            Reaction target/channel. Defaults to --reply-to.
+  --reaction-channel <name> Reaction channel. Defaults to --reply-channel.
+  --reaction-account <id>   Reaction account id. Defaults to --reply-account.
+  --human-ack-reaction <emoji>
+                            Optional reaction to set when human ack is required.
   --deliver                 Pass --deliver to openclaw agent when resuming.
   --state-dir <dir>         Default: ~/.openclaw/wake-triggers
 `;
@@ -288,6 +297,70 @@ function resumeArgs(record, reason) {
   return args;
 }
 
+function reactionArgs(record, emoji, remove = false) {
+  const args = [
+    "message",
+    "react",
+    "--channel",
+    record.reactionChannel || record.replyChannel,
+    "--target",
+    record.reactionTarget || record.replyTo,
+    "--message-id",
+    record.reactionMessageId,
+    "--emoji",
+    emoji,
+    "--json",
+  ];
+  if (record.reactionAccount || record.replyAccount) {
+    args.push("--account", record.reactionAccount || record.replyAccount);
+  }
+  if (remove) args.push("--remove");
+  return args;
+}
+
+function canReact(record, emoji) {
+  return Boolean(
+    emoji &&
+    record.reactionMessageId &&
+    (record.reactionChannel || record.replyChannel) &&
+    (record.reactionTarget || record.replyTo),
+  );
+}
+
+function applyReaction(record, emoji, remove = false) {
+  if (!canReact(record, emoji)) return false;
+  const result = spawnSync(record.openclawBin || "openclaw", reactionArgs(record, emoji, remove), {
+    encoding: "utf8",
+    stdio: ["ignore", "pipe", "pipe"],
+    timeout: 30_000,
+  });
+  record.lastReactionAt = nowIso();
+  record.lastReactionExitCode = result.status;
+  record.lastReactionError = result.stderr?.slice(0, 2000) || "";
+  if (result.status === 0) {
+    if (remove) {
+      if (emoji === record.activeReaction) record.activeReactionState = "removed";
+      if (emoji === record.humanAckReaction) record.humanAckReactionState = "removed";
+    } else {
+      if (emoji === record.activeReaction) record.activeReactionState = "set";
+      if (emoji === record.humanAckReaction) record.humanAckReactionState = "set";
+    }
+    return true;
+  }
+  if (emoji === record.activeReaction)
+    record.activeReactionState = remove ? "remove_failed" : "set_failed";
+  if (emoji === record.humanAckReaction) {
+    record.humanAckReactionState = remove ? "remove_failed" : "set_failed";
+  }
+  return false;
+}
+
+function clearActiveReaction(record) {
+  if (record.activeReactionState === "set") {
+    applyReaction(record, record.activeReaction, true);
+  }
+}
+
 function setCommand(args) {
   const dir = stateDir(args);
   const sessionKey = requireString(args, "session-key");
@@ -321,6 +394,17 @@ function setCommand(args) {
     replyChannel: args["reply-channel"] || "",
     replyAccount: args["reply-account"] || "",
     replyTo: args["reply-to"] || "",
+    activeReaction: args["active-reaction"] || "",
+    reactionMessageId: args["reaction-message-id"] || "",
+    reactionTarget: args["reaction-target"] || args["reply-to"] || "",
+    reactionChannel: args["reaction-channel"] || args["reply-channel"] || "",
+    reactionAccount: args["reaction-account"] || args["reply-account"] || "",
+    activeReactionState: "",
+    humanAckReaction: args["human-ack-reaction"] || "",
+    humanAckReactionState: "",
+    lastReactionAt: "",
+    lastReactionExitCode: null,
+    lastReactionError: "",
     timeoutSeconds: readInt(args, "agent-timeout-seconds", defaults.timeoutSeconds, 1),
     maxAttempts,
     maxAutomatedResumes,
@@ -337,9 +421,25 @@ function setCommand(args) {
   if (!record.successCmd && !record.failureCmd) {
     throw new Error("at least one of --success-cmd or --failure-cmd is required");
   }
+  if (record.activeReaction && !canReact(record, record.activeReaction)) {
+    throw new Error(
+      "--active-reaction requires --reaction-message-id plus reaction target/channel or reply target/channel",
+    );
+  }
+  applyReaction(record, record.activeReaction, false);
   const path = writeRecord(dir, record);
   console.log(
-    JSON.stringify({ ok: true, id: record.id, path, timeoutAt: record.timeoutAt }, null, 2),
+    JSON.stringify(
+      {
+        ok: true,
+        id: record.id,
+        path,
+        timeoutAt: record.timeoutAt,
+        activeReactionState: record.activeReactionState,
+      },
+      null,
+      2,
+    ),
   );
 }
 
@@ -370,6 +470,7 @@ function rmCommand(args) {
   const record = readRecord(path);
   record.state = "cancelled";
   record.updatedAt = nowIso();
+  clearActiveReaction(record);
   writeRecord(dir, record);
   unlinkSync(path);
   console.log(JSON.stringify({ ok: true, removed: id }, null, 2));
@@ -403,6 +504,8 @@ function checkOne(dir, record, args) {
     record.lastFireReason = reason;
     record.humanAckRequiredAt = record.updatedAt;
     record.humanAckReason = `maxAutomatedResumes ${maxAutomatedResumes} reached for session`;
+    clearActiveReaction(record);
+    applyReaction(record, record.humanAckReaction, false);
     writeRecord(dir, record);
     return {
       id: record.id,
@@ -425,6 +528,7 @@ function checkOne(dir, record, args) {
     record.state = "resume_exhausted";
     record.updatedAt = nowIso();
     record.lastFireReason = reason;
+    clearActiveReaction(record);
     writeRecord(dir, record);
     return { id: record.id, state: record.state, action: "exhausted", reason };
   }
@@ -441,6 +545,7 @@ function checkOne(dir, record, args) {
   if (result.status === 0) {
     record.state = `delivered_${reason}`;
     record.deliveredAt = nowIso();
+    clearActiveReaction(record);
     sessionState.automatedResumes += 1;
     sessionState.lastAutomatedResumeAt = record.deliveredAt;
     sessionState.lastTriggerId = record.id;
@@ -478,9 +583,13 @@ function ackCommand(args) {
   for (const path of recordPaths(dir)) {
     const record = readRecord(path);
     if (record.sessionKey === sessionKey && record.state === "requires_human_ack") {
+      if (record.humanAckReactionState === "set") {
+        applyReaction(record, record.humanAckReaction, true);
+      }
       record.state = "pending";
       record.updatedAt = nowIso();
       record.humanAckedAt = record.updatedAt;
+      applyReaction(record, record.activeReaction, false);
       writeRecord(dir, record);
       rearmed += 1;
     }

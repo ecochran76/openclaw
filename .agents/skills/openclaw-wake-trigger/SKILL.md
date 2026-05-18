@@ -34,6 +34,9 @@ node ~/.openclaw/workspace/scripts/wake-trigger.mjs set \
   --reply-channel slack \
   --reply-account soylei \
   --reply-to C06L8DVBWQP \
+  --active-reaction hourglass_flowing_sand \
+  --reaction-message-id 1779054888.591249 \
+  --human-ack-reaction warning \
   --deliver \
   --on-success 'The live-to-dev sync completed. Continue validation in this thread and report the result.' \
   --on-failure 'The live-to-dev sync failed. Inspect the diagnostic file and report the next safe recovery step.' \
@@ -57,6 +60,28 @@ node /home/ecochran76/workspace.local/openclaw.git/scripts/install-wake-trigger-
 
 The checker is a systemd user timer, not a long-lived watch process. It wakes
 every few minutes, evaluates durable trigger records, and exits.
+
+### Active Reactions
+
+For Slack-backed triggers, set a visible reaction on the user message while the
+trigger is active:
+
+```bash
+--active-reaction hourglass_flowing_sand \
+--reaction-message-id 1779054888.591249 \
+--reaction-target C06L8DVBWQP \
+--reaction-channel slack
+```
+
+`--reaction-target` defaults to `--reply-to`, and `--reaction-channel` defaults
+to `--reply-channel`. The checker removes the active reaction when the trigger
+is delivered, exhausted, cancelled, or moved to `requires_human_ack`. If
+`--human-ack-reaction` is set, the checker replaces the active reaction with
+that reaction when human acknowledgement is required.
+
+Reaction add/remove is best-effort. A reaction failure is recorded on the trigger
+as `lastReactionError`, but it must not block trigger creation, checking, or
+resume delivery.
 
 Inspect triggers:
 
@@ -121,6 +146,8 @@ node ~/.openclaw/workspace/scripts/wake-trigger.mjs ack \
   a multi-step autonomous continuation chain.
 - Always set `--timeout-minutes` so the user gets a failure-style resume instead
   of silence.
+- For Slack turns, prefer `--active-reaction hourglass_flowing_sand` with the
+  inbound message ts so the user can see that a bounded wake trigger is armed.
 - Prefer file predicates written by deterministic scripts over broad shell
   greps.
 - Do not set a trigger that runs an unbounded, mutating, or destructive

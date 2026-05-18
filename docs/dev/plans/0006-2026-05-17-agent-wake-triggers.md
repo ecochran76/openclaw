@@ -38,6 +38,8 @@ bounded, agent-facing "wake me when this predicate changes" workflow.
    - session-level `maxAutomatedResumes` guard that requires human ack before
      further self-wake chains
    - session and global default configuration for operator-tuned limits
+   - optional active message reaction while the trigger is armed, removed on
+     delivery, exhaustion, cancellation, or human-ack pause
    - resume via `openclaw agent --agent ... --session-key ... --message ...`
 2. Agent skill:
    - explain when to set a trigger
@@ -66,6 +68,8 @@ bounded, agent-facing "wake me when this predicate changes" workflow.
 - Operators can set limits for the current session or as permanent global
   defaults.
 - A recurring checker can be installed without altering gateway internals.
+- Slack-backed triggers can mark the watched user message with a meaningful
+  active reaction and clean it up when the trigger is no longer active.
 - Trigger records are inspectable and removable by operators.
 
 ## Definition Of Done
