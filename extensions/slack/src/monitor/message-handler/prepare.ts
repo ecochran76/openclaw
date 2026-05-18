@@ -42,6 +42,7 @@ import { formatSlackFileReference } from "../../file-reference.js";
 import type { SlackSendIdentity } from "../../send.js";
 import { hasSlackThreadParticipationWithPersistence } from "../../sent-thread-cache.js";
 import type { SlackAttachment, SlackFile, SlackMessageEvent } from "../../types.js";
+import { recordSlackAdmission } from "../admission-ledger.js";
 import { normalizeAllowListLower, normalizeSlackAllowOwnerEntry } from "../allow-list.js";
 import {
   authorizeSlackBotRoomMessage,
@@ -494,6 +495,13 @@ function logSlackInboundDrop(params: {
     },
     "slack inbound message dropped",
   );
+  void recordSlackAdmission({
+    accountId: account.accountId,
+    message,
+    outcome: "dropped",
+    reason,
+    logger: ctx.logger,
+  });
 }
 
 async function resolveSlackConversationContext(params: {
@@ -1525,6 +1533,16 @@ export async function prepareSlackMessage(params: {
   }
 
   const updateLastRouteSessionKey = resolveInboundLastRouteSessionKey({ route, sessionKey });
+
+  void recordSlackAdmission({
+    accountId: account.accountId,
+    message,
+    source: opts.source,
+    outcome: "accepted",
+    routeAgentId: route.agentId,
+    sessionKey,
+    logger: ctx.logger,
+  });
 
   return {
     ctx,
