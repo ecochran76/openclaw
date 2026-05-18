@@ -15,6 +15,7 @@ Options:
   --node <path>            Node executable. Default: current process.execPath.
   --script <path>          wake-trigger.mjs path. Default: repo script.
   --state-dir <dir>        Wake trigger state dir. Default: ~/.openclaw/wake-triggers.
+  --env-file <path>        Optional systemd EnvironmentFile for OpenClaw auth/env.
   --install-dir <dir>      systemd user unit dir. Default: ~/.config/systemd/user.
   --interval <duration>    OnUnitActiveSec duration. Default: 2min.
   --on-boot <duration>     OnBootSec duration. Default: 2min.
@@ -65,6 +66,7 @@ function render(args) {
   const node = resolvePath(args.node || process.execPath);
   const script = resolvePath(args.script || join(ROOT, "scripts", "wake-trigger.mjs"));
   const stateDir = resolvePath(args["state-dir"] || "~/.openclaw/wake-triggers");
+  const envFile = args["env-file"] ? resolvePath(args["env-file"]) : "";
   const pathEnv = process.env.PATH || "/usr/local/bin:/usr/bin:/bin";
   const serviceName = "openclaw-wake-trigger-checker.service";
   const timerName = "openclaw-wake-trigger-checker.timer";
@@ -75,6 +77,7 @@ Documentation=file://${ROOT}/docs/dev/plans/0006-2026-05-17-agent-wake-triggers.
 [Service]
 Type=oneshot
 Environment=${systemdQuote(`PATH=${pathEnv}`)}
+${envFile ? `EnvironmentFile=${envFile}\n` : ""}\
 ExecStart=${systemdQuote(node)} ${systemdQuote(script)} check --state-dir ${systemdQuote(stateDir)}
 `;
   const timer = `[Unit]
