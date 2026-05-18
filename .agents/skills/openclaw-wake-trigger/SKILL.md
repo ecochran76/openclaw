@@ -50,6 +50,20 @@ Run pending triggers:
 node ~/.openclaw/workspace/scripts/wake-trigger.mjs check
 ```
 
+Run a live Slack smoke against the installed systemd checker:
+
+```bash
+node ~/.openclaw/workspace/scripts/wake-trigger.mjs smoke-slack \
+  --agent soylei-primary \
+  --account soylei \
+  --channel-id C0B0AK14B7X
+```
+
+The smoke posts a disposable Slack root, sets `:alarm_clock:`, posts the
+thread acknowledgement, flips a deterministic success file, waits for the
+systemd checker to deliver the wake, verifies the reaction was removed, and
+prints one JSON summary.
+
 Install or refresh the recurring checker:
 
 ```bash

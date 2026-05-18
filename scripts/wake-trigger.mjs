@@ -41,6 +41,7 @@ function usage(exitCode = 0) {
   wake-trigger.mjs ack --session-key <key> [--state-dir <dir>]
   wake-trigger.mjs defaults show [--state-dir <dir>] [--session-key <key>]
   wake-trigger.mjs defaults set [--scope global|session] [--session-key <key>] [limit options]
+  wake-trigger.mjs smoke-slack --agent <id> --channel-id <id> [--account <id>]
 
 Set options:
   --success-cmd <cmd>       Shell predicate that exits 0 on success.
@@ -74,6 +75,13 @@ Set options:
                             Default: ~/credentials/API-keys.env when present.
   --deliver                 Pass --deliver to openclaw agent when resuming.
   --state-dir <dir>         Default: ~/.openclaw/wake-triggers
+
+Smoke options:
+  --agent <id>              Agent to resume.
+  --channel-id <id>         Slack channel id for the disposable smoke.
+  --account <id>            Slack account id. Default: soylei.
+  --wait-seconds <n>        Max seconds to wait for systemd checker. Default: 210.
+  --keep-record             Keep the delivered smoke record instead of removing it.
 `;
   console.log(text);
   process.exit(exitCode);
@@ -89,7 +97,14 @@ function parseArgs(argv) {
     }
     const key = token.slice(2);
     if (
-      ["deliver", "dry-run", "json", "no-announce", "allow-non-agent-session-key"].includes(key)
+      [
+        "deliver",
+        "dry-run",
+        "json",
+        "no-announce",
+        "allow-non-agent-session-key",
+        "keep-record",
+      ].includes(key)
     ) {
       args[key] = true;
       continue;
@@ -151,6 +166,10 @@ function writeJson(path, value) {
   const tmp = `${path}.tmp`;
   writeFileSync(tmp, `${JSON.stringify(value, null, 2)}\n`);
   renameSync(tmp, path);
+}
+
+function sleep(ms) {
+  return new Promise((resolvePromise) => setTimeout(resolvePromise, ms));
 }
 
 function configPath(dir) {
@@ -467,6 +486,74 @@ function slackApiCall(method, payload, token) {
   });
 }
 
+function slackTokenForAccount(accountId, envFile) {
+  const tokenEnv = envNameForSlackToken(accountId);
+  loadEnvFileIfPresent(envFile);
+  const token = process.env[tokenEnv] || process.env.SLACK_BOT_TOKEN;
+  if (!token) {
+    throw new Error(`missing ${tokenEnv}`);
+  }
+  return token;
+}
+
+async function postSlackMessage({ channel, text, threadTs, accountId, envFile }) {
+  const token = slackTokenForAccount(accountId, envFile);
+  const payload = {
+    channel,
+    text,
+    ...(threadTs ? { thread_ts: threadTs } : {}),
+  };
+  const result = await slackApiCall("chat.postMessage", payload, token);
+  if (!result.ok) {
+    throw new Error(`Slack chat.postMessage failed: ${result.error || "unknown_error"}`);
+  }
+  return result;
+}
+
+async function getSlackReactions({ channel, ts, accountId, envFile }) {
+  const token = slackTokenForAccount(accountId, envFile);
+  const query = new URLSearchParams({ channel, timestamp: ts, full: "true" }).toString();
+  const result = await new Promise((resolvePromise) => {
+    const req = httpsRequest(
+      {
+        hostname: "slack.com",
+        path: `/api/reactions.get?${query}`,
+        method: "GET",
+        headers: {
+          Authorization: `Bearer ${token}`,
+        },
+        timeout: 30_000,
+      },
+      (res) => {
+        const chunks = [];
+        res.on("data", (chunk) => chunks.push(chunk));
+        res.on("end", () => {
+          const text = Buffer.concat(chunks).toString("utf8");
+          try {
+            resolvePromise(JSON.parse(text));
+          } catch {
+            resolvePromise({ ok: false, error: `invalid_json_status_${res.statusCode}` });
+          }
+        });
+      },
+    );
+    req.on("error", (error) => resolvePromise({ ok: false, error: error.message }));
+    req.on("timeout", () => {
+      req.destroy();
+      resolvePromise({ ok: false, error: "timeout" });
+    });
+    req.end();
+  });
+  if (!result.ok) {
+    throw new Error(`Slack reactions.get failed: ${result.error || "unknown_error"}`);
+  }
+  const reactions = Array.isArray(result.message?.reactions) ? result.message.reactions : [];
+  return reactions.map((reaction) => ({
+    name: String(reaction.name || ""),
+    count: Number(reaction.count || 0),
+  }));
+}
+
 function describePredicate(label, command) {
   return command ? `${label}: configured` : `${label}: not configured`;
 }
@@ -591,21 +678,19 @@ async function setCommand(args) {
   applyReaction(record, record.activeReaction, false);
   await announceTriggerArmed(record);
   const path = writeRecord(dir, record);
-  console.log(
-    JSON.stringify(
-      {
-        ok: true,
-        id: record.id,
-        path,
-        timeoutAt: record.timeoutAt,
-        activeReactionState: record.activeReactionState,
-        announceState: record.announceState,
-        announceMessageTs: record.announceMessageTs,
-      },
-      null,
-      2,
-    ),
-  );
+  const output = {
+    ok: true,
+    id: record.id,
+    path,
+    timeoutAt: record.timeoutAt,
+    activeReactionState: record.activeReactionState,
+    announceState: record.announceState,
+    announceMessageTs: record.announceMessageTs,
+  };
+  if (!args.quiet) {
+    console.log(JSON.stringify(output, null, 2));
+  }
+  return { record, path, output };
 }
 
 function listCommand(args) {
@@ -763,6 +848,118 @@ function ackCommand(args) {
   console.log(JSON.stringify({ ok: true, sessionKey, rearmed }, null, 2));
 }
 
+async function waitForRecord(dir, id, waitSeconds) {
+  const deadline = Date.now() + waitSeconds * 1000;
+  const path = join(dir, `${basename(id, ".json")}.json`);
+  let lastRecord = null;
+  while (Date.now() <= deadline) {
+    try {
+      lastRecord = readRecord(path);
+      if (TERMINAL_STATES.has(lastRecord.state) || lastRecord.state === "requires_human_ack") {
+        return lastRecord;
+      }
+    } catch (error) {
+      if (error?.code !== "ENOENT") throw error;
+    }
+    await sleep(5000);
+  }
+  return lastRecord;
+}
+
+async function smokeSlackCommand(args) {
+  const dir = stateDir(args);
+  const agent = requireString(args, "agent");
+  const channelId = requireString(args, "channel-id");
+  const accountId = args.account || "soylei";
+  const envFile = expandHome(args["env-file"] || "~/credentials/API-keys.env");
+  const waitSeconds = readInt(args, "wait-seconds", 210, 30);
+  const created = new Date();
+  const suffix = `${Date.now()}-${randomUUID().slice(0, 8)}`;
+  const triggerId = `slack-smoke-${suffix}`;
+  const successFile = `/tmp/openclaw-wake-trigger-${triggerId}.done`;
+  const root = await postSlackMessage({
+    channel: channelId,
+    accountId,
+    envFile,
+    text: `[wake-trigger smoke] ${triggerId}: root message for reaction, acknowledgement, timer, and cleanup validation.`,
+  });
+  const rootTs = String(root.ts);
+  const sessionKey = `agent:${agent}:slack:channel:${channelId}:thread:${rootTs}`;
+  const announceMessage = `Wake trigger smoke armed for ${triggerId}. I will resume this thread when the smoke predicate completes, fails, or times out.`;
+  const setResult = await setCommand({
+    ...args,
+    quiet: true,
+    id: triggerId,
+    name: triggerId,
+    agent,
+    "session-key": sessionKey,
+    "success-cmd": `test -f ${successFile}`,
+    "failure-cmd": "false",
+    "timeout-minutes": args["timeout-minutes"] || "5",
+    "max-attempts": args["max-attempts"] || "1",
+    "max-automated-resumes": args["max-automated-resumes"] || "3",
+    "agent-timeout-seconds": args["agent-timeout-seconds"] || "180",
+    "reply-channel": "slack",
+    "reply-account": accountId,
+    "reply-to": channelId,
+    "active-reaction": args["active-reaction"] || "alarm_clock",
+    "reaction-message-id": rootTs,
+    "human-ack-reaction": args["human-ack-reaction"] || "warning",
+    "announce-message": args["announce-message"] || announceMessage,
+    "env-file": envFile,
+    deliver: true,
+  });
+  const armedReactions = await getSlackReactions({
+    channel: channelId,
+    ts: rootTs,
+    accountId,
+    envFile,
+  });
+  writeFileSync(successFile, `${nowIso()}\n`);
+  const finalRecord = await waitForRecord(dir, triggerId, waitSeconds);
+  const finalReactions = await getSlackReactions({
+    channel: channelId,
+    ts: rootTs,
+    accountId,
+    envFile,
+  });
+  let removedRecord = false;
+  if (finalRecord?.state === "delivered_success" && !args["keep-record"]) {
+    try {
+      unlinkSync(join(dir, `${triggerId}.json`));
+      removedRecord = true;
+    } catch (error) {
+      if (error?.code !== "ENOENT") throw error;
+    }
+  }
+  console.log(
+    JSON.stringify(
+      {
+        ok: finalRecord?.state === "delivered_success",
+        triggerId,
+        channelId,
+        rootTs,
+        sessionKey,
+        stateDir: dir,
+        createdAt: created.toISOString(),
+        set: setResult.output,
+        armedReactions,
+        finalState: finalRecord?.state || "missing",
+        finalReactions,
+        deliveredAt: finalRecord?.deliveredAt || "",
+        lastResumeExitCode: finalRecord?.lastResumeExitCode ?? null,
+        lastResumeError: finalRecord?.lastResumeError || "",
+        recordRemoved: removedRecord,
+      },
+      null,
+      2,
+    ),
+  );
+  if (finalRecord?.state !== "delivered_success") {
+    process.exitCode = 1;
+  }
+}
+
 function limitUpdateFromArgs(args) {
   const updates = {};
   for (const key of [
@@ -846,6 +1043,9 @@ async function main() {
       break;
     case "ack":
       ackCommand(args);
+      break;
+    case "smoke-slack":
+      await smokeSlackCommand(args);
       break;
     case "defaults":
       defaultsCommand(args);
