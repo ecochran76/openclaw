@@ -9,6 +9,7 @@ import {
   unlinkSync,
   writeFileSync,
 } from "node:fs";
+import { request as httpsRequest } from "node:https";
 import { homedir } from "node:os";
 import { basename, join, resolve } from "node:path";
 
@@ -65,6 +66,10 @@ Set options:
   --reaction-account <id>   Reaction account id. Defaults to --reply-account.
   --human-ack-reaction <emoji>
                             Optional reaction to set when human ack is required.
+  --no-announce             Skip the best-effort thread acknowledgement when armed.
+  --announce-message <text> Optional custom thread acknowledgement text.
+  --env-file <path>        Optional env file for acknowledgement tokens.
+                            Default: ~/credentials/API-keys.env when present.
   --deliver                 Pass --deliver to openclaw agent when resuming.
   --state-dir <dir>         Default: ~/.openclaw/wake-triggers
 `;
@@ -81,7 +86,7 @@ function parseArgs(argv) {
       continue;
     }
     const key = token.slice(2);
-    if (["deliver", "dry-run", "json"].includes(key)) {
+    if (["deliver", "dry-run", "json", "no-announce"].includes(key)) {
       args[key] = true;
       continue;
     }
@@ -361,7 +366,129 @@ function clearActiveReaction(record) {
   }
 }
 
-function setCommand(args) {
+function envNameForSlackToken(accountId) {
+  const suffix = String(accountId || "")
+    .trim()
+    .replace(/[^A-Za-z0-9]+/g, "_")
+    .replace(/^_+|_+$/g, "")
+    .toUpperCase();
+  return suffix ? `SLACK_BOT_TOKEN_${suffix}` : "SLACK_BOT_TOKEN";
+}
+
+function loadEnvFileIfPresent(path) {
+  if (!path) return;
+  let text = "";
+  try {
+    text = readFileSync(path, "utf8");
+  } catch (error) {
+    if (error?.code !== "ENOENT") {
+      throw error;
+    }
+    return;
+  }
+  for (const rawLine of text.split(/\r?\n/)) {
+    const line = rawLine.trim();
+    if (!line || line.startsWith("#") || !line.includes("=")) continue;
+    const index = line.indexOf("=");
+    const key = line.slice(0, index).trim();
+    if (!/^[A-Za-z_][A-Za-z0-9_]*$/.test(key) || process.env[key] !== undefined) continue;
+    let value = line.slice(index + 1).trim();
+    if (
+      (value.startsWith('"') && value.endsWith('"')) ||
+      (value.startsWith("'") && value.endsWith("'"))
+    ) {
+      value = value.slice(1, -1);
+    }
+    process.env[key] = value;
+  }
+}
+
+function slackApiCall(method, payload, token) {
+  return new Promise((resolvePromise) => {
+    const body = JSON.stringify(payload);
+    const req = httpsRequest(
+      {
+        hostname: "slack.com",
+        path: `/api/${method}`,
+        method: "POST",
+        headers: {
+          Authorization: `Bearer ${token}`,
+          "Content-Type": "application/json; charset=utf-8",
+          "Content-Length": Buffer.byteLength(body),
+        },
+        timeout: 30_000,
+      },
+      (res) => {
+        const chunks = [];
+        res.on("data", (chunk) => chunks.push(chunk));
+        res.on("end", () => {
+          const text = Buffer.concat(chunks).toString("utf8");
+          try {
+            resolvePromise(JSON.parse(text));
+          } catch {
+            resolvePromise({ ok: false, error: `invalid_json_status_${res.statusCode}` });
+          }
+        });
+      },
+    );
+    req.on("error", (error) => resolvePromise({ ok: false, error: error.message }));
+    req.on("timeout", () => {
+      req.destroy();
+      resolvePromise({ ok: false, error: "timeout" });
+    });
+    req.write(body);
+    req.end();
+  });
+}
+
+function describePredicate(label, command) {
+  return command ? `${label}: configured` : `${label}: not configured`;
+}
+
+function defaultAnnounceMessage(record) {
+  const timeoutAt = record.timeoutAt || "unknown";
+  const active = record.activeReaction ? `:${record.activeReaction}:` : "no reaction";
+  return [
+    `Wake trigger armed: ${record.name}`,
+    `Watching for: ${describePredicate("success", record.successCmd)}; ${describePredicate(
+      "failure",
+      record.failureCmd,
+    )}`,
+    `Timeout: ${timeoutAt}`,
+    `Limits: maxAttempts=${record.maxAttempts}, maxAutomatedResumes=${record.maxAutomatedResumes}`,
+    `Active marker: ${active}`,
+  ].join("\n");
+}
+
+async function announceTriggerArmed(record) {
+  if (record.announce === false) return false;
+  if ((record.replyChannel || record.reactionChannel) !== "slack") return false;
+  const channel = record.reactionTarget || record.replyTo;
+  const threadTs = record.reactionMessageId;
+  if (!channel || !threadTs) return false;
+  const accountId = record.reactionAccount || record.replyAccount || "";
+  const tokenEnv = envNameForSlackToken(accountId);
+  loadEnvFileIfPresent(record.envFile);
+  const token = process.env[tokenEnv] || process.env.SLACK_BOT_TOKEN;
+  if (!token) {
+    record.announceState = "skipped";
+    record.lastAnnounceError = `missing ${tokenEnv}`;
+    return false;
+  }
+  const payload = {
+    channel,
+    thread_ts: threadTs,
+    text: record.announceMessage || defaultAnnounceMessage(record),
+  };
+  const result = await slackApiCall("chat.postMessage", payload, token);
+  record.lastAnnounceAt = nowIso();
+  record.lastAnnounceError = result.ok ? "" : String(result.error || "unknown_error");
+  record.announceState = result.ok ? "sent" : "failed";
+  record.announceMessageTs = result.ok && result.ts ? String(result.ts) : "";
+  return Boolean(result.ok);
+}
+
+async function setCommand(args) {
   const dir = stateDir(args);
   const sessionKey = requireString(args, "session-key");
   const defaults = effectiveDefaults(dir, sessionKey);
@@ -402,6 +529,13 @@ function setCommand(args) {
     activeReactionState: "",
     humanAckReaction: args["human-ack-reaction"] || "",
     humanAckReactionState: "",
+    announce: !args["no-announce"],
+    announceMessage: args["announce-message"] || "",
+    envFile: expandHome(args["env-file"] || "~/credentials/API-keys.env"),
+    announceState: "",
+    announceMessageTs: "",
+    lastAnnounceAt: "",
+    lastAnnounceError: "",
     lastReactionAt: "",
     lastReactionExitCode: null,
     lastReactionError: "",
@@ -427,6 +561,7 @@ function setCommand(args) {
     );
   }
   applyReaction(record, record.activeReaction, false);
+  await announceTriggerArmed(record);
   const path = writeRecord(dir, record);
   console.log(
     JSON.stringify(
@@ -436,6 +571,8 @@ function setCommand(args) {
         path,
         timeoutAt: record.timeoutAt,
         activeReactionState: record.activeReactionState,
+        announceState: record.announceState,
+        announceMessageTs: record.announceMessageTs,
       },
       null,
       2,
@@ -659,13 +796,13 @@ function defaultsCommand(args) {
   console.log(JSON.stringify({ ok: true, scope, updates, path: configPath(dir) }, null, 2));
 }
 
-function main() {
+async function main() {
   const [command, ...rest] = process.argv.slice(2);
   if (!command || command === "--help" || command === "-h") usage(0);
   const args = parseArgs(rest);
   switch (command) {
     case "set":
-      setCommand(args);
+      await setCommand(args);
       break;
     case "list":
       listCommand(args);
@@ -691,7 +828,7 @@ function main() {
 }
 
 try {
-  main();
+  await main();
 } catch (error) {
   console.error(error instanceof Error ? error.message : String(error));
   process.exit(1);

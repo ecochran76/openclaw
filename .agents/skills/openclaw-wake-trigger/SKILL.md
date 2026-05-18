@@ -37,6 +37,7 @@ node ~/.openclaw/workspace/scripts/wake-trigger.mjs set \
   --active-reaction alarm_clock \
   --reaction-message-id 1779054888.591249 \
   --human-ack-reaction warning \
+  --announce-message 'Wake trigger armed for live-to-dev sync. I will resume this thread when the sync completes, fails, or times out.' \
   --deliver \
   --on-success 'The live-to-dev sync completed. Continue validation in this thread and report the result.' \
   --on-failure 'The live-to-dev sync failed. Inspect the diagnostic file and report the next safe recovery step.' \
@@ -86,6 +87,24 @@ that reaction when human acknowledgement is required.
 Reaction add/remove is best-effort. A reaction failure is recorded on the trigger
 as `lastReactionError`, but it must not block trigger creation, checking, or
 resume delivery.
+
+### Thread Acknowledgement
+
+By default, Slack-backed triggers post a thread reply when armed. The reply
+states what the trigger is watching, when it will time out, and which active
+reaction marks the pending timer. Use `--announce-message` for a concise custom
+acknowledgement:
+
+```bash
+--announce-message 'Wake trigger armed for dev sync. I will resume this thread when the sync completes, fails, or times out.'
+```
+
+The acknowledgement is best-effort and recorded as `announceState`,
+`announceMessageTs`, and `lastAnnounceError` on the trigger record. Use
+`--no-announce` only when the surrounding turn already posted an equivalent
+thread acknowledgement. The script loads `~/credentials/API-keys.env` by default
+when it needs Slack acknowledgement tokens; use `--env-file <path>` if a
+different env source is required.
 
 Inspect triggers:
 
@@ -153,6 +172,9 @@ node ~/.openclaw/workspace/scripts/wake-trigger.mjs ack \
 - For Slack turns, prefer `--active-reaction alarm_clock` with the inbound
   message ts so the user can see that a bounded wake trigger is armed. Do not
   use OpenClaw's normal hourglass reaction for wake triggers.
+- Let the default thread acknowledgement post, or provide `--announce-message`
+  with the specific thing being watched. The user should never have to infer
+  timer state from a reaction alone.
 - Prefer file predicates written by deterministic scripts over broad shell
   greps.
 - Do not set a trigger that runs an unbounded, mutating, or destructive
