@@ -45,8 +45,9 @@ bounded, agent-facing "wake me when this predicate changes" workflow.
    - require explicit yield after setting a trigger
    - include same-thread Slack resume examples
 3. Scheduler integration:
-   - install a recurring OpenClaw cron job or system timer that runs
-     `wake-trigger check`
+   - install a recurring systemd user timer that runs `wake-trigger check`
+   - keep the checker as a short-lived scan-and-exit process, not a
+     long-running watcher
    - expose status in `openclaw status` or a small diagnostic command
 4. Core integration:
    - evaluate promoting wake triggers into TaskFlow-managed state
@@ -64,6 +65,7 @@ bounded, agent-facing "wake me when this predicate changes" workflow.
   session before additional automated resumes.
 - Operators can set limits for the current session or as permanent global
   defaults.
+- A recurring checker can be installed without altering gateway internals.
 - Trigger records are inspectable and removable by operators.
 
 ## Definition Of Done

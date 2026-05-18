@@ -46,6 +46,18 @@ Run pending triggers:
 node ~/.openclaw/workspace/scripts/wake-trigger.mjs check
 ```
 
+Install or refresh the recurring checker:
+
+```bash
+node /home/ecochran76/workspace.local/openclaw.git/scripts/install-wake-trigger-checker.mjs \
+  --script ~/.openclaw/workspace/scripts/wake-trigger.mjs \
+  --apply \
+  --enable
+```
+
+The checker is a systemd user timer, not a long-lived watch process. It wakes
+every few minutes, evaluates durable trigger records, and exits.
+
 Inspect triggers:
 
 ```bash
