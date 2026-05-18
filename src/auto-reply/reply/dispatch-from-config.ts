@@ -2473,12 +2473,6 @@ export async function dispatchReplyFromConfig(
                 schedule(90_000);
                 return;
               }
-              if (trackedTurnId) {
-                updateTrackedTurn(trackedTurnId, {
-                  phase: "stalled",
-                  deliveryTarget,
-                });
-              }
               await sendWatcherPayload(
                 {
                   text: `status: turn appears stalled${active.activeTool ? ` (${active.activeTool})` : ""}`,
@@ -3476,6 +3470,13 @@ export async function dispatchReplyFromConfig(
               startTrackedTurnRun(runId);
               return params.replyOptions?.onAgentRunStart?.(runId);
             },
+            onStartupProgress: async (progressCtx) => {
+              markProgress();
+              if (trackedTurnId) {
+                updateTrackedTurn(trackedTurnId, { markProgress: true });
+              }
+              await params.replyOptions?.onStartupProgress?.(progressCtx);
+            },
             onToolResult: (payload: ReplyPayload) => {
               markProgress();
               const run = async () => {
@@ -3562,6 +3563,12 @@ export async function dispatchReplyFromConfig(
                 ) {
                   const hasMedia = resolveSendableOutboundReplyParts(deliveryPayload).hasMedia;
                   if (!hasMedia && !hasExecApprovalPayload(deliveryPayload)) {
+                    const visibility = classifyPayloadVisibility(deliveryPayload);
+                    if (visibility.visibility === "visible") {
+                      recordTrackedTurnSuppressedReply("silent");
+                    } else if (visibility.visibility === "suppressed") {
+                      recordTrackedTurnSuppressedReply(visibility.suppressionReason);
+                    }
                     return;
                   }
                 }

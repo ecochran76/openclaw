@@ -1,5 +1,9 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
-import { getRecentTrackedTurn, resetTrackedTurnsForTests } from "../turn-tracker.js";
+import {
+  getActiveTrackedTurn,
+  getRecentTrackedTurn,
+  resetTrackedTurnsForTests,
+} from "../turn-tracker.js";
 import type { ReplyPayload } from "../types.js";
 import { createDeliveryObserver, type DeliveryObserver } from "./delivery-observer.js";
 
@@ -146,6 +150,47 @@ describe("delivery-observer", () => {
       );
       expect(texts).toContain("working: tool still running (exec)");
       expect(texts.some((text) => text.includes("status: turn appears stalled"))).toBe(false);
+
+      observer.finishRun({ status: "done", phase: "done" });
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it("lets later progress recover a previously noticed stalled turn", async () => {
+    vi.useFakeTimers();
+    try {
+      const sessionKey = "agent:main:main";
+      const sendWatcherPayload = vi.fn(
+        async (_payload: ReplyPayload, _failureText: string) => true,
+      );
+      const observer = createDeliveryObserver({
+        sessionKey,
+        visibleChannel: "slack",
+        trackedSessionId: "session-1",
+        deliveryTarget: "same_channel",
+        didMemoryFlushDuringTurn: () => false,
+        onSendWatcherPayload: sendWatcherPayload,
+      });
+
+      observer.startRun("run-stalled-then-active");
+      await vi.advanceTimersByTimeAsync(120_000);
+
+      expect(
+        sendWatcherPayload.mock.calls
+          .map((call) => (call[0] as ReplyPayload | undefined)?.text ?? "")
+          .filter((text) => text.includes("status: turn appears stalled")),
+      ).toHaveLength(1);
+      expect(getActiveTrackedTurn(sessionKey)?.phase).toBe("stalled");
+
+      observer.updateActiveTurn({ markProgress: true, at: Date.now() });
+
+      expect(getActiveTrackedTurn(sessionKey)?.phase).toBe("reasoning");
+      expect(
+        sendWatcherPayload.mock.calls
+          .map((call) => (call[0] as ReplyPayload | undefined)?.text ?? "")
+          .filter((text) => text.includes("status: turn appears stalled")),
+      ).toHaveLength(1);
 
       observer.finishRun({ status: "done", phase: "done" });
     } finally {

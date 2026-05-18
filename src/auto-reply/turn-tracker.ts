@@ -225,6 +225,9 @@ export function updateTrackedTurn(
   }
   if (patch.markProgress) {
     current.lastProgressAt = at;
+    if (!patch.phase && current.phase === "stalled" && current.status === "active") {
+      current.phase = current.activeTool ? "tool_wait" : "reasoning";
+    }
   }
   if (patch.markVisible) {
     current.lastUserVisibleUpdateAt = at;

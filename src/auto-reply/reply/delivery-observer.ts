@@ -254,10 +254,6 @@ export function createDeliveryObserver(params: {
                 schedule(90_000);
                 return;
               }
-              updateActiveTurn({
-                phase: "stalled",
-                deliveryTarget: params.deliveryTarget,
-              });
               await params.onSendWatcherPayload(
                 {
                   text: `status: turn appears stalled${active.activeTool ? ` (${active.activeTool})` : ""}`,

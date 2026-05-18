@@ -346,6 +346,33 @@ describe("turn tracker", () => {
     expect(nudge).toContain("Stalled threshold:");
   });
 
+  it("recovers sticky stalled state when later progress arrives", () => {
+    const turn = startTrackedTurn({
+      sessionKey: "agent:main:main",
+      startedAt: 0,
+      phase: "reasoning",
+      channel: "slack",
+    });
+    updateTrackedTurn(turn.turnId, {
+      phase: "stalled",
+      at: 120_000,
+    });
+
+    const recovered = updateTrackedTurn(turn.turnId, {
+      markProgress: true,
+      at: 130_000,
+    });
+
+    expect(recovered?.phase).toBe("reasoning");
+    expect(recovered?.lastProgressAt).toBe(130_000);
+    expect(
+      buildTurnStatusText({
+        active: recovered,
+        now: 130_000,
+      }),
+    ).toContain("Phase: reasoning");
+  });
+
   it("lists recent turns and builds nudge text", () => {
     const first = startTrackedTurn({
       sessionKey: "agent:main:main",
