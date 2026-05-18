@@ -29,8 +29,12 @@ function parseArgs(argv) {
   const args = {};
   for (let i = 0; i < argv.length; i += 1) {
     const token = argv[i];
-    if (token === "--help" || token === "-h") usage(0);
-    if (!token.startsWith("--")) throw new Error(`unexpected argument: ${token}`);
+    if (token === "--help" || token === "-h") {
+      usage(0);
+    }
+    if (!token.startsWith("--")) {
+      throw new Error(`unexpected argument: ${token}`);
+    }
     const key = token.slice(2);
     if (
       ["json", "skip-gateway", "skip-channels", "skip-cron", "skip-wake", "skip-timers"].includes(
@@ -51,9 +55,15 @@ function parseArgs(argv) {
 }
 
 function expandHome(value) {
-  if (!value) return value;
-  if (value === "~") return homedir();
-  if (value.startsWith("~/")) return join(homedir(), value.slice(2));
+  if (!value) {
+    return value;
+  }
+  if (value === "~") {
+    return homedir();
+  }
+  if (value.startsWith("~/")) {
+    return join(homedir(), value.slice(2));
+  }
   return value;
 }
 
@@ -62,16 +72,24 @@ function resolvePath(value) {
 }
 
 function findWakeScript(args) {
-  if (args["wake-script"]) return resolvePath(args["wake-script"]);
+  if (args["wake-script"]) {
+    return resolvePath(args["wake-script"]);
+  }
   const installed = resolvePath("~/.openclaw/workspace/scripts/wake-trigger.mjs");
-  if (existsSync(installed)) return installed;
+  if (existsSync(installed)) {
+    return installed;
+  }
   return resolvePath("scripts/wake-trigger.mjs");
 }
 
 function intArg(args, key, defaultValue) {
-  if (!args[key]) return defaultValue;
+  if (!args[key]) {
+    return defaultValue;
+  }
   const value = Number.parseInt(args[key], 10);
-  if (!Number.isFinite(value) || value <= 0) throw new Error(`invalid --${key}: ${args[key]}`);
+  if (!Number.isFinite(value) || value <= 0) {
+    throw new Error(`invalid --${key}: ${args[key]}`);
+  }
   return value;
 }
 
@@ -111,9 +129,13 @@ function parseJson(value) {
 }
 
 function wakeSummary(result) {
-  if (!result.ok) return null;
+  if (!result.ok) {
+    return null;
+  }
   const parsed = parseJson(result.stdout);
-  if (!parsed) return null;
+  if (!parsed) {
+    return null;
+  }
   const counts = parsed.counts || parsed;
   return {
     ok: parsed.ok === true,
@@ -129,7 +151,9 @@ function wakeSummary(result) {
 }
 
 function cronSummary(result) {
-  if (!result.ok) return null;
+  if (!result.ok) {
+    return null;
+  }
   const lines = result.stdout
     .split("\n")
     .map((line) => line.trim())
@@ -144,7 +168,9 @@ function cronSummary(result) {
 }
 
 function statusLine(name, result, details = "") {
-  if (result.skipped) return `${name}: skipped`;
+  if (result.skipped) {
+    return `${name}: skipped`;
+  }
   const status = result.ok ? "ok" : "fail";
   const code = result.timedOut ? "timeout" : result.status;
   const suffix = details ? ` ${details}` : "";

@@ -478,7 +478,7 @@ export function registerModelsCli(program: Command) {
     .option("--to-agents <ids>", "Comma-separated target agent ids or 'all' (default: all)")
     .option("--json", "Output JSON", false)
     .action(async (opts) => {
-      await runModelsCommand(async () => {
+      await withModelsRuntime(async ({ defaultRuntime }) => {
         const { modelsAuthSyncCommand } = await import("../commands/models/auth-sync.js");
         await modelsAuthSyncCommand(
           {

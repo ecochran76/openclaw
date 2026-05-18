@@ -133,9 +133,15 @@ function parseArgs(argv) {
 }
 
 function expandHome(value) {
-  if (!value) return value;
-  if (value === "~") return homedir();
-  if (value.startsWith("~/")) return join(homedir(), value.slice(2));
+  if (!value) {
+    return value;
+  }
+  if (value === "~") {
+    return homedir();
+  }
+  if (value.startsWith("~/")) {
+    return join(homedir(), value.slice(2));
+  }
   return value;
 }
 
@@ -267,7 +273,9 @@ function requireString(args, key) {
 
 function readInt(args, key, fallback, min) {
   const raw = args[key];
-  if (raw === undefined) return fallback;
+  if (raw === undefined) {
+    return fallback;
+  }
   const value = Number.parseInt(String(raw), 10);
   if (!Number.isFinite(value) || value < min) {
     throw new Error(`--${key} must be an integer >= ${min}`);
@@ -277,7 +285,9 @@ function readInt(args, key, fallback, min) {
 
 function readOptionalInt(args, key, min) {
   const raw = args[key];
-  if (raw === undefined) return undefined;
+  if (raw === undefined) {
+    return undefined;
+  }
   const value = Number.parseInt(String(raw), 10);
   if (!Number.isFinite(value) || value < min) {
     throw new Error(`--${key} must be an integer >= ${min}`);
@@ -307,7 +317,9 @@ function normalizeComparableAgentId(value) {
 function validateSessionKeyForAgent(sessionKey, agent, args) {
   const match = /^agent:([^:]+):/.exec(sessionKey);
   if (!match) {
-    if (args["allow-non-agent-session-key"]) return;
+    if (args["allow-non-agent-session-key"]) {
+      return;
+    }
     throw new Error(
       `--session-key must start with agent:${agent}: so OpenClaw resumes the intended agent; got ${sessionKey}`,
     );
@@ -321,7 +333,9 @@ function validateSessionKeyForAgent(sessionKey, agent, args) {
 }
 
 function commandPassed(command) {
-  if (!command) return false;
+  if (!command) {
+    return false;
+  }
   const result = spawnSync(command, {
     shell: true,
     stdio: "ignore",
@@ -346,10 +360,16 @@ function classify(record, nowMs) {
     }
     return record.lastFireReason || "timeout";
   }
-  if (commandPassed(record.failureCmd)) return "failure";
-  if (commandPassed(record.successCmd)) return "success";
+  if (commandPassed(record.failureCmd)) {
+    return "failure";
+  }
+  if (commandPassed(record.successCmd)) {
+    return "success";
+  }
   const timeoutAt = Date.parse(record.timeoutAt);
-  if (Number.isFinite(timeoutAt) && nowMs >= timeoutAt) return "timeout";
+  if (Number.isFinite(timeoutAt) && nowMs >= timeoutAt) {
+    return "timeout";
+  }
   return null;
 }
 
@@ -359,7 +379,9 @@ function resumePrompt(record, reason) {
     failure: record.onFailure,
     timeout: record.onTimeout,
   }[reason];
-  if (configured) return configured;
+  if (configured) {
+    return configured;
+  }
   return `Wake trigger "${record.name}" fired with reason=${reason}. Continue the prior task in this session and report current state.`;
 }
 
@@ -373,11 +395,21 @@ function resumeArgs(record, reason) {
     "--message",
     resumePrompt(record, reason),
   ];
-  if (record.deliver) args.push("--deliver");
-  if (record.replyChannel) args.push("--reply-channel", record.replyChannel);
-  if (record.replyAccount) args.push("--reply-account", record.replyAccount);
-  if (record.replyTo) args.push("--reply-to", record.replyTo);
-  if (record.timeoutSeconds) args.push("--timeout", String(record.timeoutSeconds));
+  if (record.deliver) {
+    args.push("--deliver");
+  }
+  if (record.replyChannel) {
+    args.push("--reply-channel", record.replyChannel);
+  }
+  if (record.replyAccount) {
+    args.push("--reply-account", record.replyAccount);
+  }
+  if (record.replyTo) {
+    args.push("--reply-to", record.replyTo);
+  }
+  if (record.timeoutSeconds) {
+    args.push("--timeout", String(record.timeoutSeconds));
+  }
   return args;
 }
 
@@ -398,7 +430,9 @@ function reactionArgs(record, emoji, remove = false) {
   if (record.reactionAccount || record.replyAccount) {
     args.push("--account", record.reactionAccount || record.replyAccount);
   }
-  if (remove) args.push("--remove");
+  if (remove) {
+    args.push("--remove");
+  }
   return args;
 }
 
@@ -412,7 +446,9 @@ function canReact(record, emoji) {
 }
 
 function applyReaction(record, emoji, remove = false) {
-  if (!canReact(record, emoji)) return false;
+  if (!canReact(record, emoji)) {
+    return false;
+  }
   const result = spawnSync(record.openclawBin || "openclaw", reactionArgs(record, emoji, remove), {
     encoding: "utf8",
     stdio: ["ignore", "pipe", "pipe"],
@@ -423,16 +459,25 @@ function applyReaction(record, emoji, remove = false) {
   record.lastReactionError = result.stderr?.slice(0, 2000) || "";
   if (result.status === 0) {
     if (remove) {
-      if (emoji === record.activeReaction) record.activeReactionState = "removed";
-      if (emoji === record.humanAckReaction) record.humanAckReactionState = "removed";
+      if (emoji === record.activeReaction) {
+        record.activeReactionState = "removed";
+      }
+      if (emoji === record.humanAckReaction) {
+        record.humanAckReactionState = "removed";
+      }
     } else {
-      if (emoji === record.activeReaction) record.activeReactionState = "set";
-      if (emoji === record.humanAckReaction) record.humanAckReactionState = "set";
+      if (emoji === record.activeReaction) {
+        record.activeReactionState = "set";
+      }
+      if (emoji === record.humanAckReaction) {
+        record.humanAckReactionState = "set";
+      }
     }
     return true;
   }
-  if (emoji === record.activeReaction)
+  if (emoji === record.activeReaction) {
     record.activeReactionState = remove ? "remove_failed" : "set_failed";
+  }
   if (emoji === record.humanAckReaction) {
     record.humanAckReactionState = remove ? "remove_failed" : "set_failed";
   }
@@ -455,7 +500,9 @@ function envNameForSlackToken(accountId) {
 }
 
 function loadEnvFileIfPresent(path) {
-  if (!path) return;
+  if (!path) {
+    return;
+  }
   let text = "";
   try {
     text = readFileSync(path, "utf8");
@@ -467,10 +514,14 @@ function loadEnvFileIfPresent(path) {
   }
   for (const rawLine of text.split(/\r?\n/)) {
     const line = rawLine.trim();
-    if (!line || line.startsWith("#") || !line.includes("=")) continue;
+    if (!line || line.startsWith("#") || !line.includes("=")) {
+      continue;
+    }
     const index = line.indexOf("=");
     const key = line.slice(0, index).trim();
-    if (!/^[A-Za-z_][A-Za-z0-9_]*$/.test(key) || process.env[key] !== undefined) continue;
+    if (!/^[A-Za-z_][A-Za-z0-9_]*$/.test(key) || process.env[key] !== undefined) {
+      continue;
+    }
     let value = line.slice(index + 1).trim();
     if (
       (value.startsWith('"') && value.endsWith('"')) ||
@@ -608,11 +659,17 @@ function defaultAnnounceMessage(record) {
 }
 
 async function announceTriggerArmed(record) {
-  if (record.announce === false) return false;
-  if ((record.replyChannel || record.reactionChannel) !== "slack") return false;
+  if (record.announce === false) {
+    return false;
+  }
+  if ((record.replyChannel || record.reactionChannel) !== "slack") {
+    return false;
+  }
   const channel = record.reactionTarget || record.replyTo;
   const threadTs = record.reactionMessageId;
-  if (!channel || !threadTs) return false;
+  if (!channel || !threadTs) {
+    return false;
+  }
   const accountId = record.reactionAccount || record.replyAccount || "";
   const tokenEnv = envNameForSlackToken(accountId);
   loadEnvFileIfPresent(record.envFile);
@@ -790,11 +847,21 @@ function statusCommand(args) {
   );
   for (const record of output.records.filter((row) => row.attention)) {
     const reasons = [];
-    if (record.state === "resume_failed") reasons.push("resume_failed");
-    if (record.state === "requires_human_ack") reasons.push("requires_human_ack");
-    if (record.state === "resume_exhausted") reasons.push("resume_exhausted");
-    if (record.timeoutOverdue) reasons.push("timeout_overdue");
-    if (record.stale) reasons.push("stale");
+    if (record.state === "resume_failed") {
+      reasons.push("resume_failed");
+    }
+    if (record.state === "requires_human_ack") {
+      reasons.push("requires_human_ack");
+    }
+    if (record.state === "resume_exhausted") {
+      reasons.push("resume_exhausted");
+    }
+    if (record.timeoutOverdue) {
+      reasons.push("timeout_overdue");
+    }
+    if (record.stale) {
+      reasons.push("stale");
+    }
     console.log(`${record.id}\t${record.state}\t${record.agent}\t${reasons.join(",")}`);
   }
 }
@@ -807,7 +874,9 @@ function buildStatus(args) {
     summarizeRecord(readRecord(path), nowMs, staleMinutes),
   );
   records.sort((a, b) => {
-    if (a.attention !== b.attention) return a.attention ? -1 : 1;
+    if (a.attention !== b.attention) {
+      return a.attention ? -1 : 1;
+    }
     return String(a.updatedAt).localeCompare(String(b.updatedAt));
   });
   const counts = {
@@ -854,11 +923,21 @@ function alertMessage(status) {
   ];
   for (const record of status.records.filter((row) => row.attention).slice(0, 8)) {
     const reasons = [];
-    if (record.state === "resume_failed") reasons.push("resume_failed");
-    if (record.state === "requires_human_ack") reasons.push("requires_human_ack");
-    if (record.state === "resume_exhausted") reasons.push("resume_exhausted");
-    if (record.timeoutOverdue) reasons.push("timeout_overdue");
-    if (record.stale) reasons.push("stale");
+    if (record.state === "resume_failed") {
+      reasons.push("resume_failed");
+    }
+    if (record.state === "requires_human_ack") {
+      reasons.push("requires_human_ack");
+    }
+    if (record.state === "resume_exhausted") {
+      reasons.push("resume_exhausted");
+    }
+    if (record.timeoutOverdue) {
+      reasons.push("timeout_overdue");
+    }
+    if (record.stale) {
+      reasons.push("stale");
+    }
     lines.push(
       `- ${record.id} agent=${record.agent} state=${record.state} reason=${reasons.join(",")}`,
     );
@@ -978,7 +1057,9 @@ function rmCommand(args) {
 function checkOne(dir, record, args) {
   const nowMs = Date.now();
   const reason = classify(record, nowMs);
-  if (!reason) return { id: record.id, state: record.state, action: "none" };
+  if (!reason) {
+    return { id: record.id, state: record.state, action: "none" };
+  }
   const sessions = loadSessions(dir);
   const sessionState = sessions.sessions[record.sessionKey] || {
     automatedResumes: 0,
@@ -1108,7 +1189,9 @@ async function waitForRecord(dir, id, waitSeconds) {
         return lastRecord;
       }
     } catch (error) {
-      if (error?.code !== "ENOENT") throw error;
+      if (error?.code !== "ENOENT") {
+        throw error;
+      }
     }
     await sleep(5000);
   }
@@ -1178,7 +1261,9 @@ async function smokeSlackCommand(args) {
       unlinkSync(join(dir, `${triggerId}.json`));
       removedRecord = true;
     } catch (error) {
-      if (error?.code !== "ENOENT") throw error;
+      if (error?.code !== "ENOENT") {
+        throw error;
+      }
     }
   }
   console.log(
@@ -1262,7 +1347,7 @@ function defaultsCommand(args) {
     config.global = { ...config.global, ...updates };
   } else if (scope === "session") {
     const sessionKey = requireString(args, "session-key");
-    config.sessions[sessionKey] = { ...(config.sessions[sessionKey] || {}), ...updates };
+    config.sessions[sessionKey] = { ...config.sessions[sessionKey], ...updates };
   } else {
     throw new Error("--scope must be global or session");
   }
@@ -1272,7 +1357,9 @@ function defaultsCommand(args) {
 
 async function main() {
   const [command, ...rest] = process.argv.slice(2);
-  if (!command || command === "--help" || command === "-h") usage(0);
+  if (!command || command === "--help" || command === "-h") {
+    usage(0);
+  }
   const args = parseArgs(rest);
   switch (command) {
     case "set":

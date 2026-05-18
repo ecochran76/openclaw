@@ -31,8 +31,12 @@ function parseArgs(argv) {
   const args = {};
   for (let i = 0; i < argv.length; i += 1) {
     const token = argv[i];
-    if (token === "--help" || token === "-h") usage(0);
-    if (!token.startsWith("--")) throw new Error(`unexpected argument: ${token}`);
+    if (token === "--help" || token === "-h") {
+      usage(0);
+    }
+    if (!token.startsWith("--")) {
+      throw new Error(`unexpected argument: ${token}`);
+    }
     const key = token.slice(2);
     if (["apply", "enable", "print"].includes(key)) {
       args[key] = true;
@@ -49,8 +53,12 @@ function parseArgs(argv) {
 }
 
 function expandHome(value) {
-  if (value === "~") return homedir();
-  if (value?.startsWith("~/")) return join(homedir(), value.slice(2));
+  if (value === "~") {
+    return homedir();
+  }
+  if (value?.startsWith("~/")) {
+    return join(homedir(), value.slice(2));
+  }
   return value;
 }
 
@@ -111,7 +119,9 @@ function main() {
       `# ${rendered.serviceName}\n${rendered.service}\n# ${rendered.timerName}\n${rendered.timer}`,
     );
   }
-  if (!args.apply) return;
+  if (!args.apply) {
+    return;
+  }
   const installDir = resolvePath(args["install-dir"] || "~/.config/systemd/user");
   mkdirSync(installDir, { recursive: true });
   writeFileSync(join(installDir, rendered.serviceName), rendered.service);

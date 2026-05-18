@@ -459,7 +459,6 @@ async function runOpenAICodexOAuth(ctx: OpenAICodexOAuthContext) {
 
   const identity = resolveCodexAuthIdentity({
     accessToken: creds.access,
-    email: readStringValue(creds.email),
   });
 
   return buildOauthProviderAuthResult({
