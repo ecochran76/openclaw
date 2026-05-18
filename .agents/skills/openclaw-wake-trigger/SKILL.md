@@ -80,6 +80,23 @@ The timer service must load the same OpenClaw gateway auth environment that
 interactive commands use; on this workstation that is
 `~/credentials/API-keys.env`.
 
+Install or refresh Slack alerts for failed/stale wake triggers:
+
+```bash
+node /home/ecochran76/workspace.local/openclaw.git/scripts/install-wake-trigger-alert.mjs \
+  --script ~/.openclaw/workspace/scripts/wake-trigger.mjs \
+  --env-file ~/credentials/API-keys.env \
+  --account default \
+  --channel-id C0AHQQCG7J4 \
+  --apply \
+  --enable
+```
+
+The alert timer is read-only. It runs `alert-slack`, summarizes the status
+surface, and posts to the default tenant `oc-main-agent` channel only when wake
+triggers need attention. It deduplicates repeated identical alerts with a
+cooldown.
+
 ### Active Reactions
 
 For Slack-backed triggers, set a visible reaction on the user message while the
@@ -146,6 +163,14 @@ Use `status --json` for health checks and automation. It is read-only: it does
 not evaluate predicates or resume agents. It highlights `resume_failed`,
 `requires_human_ack`, `resume_exhausted`, timeout-overdue, and stale pending
 records.
+
+Send an immediate alert if status needs attention:
+
+```bash
+node ~/.openclaw/workspace/scripts/wake-trigger.mjs alert-slack \
+  --account default \
+  --channel-id C0AHQQCG7J4
+```
 
 Remove a trigger:
 

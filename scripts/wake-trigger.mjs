@@ -16,6 +16,7 @@ import { basename, join, resolve } from "node:path";
 const VERSION = 1;
 const CONFIG_FILE = "_config.json";
 const SESSIONS_FILE = "_sessions.json";
+const ALERTS_FILE = "_alerts.json";
 const DEFAULTS = {
   timeoutMinutes: 60,
   maxAttempts: 1,
@@ -37,6 +38,7 @@ function usage(exitCode = 0) {
   wake-trigger.mjs check [--dry-run] [--state-dir <dir>]
   wake-trigger.mjs list [--state-dir <dir>] [--json]
   wake-trigger.mjs status [--state-dir <dir>] [--json] [--stale-minutes <n>]
+  wake-trigger.mjs alert-slack [--state-dir <dir>] [--channel-id <id>] [--account <id>]
   wake-trigger.mjs show --id <id> [--state-dir <dir>]
   wake-trigger.mjs rm --id <id> [--state-dir <dir>]
   wake-trigger.mjs ack --session-key <key> [--state-dir <dir>]
@@ -80,6 +82,12 @@ Set options:
 Status options:
   --stale-minutes <n>       Mark non-terminal records stale after n minutes. Default: 15.
 
+Alert options:
+  --channel-id <id>         Slack alert channel id. Default: oc-main-agent C0AHQQCG7J4.
+  --account <id>            Slack account id. Default: default.
+  --cooldown-minutes <n>    Suppress repeated identical alerts for n minutes. Default: 30.
+  --force                   Send alert even if cooldown/signature would suppress it.
+
 Smoke options:
   --agent <id>              Agent to resume.
   --channel-id <id>         Slack channel id for the disposable smoke.
@@ -108,6 +116,7 @@ function parseArgs(argv) {
         "no-announce",
         "allow-non-agent-session-key",
         "keep-record",
+        "force",
       ].includes(key)
     ) {
       args[key] = true;
@@ -184,6 +193,10 @@ function sessionsPath(dir) {
   return join(dir, SESSIONS_FILE);
 }
 
+function alertsPath(dir) {
+  return join(dir, ALERTS_FILE);
+}
+
 function loadConfig(dir) {
   ensureStateDir(dir);
   const config = readJson(configPath(dir), {
@@ -211,6 +224,23 @@ function loadSessions(dir) {
   });
   sessions.sessions ||= {};
   return sessions;
+}
+
+function loadAlerts(dir) {
+  ensureStateDir(dir);
+  const alerts = readJson(alertsPath(dir), {
+    schema: "openclaw.wake_trigger.alerts.v1",
+    slack: {},
+  });
+  alerts.slack ||= {};
+  return alerts;
+}
+
+function saveAlerts(dir, alerts) {
+  ensureStateDir(dir);
+  alerts.schema = "openclaw.wake_trigger.alerts.v1";
+  alerts.updatedAt = nowIso();
+  writeJson(alertsPath(dir), alerts);
 }
 
 function saveSessions(dir, sessions) {
@@ -750,6 +780,26 @@ function summarizeRecord(record, nowMs, staleMinutes) {
 }
 
 function statusCommand(args) {
+  const output = buildStatus(args);
+  if (args.json) {
+    console.log(JSON.stringify(output, null, 2));
+    return;
+  }
+  console.log(
+    `wake-trigger status: ${output.ok ? "ok" : "attention"} total=${output.counts.total} attention=${output.counts.attention} pending=${output.counts.pending} failed=${output.counts.resumeFailed} humanAck=${output.counts.requiresHumanAck} stale=${output.counts.stale}`,
+  );
+  for (const record of output.records.filter((row) => row.attention)) {
+    const reasons = [];
+    if (record.state === "resume_failed") reasons.push("resume_failed");
+    if (record.state === "requires_human_ack") reasons.push("requires_human_ack");
+    if (record.state === "resume_exhausted") reasons.push("resume_exhausted");
+    if (record.timeoutOverdue) reasons.push("timeout_overdue");
+    if (record.stale) reasons.push("stale");
+    console.log(`${record.id}\t${record.state}\t${record.agent}\t${reasons.join(",")}`);
+  }
+}
+
+function buildStatus(args) {
   const dir = stateDir(args);
   const staleMinutes = readInt(args, "stale-minutes", 15, 1);
   const nowMs = Date.now();
@@ -777,22 +827,132 @@ function statusCommand(args) {
     counts,
     records,
   };
-  if (args.json) {
-    console.log(JSON.stringify(output, null, 2));
-    return;
-  }
-  console.log(
-    `wake-trigger status: ${output.ok ? "ok" : "attention"} total=${counts.total} attention=${counts.attention} pending=${counts.pending} failed=${counts.resumeFailed} humanAck=${counts.requiresHumanAck} stale=${counts.stale}`,
+  return output;
+}
+
+function attentionSignature(status) {
+  return JSON.stringify(
+    status.records
+      .filter((record) => record.attention)
+      .map((record) => ({
+        id: record.id,
+        state: record.state,
+        stale: record.stale,
+        timeoutOverdue: record.timeoutOverdue,
+        lastResumeExitCode: record.lastResumeExitCode,
+        lastResumeError: record.lastResumeError,
+        humanAckReason: record.humanAckReason,
+      })),
   );
-  for (const record of records.filter((row) => row.attention)) {
+}
+
+function alertMessage(status) {
+  const lines = [
+    `:warning: OpenClaw wake-trigger attention needed`,
+    `stateDir=${status.stateDir}`,
+    `attention=${status.counts.attention} total=${status.counts.total} pending=${status.counts.pending} failed=${status.counts.resumeFailed} humanAck=${status.counts.requiresHumanAck} stale=${status.counts.stale} overdue=${status.counts.timeoutOverdue}`,
+  ];
+  for (const record of status.records.filter((row) => row.attention).slice(0, 8)) {
     const reasons = [];
     if (record.state === "resume_failed") reasons.push("resume_failed");
     if (record.state === "requires_human_ack") reasons.push("requires_human_ack");
     if (record.state === "resume_exhausted") reasons.push("resume_exhausted");
     if (record.timeoutOverdue) reasons.push("timeout_overdue");
     if (record.stale) reasons.push("stale");
-    console.log(`${record.id}\t${record.state}\t${record.agent}\t${reasons.join(",")}`);
+    lines.push(
+      `- ${record.id} agent=${record.agent} state=${record.state} reason=${reasons.join(",")}`,
+    );
   }
+  if (status.counts.attention > 8) {
+    lines.push(`- ... ${status.counts.attention - 8} more`);
+  }
+  lines.push(`Run: node ~/.openclaw/workspace/scripts/wake-trigger.mjs status --json`);
+  return lines.join("\n");
+}
+
+async function alertSlackCommand(args) {
+  const dir = stateDir(args);
+  const status = buildStatus(args);
+  const channelId = args["channel-id"] || "C0AHQQCG7J4";
+  const accountId = args.account || "default";
+  const envFile = expandHome(args["env-file"] || "~/credentials/API-keys.env");
+  const cooldownMinutes = readInt(args, "cooldown-minutes", 30, 1);
+  const signature = attentionSignature(status);
+  const alerts = loadAlerts(dir);
+  const key = `${accountId}:${channelId}`;
+  const last = alerts.slack[key] || {};
+  const lastSentMs = Date.parse(last.sentAt || "");
+  const cooldownActive =
+    Number.isFinite(lastSentMs) && Date.now() - lastSentMs < cooldownMinutes * 60_000;
+  if (status.ok) {
+    alerts.slack[key] = {
+      ...last,
+      lastOkAt: nowIso(),
+      lastAttentionSignature: "",
+    };
+    saveAlerts(dir, alerts);
+    console.log(
+      JSON.stringify(
+        {
+          ok: true,
+          action: "none",
+          reason: "no-attention",
+          channelId,
+          accountId,
+          counts: status.counts,
+        },
+        null,
+        2,
+      ),
+    );
+    return;
+  }
+  if (!args.force && last.signature === signature && cooldownActive) {
+    console.log(
+      JSON.stringify(
+        {
+          ok: true,
+          action: "suppressed",
+          reason: "cooldown",
+          channelId,
+          accountId,
+          cooldownMinutes,
+          lastSentAt: last.sentAt || "",
+          counts: status.counts,
+        },
+        null,
+        2,
+      ),
+    );
+    return;
+  }
+  const sent = await postSlackMessage({
+    channel: channelId,
+    accountId,
+    envFile,
+    text: alertMessage(status),
+  });
+  alerts.slack[key] = {
+    signature,
+    sentAt: nowIso(),
+    messageTs: String(sent.ts || ""),
+    counts: status.counts,
+  };
+  saveAlerts(dir, alerts);
+  console.log(
+    JSON.stringify(
+      {
+        ok: true,
+        action: "sent",
+        channelId,
+        accountId,
+        messageTs: String(sent.ts || ""),
+        counts: status.counts,
+      },
+      null,
+      2,
+    ),
+  );
 }
 
 function showCommand(args) {
@@ -1123,6 +1283,9 @@ async function main() {
       break;
     case "status":
       statusCommand(args);
+      break;
+    case "alert-slack":
+      await alertSlackCommand(args);
       break;
     case "show":
       showCommand(args);
