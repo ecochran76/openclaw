@@ -30,6 +30,7 @@ node ~/.openclaw/workspace/scripts/wake-trigger.mjs set \
   --failure-cmd 'test -f /tmp/soylei-dev-sync.failed' \
   --timeout-minutes 45 \
   --max-attempts 1 \
+  --max-automated-resumes 1 \
   --reply-channel slack \
   --reply-account soylei \
   --reply-to C06L8DVBWQP \
@@ -61,10 +62,51 @@ node ~/.openclaw/workspace/scripts/wake-trigger.mjs rm --id <trigger-id>
 If the installed script is missing, use the source checkout path:
 `node /home/ecochran76/workspace.local/openclaw.git/scripts/wake-trigger.mjs`.
 
+## Dynamic Limits
+
+The user can set limits for the current session:
+
+```bash
+node ~/.openclaw/workspace/scripts/wake-trigger.mjs defaults set \
+  --scope session \
+  --session-key agent:soylei-website:slack:channel:c06l8dvbwqp:thread:1779054888.591249 \
+  --max-automated-resumes 2 \
+  --timeout-minutes 45 \
+  --max-attempts 1
+```
+
+The user can set permanent global defaults for future triggers:
+
+```bash
+node ~/.openclaw/workspace/scripts/wake-trigger.mjs defaults set \
+  --scope global \
+  --max-automated-resumes 1 \
+  --timeout-minutes 60 \
+  --max-attempts 1
+```
+
+Show effective defaults:
+
+```bash
+node ~/.openclaw/workspace/scripts/wake-trigger.mjs defaults show \
+  --session-key agent:soylei-website:slack:channel:c06l8dvbwqp:thread:1779054888.591249
+```
+
+If a trigger reaches `requires_human_ack`, a human/operator must acknowledge the
+session before further automatic wake resumes. Do not run this command
+autonomously to bypass the guard; it represents human permission to continue:
+
+```bash
+node ~/.openclaw/workspace/scripts/wake-trigger.mjs ack \
+  --session-key agent:soylei-website:slack:channel:c06l8dvbwqp:thread:1779054888.591249
+```
+
 ## Guardrails
 
 - Always set `--max-attempts`. Use `1` unless there is a concrete reason to
   retry failed resume delivery.
+- Keep `--max-automated-resumes` low. Use `1` unless the user explicitly allows
+  a multi-step autonomous continuation chain.
 - Always set `--timeout-minutes` so the user gets a failure-style resume instead
   of silence.
 - Prefer file predicates written by deterministic scripts over broad shell
@@ -102,3 +144,11 @@ finishes, fails, or times out.
 The trigger checker marks records terminal after a successful resume. If resume
 delivery fails, it records `resume_failed`, increments attempts, and only retries
 while below `maxAttempts` and after `cooldownSeconds`.
+
+## Human-Ack Semantics
+
+`maxAutomatedResumes` is counted by session key, not by trigger id. This prevents
+an agent from creating trigger after trigger and waking itself indefinitely. Once
+the session reaches the configured limit, later ready triggers move to
+`requires_human_ack` and do not resume the agent until `ack` resets the session
+counter.

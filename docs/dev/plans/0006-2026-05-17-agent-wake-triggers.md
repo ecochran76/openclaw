@@ -35,6 +35,9 @@ bounded, agent-facing "wake me when this predicate changes" workflow.
    - `scripts/wake-trigger.mjs set/list/show/rm/check`
    - durable JSON records under `~/.openclaw/wake-triggers`
    - bounded attempts, cooldown, timeout, and terminal states
+   - session-level `maxAutomatedResumes` guard that requires human ack before
+     further self-wake chains
+   - session and global default configuration for operator-tuned limits
    - resume via `openclaw agent --agent ... --session-key ... --message ...`
 2. Agent skill:
    - explain when to set a trigger
@@ -56,6 +59,11 @@ bounded, agent-facing "wake me when this predicate changes" workflow.
   success, failure, or timeout.
 - Repeated checks do not retrigger a completed wake record.
 - Failed resume attempts are bounded by `maxAttempts`.
+- Repeated automated resumes for one session are bounded by
+  `maxAutomatedResumes`; after the limit, a human/operator must acknowledge the
+  session before additional automated resumes.
+- Operators can set limits for the current session or as permanent global
+  defaults.
 - Trigger records are inspectable and removable by operators.
 
 ## Definition Of Done

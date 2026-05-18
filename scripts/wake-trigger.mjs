@@ -13,6 +13,15 @@ import { homedir } from "node:os";
 import { basename, join, resolve } from "node:path";
 
 const VERSION = 1;
+const CONFIG_FILE = "_config.json";
+const SESSIONS_FILE = "_sessions.json";
+const DEFAULTS = {
+  timeoutMinutes: 60,
+  maxAttempts: 1,
+  maxAutomatedResumes: 1,
+  cooldownSeconds: 300,
+  timeoutSeconds: 600,
+};
 const TERMINAL_STATES = new Set([
   "delivered_success",
   "delivered_failure",
@@ -28,12 +37,17 @@ function usage(exitCode = 0) {
   wake-trigger.mjs list [--state-dir <dir>] [--json]
   wake-trigger.mjs show --id <id> [--state-dir <dir>]
   wake-trigger.mjs rm --id <id> [--state-dir <dir>]
+  wake-trigger.mjs ack --session-key <key> [--state-dir <dir>]
+  wake-trigger.mjs defaults show [--state-dir <dir>] [--session-key <key>]
+  wake-trigger.mjs defaults set [--scope global|session] [--session-key <key>] [limit options]
 
 Set options:
   --success-cmd <cmd>       Shell predicate that exits 0 on success.
   --failure-cmd <cmd>       Shell predicate that exits 0 on failure.
   --timeout-minutes <n>     Fire timeout after n minutes. Default: 60.
   --max-attempts <n>        Max resume attempts after a terminal condition. Default: 1.
+  --max-automated-resumes <n>
+                            Max automatic wake resumes per session before human ack. Default: 1.
   --cooldown-seconds <n>    Delay before retrying failed resume. Default: 300.
   --on-success <text>       Resume prompt for success.
   --on-failure <text>       Resume prompt for failure.
@@ -104,10 +118,71 @@ function writeRecord(dir, record) {
   return path;
 }
 
+function readJson(path, fallback) {
+  try {
+    return JSON.parse(readFileSync(path, "utf8"));
+  } catch (error) {
+    if (error?.code !== "ENOENT") {
+      throw error;
+    }
+    return fallback;
+  }
+}
+
+function writeJson(path, value) {
+  const tmp = `${path}.tmp`;
+  writeFileSync(tmp, `${JSON.stringify(value, null, 2)}\n`);
+  renameSync(tmp, path);
+}
+
+function configPath(dir) {
+  return join(dir, CONFIG_FILE);
+}
+
+function sessionsPath(dir) {
+  return join(dir, SESSIONS_FILE);
+}
+
+function loadConfig(dir) {
+  ensureStateDir(dir);
+  const config = readJson(configPath(dir), {
+    schema: "openclaw.wake_trigger.config.v1",
+    global: {},
+    sessions: {},
+  });
+  config.global ||= {};
+  config.sessions ||= {};
+  return config;
+}
+
+function saveConfig(dir, config) {
+  ensureStateDir(dir);
+  config.schema = "openclaw.wake_trigger.config.v1";
+  config.updatedAt = nowIso();
+  writeJson(configPath(dir), config);
+}
+
+function loadSessions(dir) {
+  ensureStateDir(dir);
+  const sessions = readJson(sessionsPath(dir), {
+    schema: "openclaw.wake_trigger.sessions.v1",
+    sessions: {},
+  });
+  sessions.sessions ||= {};
+  return sessions;
+}
+
+function saveSessions(dir, sessions) {
+  ensureStateDir(dir);
+  sessions.schema = "openclaw.wake_trigger.sessions.v1";
+  sessions.updatedAt = nowIso();
+  writeJson(sessionsPath(dir), sessions);
+}
+
 function recordPaths(dir) {
   ensureStateDir(dir);
   return readdirSync(dir)
-    .filter((name) => name.endsWith(".json") && !name.endsWith(".tmp"))
+    .filter((name) => name.endsWith(".json") && !name.endsWith(".tmp") && !name.startsWith("_"))
     .map((name) => join(dir, name));
 }
 
@@ -129,6 +204,29 @@ function readInt(args, key, fallback, min) {
   return value;
 }
 
+function readOptionalInt(args, key, min) {
+  const raw = args[key];
+  if (raw === undefined) return undefined;
+  const value = Number.parseInt(String(raw), 10);
+  if (!Number.isFinite(value) || value < min) {
+    throw new Error(`--${key} must be an integer >= ${min}`);
+  }
+  return value;
+}
+
+function normalizeLimitKey(key) {
+  return key.replace(/-([a-z])/g, (_match, letter) => letter.toUpperCase());
+}
+
+function effectiveDefaults(dir, sessionKey = "") {
+  const config = loadConfig(dir);
+  return {
+    ...DEFAULTS,
+    ...config.global,
+    ...(sessionKey && config.sessions[sessionKey] ? config.sessions[sessionKey] : {}),
+  };
+}
+
 function commandPassed(command) {
   if (!command) return false;
   const result = spawnSync(command, {
@@ -141,6 +239,9 @@ function commandPassed(command) {
 
 function classify(record, nowMs) {
   if (TERMINAL_STATES.has(record.state)) {
+    return null;
+  }
+  if (record.state === "requires_human_ack") {
     return null;
   }
   if (record.state === "resume_failed") {
@@ -189,9 +290,17 @@ function resumeArgs(record, reason) {
 
 function setCommand(args) {
   const dir = stateDir(args);
-  const timeoutMinutes = readInt(args, "timeout-minutes", 60, 1);
-  const maxAttempts = readInt(args, "max-attempts", 1, 1);
-  const cooldownSeconds = readInt(args, "cooldown-seconds", 300, 1);
+  const sessionKey = requireString(args, "session-key");
+  const defaults = effectiveDefaults(dir, sessionKey);
+  const timeoutMinutes = readInt(args, "timeout-minutes", defaults.timeoutMinutes, 1);
+  const maxAttempts = readInt(args, "max-attempts", defaults.maxAttempts, 1);
+  const maxAutomatedResumes = readInt(
+    args,
+    "max-automated-resumes",
+    defaults.maxAutomatedResumes,
+    0,
+  );
+  const cooldownSeconds = readInt(args, "cooldown-seconds", defaults.cooldownSeconds, 1);
   const createdAt = nowIso();
   const id = args.id || `${Date.now()}-${randomUUID().slice(0, 8)}`;
   const record = {
@@ -200,7 +309,7 @@ function setCommand(args) {
     id,
     name: requireString(args, "name"),
     agent: requireString(args, "agent"),
-    sessionKey: requireString(args, "session-key"),
+    sessionKey,
     state: "pending",
     successCmd: args["success-cmd"] || "",
     failureCmd: args["failure-cmd"] || "",
@@ -212,8 +321,9 @@ function setCommand(args) {
     replyChannel: args["reply-channel"] || "",
     replyAccount: args["reply-account"] || "",
     replyTo: args["reply-to"] || "",
-    timeoutSeconds: readInt(args, "agent-timeout-seconds", 600, 1),
+    timeoutSeconds: readInt(args, "agent-timeout-seconds", defaults.timeoutSeconds, 1),
     maxAttempts,
+    maxAutomatedResumes,
     attempts: 0,
     cooldownSeconds,
     createdAt,
@@ -269,6 +379,39 @@ function checkOne(dir, record, args) {
   const nowMs = Date.now();
   const reason = classify(record, nowMs);
   if (!reason) return { id: record.id, state: record.state, action: "none" };
+  const sessions = loadSessions(dir);
+  const sessionState = sessions.sessions[record.sessionKey] || {
+    automatedResumes: 0,
+    humanAckCount: 0,
+  };
+  const maxAutomatedResumes =
+    typeof record.maxAutomatedResumes === "number"
+      ? record.maxAutomatedResumes
+      : effectiveDefaults(dir, record.sessionKey).maxAutomatedResumes;
+  if (sessionState.automatedResumes >= maxAutomatedResumes) {
+    if (args["dry-run"]) {
+      return {
+        id: record.id,
+        state: record.state,
+        action: "would-require-human-ack",
+        reason,
+        maxAutomatedResumes,
+      };
+    }
+    record.state = "requires_human_ack";
+    record.updatedAt = nowIso();
+    record.lastFireReason = reason;
+    record.humanAckRequiredAt = record.updatedAt;
+    record.humanAckReason = `maxAutomatedResumes ${maxAutomatedResumes} reached for session`;
+    writeRecord(dir, record);
+    return {
+      id: record.id,
+      state: record.state,
+      action: "requires-human-ack",
+      reason,
+      maxAutomatedResumes,
+    };
+  }
   if (args["dry-run"]) {
     return {
       id: record.id,
@@ -298,6 +441,11 @@ function checkOne(dir, record, args) {
   if (result.status === 0) {
     record.state = `delivered_${reason}`;
     record.deliveredAt = nowIso();
+    sessionState.automatedResumes += 1;
+    sessionState.lastAutomatedResumeAt = record.deliveredAt;
+    sessionState.lastTriggerId = record.id;
+    sessions.sessions[record.sessionKey] = sessionState;
+    saveSessions(dir, sessions);
   } else {
     record.state = "resume_failed";
     record.nextEligibleAt = new Date(
@@ -313,6 +461,93 @@ function checkCommand(args) {
   const dir = stateDir(args);
   const results = recordPaths(dir).map((path) => checkOne(dir, readRecord(path), args));
   console.log(JSON.stringify({ ok: true, checked: results.length, results }, null, 2));
+}
+
+function ackCommand(args) {
+  const dir = stateDir(args);
+  const sessionKey = requireString(args, "session-key");
+  const sessions = loadSessions(dir);
+  const current = sessions.sessions[sessionKey] || {};
+  sessions.sessions[sessionKey] = {
+    ...current,
+    automatedResumes: 0,
+    humanAckCount: Number(current.humanAckCount || 0) + 1,
+    lastHumanAckAt: nowIso(),
+  };
+  let rearmed = 0;
+  for (const path of recordPaths(dir)) {
+    const record = readRecord(path);
+    if (record.sessionKey === sessionKey && record.state === "requires_human_ack") {
+      record.state = "pending";
+      record.updatedAt = nowIso();
+      record.humanAckedAt = record.updatedAt;
+      writeRecord(dir, record);
+      rearmed += 1;
+    }
+  }
+  saveSessions(dir, sessions);
+  console.log(JSON.stringify({ ok: true, sessionKey, rearmed }, null, 2));
+}
+
+function limitUpdateFromArgs(args) {
+  const updates = {};
+  for (const key of [
+    "timeout-minutes",
+    "max-attempts",
+    "max-automated-resumes",
+    "cooldown-seconds",
+    "agent-timeout-seconds",
+  ]) {
+    const value = readOptionalInt(args, key, key === "max-automated-resumes" ? 0 : 1);
+    if (value !== undefined) {
+      const normalized =
+        key === "agent-timeout-seconds" ? "timeoutSeconds" : normalizeLimitKey(key);
+      updates[normalized] = value;
+    }
+  }
+  return updates;
+}
+
+function defaultsCommand(args) {
+  const subcommand = args._[0] || "show";
+  const dir = stateDir(args);
+  const config = loadConfig(dir);
+  if (subcommand === "show") {
+    const sessionKey = args["session-key"] || "";
+    console.log(
+      JSON.stringify(
+        {
+          ok: true,
+          defaults: effectiveDefaults(dir, sessionKey),
+          global: config.global,
+          sessionKey,
+          session: sessionKey ? config.sessions[sessionKey] || {} : undefined,
+          path: configPath(dir),
+        },
+        null,
+        2,
+      ),
+    );
+    return;
+  }
+  if (subcommand !== "set") {
+    throw new Error(`unknown defaults subcommand: ${subcommand}`);
+  }
+  const scope = args.scope || "session";
+  const updates = limitUpdateFromArgs(args);
+  if (Object.keys(updates).length === 0) {
+    throw new Error("defaults set requires at least one limit option");
+  }
+  if (scope === "global") {
+    config.global = { ...config.global, ...updates };
+  } else if (scope === "session") {
+    const sessionKey = requireString(args, "session-key");
+    config.sessions[sessionKey] = { ...(config.sessions[sessionKey] || {}), ...updates };
+  } else {
+    throw new Error("--scope must be global or session");
+  }
+  saveConfig(dir, config);
+  console.log(JSON.stringify({ ok: true, scope, updates, path: configPath(dir) }, null, 2));
 }
 
 function main() {
@@ -334,6 +569,12 @@ function main() {
       break;
     case "check":
       checkCommand(args);
+      break;
+    case "ack":
+      ackCommand(args);
+      break;
+    case "defaults":
+      defaultsCommand(args);
       break;
     default:
       throw new Error(`unknown command: ${command}`);
