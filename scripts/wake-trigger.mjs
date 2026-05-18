@@ -54,6 +54,8 @@ Set options:
   --on-failure <text>       Resume prompt for failure.
   --on-timeout <text>       Resume prompt for timeout.
   --openclaw-bin <path>     OpenClaw CLI. Default: openclaw.
+  --allow-non-agent-session-key
+                            Allow a non-agent-prefixed session key. Avoid unless debugging.
   --reply-channel <name>    Optional delivery channel, for example slack.
   --reply-account <id>      Optional delivery account id.
   --reply-to <target>       Optional delivery target.
@@ -86,7 +88,9 @@ function parseArgs(argv) {
       continue;
     }
     const key = token.slice(2);
-    if (["deliver", "dry-run", "json", "no-announce"].includes(key)) {
+    if (
+      ["deliver", "dry-run", "json", "no-announce", "allow-non-agent-session-key"].includes(key)
+    ) {
       args[key] = true;
       continue;
     }
@@ -239,6 +243,28 @@ function effectiveDefaults(dir, sessionKey = "") {
     ...config.global,
     ...(sessionKey && config.sessions[sessionKey] ? config.sessions[sessionKey] : {}),
   };
+}
+
+function normalizeComparableAgentId(value) {
+  return String(value || "")
+    .trim()
+    .toLowerCase();
+}
+
+function validateSessionKeyForAgent(sessionKey, agent, args) {
+  const match = /^agent:([^:]+):/.exec(sessionKey);
+  if (!match) {
+    if (args["allow-non-agent-session-key"]) return;
+    throw new Error(
+      `--session-key must start with agent:${agent}: so OpenClaw resumes the intended agent; got ${sessionKey}`,
+    );
+  }
+  const sessionAgent = match[1];
+  if (normalizeComparableAgentId(sessionAgent) !== normalizeComparableAgentId(agent)) {
+    throw new Error(
+      `--agent (${agent}) must match --session-key agent (${sessionAgent}); use agent:${agent}:...`,
+    );
+  }
 }
 
 function commandPassed(command) {
@@ -491,6 +517,8 @@ async function announceTriggerArmed(record) {
 async function setCommand(args) {
   const dir = stateDir(args);
   const sessionKey = requireString(args, "session-key");
+  const agent = requireString(args, "agent");
+  validateSessionKeyForAgent(sessionKey, agent, args);
   const defaults = effectiveDefaults(dir, sessionKey);
   const timeoutMinutes = readInt(args, "timeout-minutes", defaults.timeoutMinutes, 1);
   const maxAttempts = readInt(args, "max-attempts", defaults.maxAttempts, 1);
@@ -508,7 +536,7 @@ async function setCommand(args) {
     version: VERSION,
     id,
     name: requireString(args, "name"),
-    agent: requireString(args, "agent"),
+    agent,
     sessionKey,
     state: "pending",
     successCmd: args["success-cmd"] || "",

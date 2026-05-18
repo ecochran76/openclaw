@@ -106,6 +106,20 @@ thread acknowledgement. The script loads `~/credentials/API-keys.env` by default
 when it needs Slack acknowledgement tokens; use `--env-file <path>` if a
 different env source is required.
 
+### Session Key Validation
+
+The session key must start with `agent:<agentId>:` and `<agentId>` must match
+`--agent`. This prevents the checker from waking the wrong OpenClaw agent. For
+Slack threads, use this shape:
+
+```text
+agent:<agentId>:slack:channel:<channelId>:thread:<threadTs>
+```
+
+Do not use ad hoc keys such as `smoke:<id>` for real wake triggers. The
+`--allow-non-agent-session-key` escape hatch exists only for isolated debugging
+where no OpenClaw resume delivery will run.
+
 Inspect triggers:
 
 ```bash
@@ -175,6 +189,9 @@ node ~/.openclaw/workspace/scripts/wake-trigger.mjs ack \
 - Let the default thread acknowledgement post, or provide `--announce-message`
   with the specific thing being watched. The user should never have to infer
   timer state from a reaction alone.
+- Ensure `--session-key` starts with `agent:<same-agent-id>:`. The script fails
+  before posting reactions or acknowledgements if the key targets a different
+  agent.
 - Prefer file predicates written by deterministic scripts over broad shell
   greps.
 - Do not set a trigger that runs an unbounded, mutating, or destructive
