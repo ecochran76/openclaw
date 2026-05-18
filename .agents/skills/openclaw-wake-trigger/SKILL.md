@@ -34,7 +34,7 @@ node ~/.openclaw/workspace/scripts/wake-trigger.mjs set \
   --reply-channel slack \
   --reply-account soylei \
   --reply-to C06L8DVBWQP \
-  --active-reaction hourglass_flowing_sand \
+  --active-reaction alarm_clock \
   --reaction-message-id 1779054888.591249 \
   --human-ack-reaction warning \
   --deliver \
@@ -67,7 +67,7 @@ For Slack-backed triggers, set a visible reaction on the user message while the
 trigger is active:
 
 ```bash
---active-reaction hourglass_flowing_sand \
+--active-reaction alarm_clock \
 --reaction-message-id 1779054888.591249 \
 --reaction-target C06L8DVBWQP \
 --reaction-channel slack
@@ -146,8 +146,9 @@ node ~/.openclaw/workspace/scripts/wake-trigger.mjs ack \
   a multi-step autonomous continuation chain.
 - Always set `--timeout-minutes` so the user gets a failure-style resume instead
   of silence.
-- For Slack turns, prefer `--active-reaction hourglass_flowing_sand` with the
-  inbound message ts so the user can see that a bounded wake trigger is armed.
+- For Slack turns, prefer `--active-reaction alarm_clock` with the inbound
+  message ts so the user can see that a bounded wake trigger is armed. Do not
+  use OpenClaw's normal hourglass reaction for wake triggers.
 - Prefer file predicates written by deterministic scripts over broad shell
   greps.
 - Do not set a trigger that runs an unbounded, mutating, or destructive
