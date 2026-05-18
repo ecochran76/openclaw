@@ -55,6 +55,7 @@ vi.mock("./inbound-delivery-state.js", () => ({
 }));
 
 function createContext(overrides?: {
+  cfg?: Record<string, unknown>;
   markMessageSeen?: (channel: string | undefined, ts: string | undefined) => boolean;
   releaseSeenMessage?: (channel: string | undefined, ts: string | undefined) => void;
   isChannelAllowed?: () => boolean;
@@ -64,7 +65,7 @@ function createContext(overrides?: {
 }) {
   const channelsConfig = overrides?.channelsConfig ?? {};
   return {
-    cfg: {},
+    cfg: overrides?.cfg ?? {},
     accountId: "default",
     botToken: "xoxb-test",
     botUserId: "UOPENCLAW",
@@ -87,6 +88,7 @@ function createContext(overrides?: {
 }
 
 function createHandlerWithTracker(overrides?: {
+  cfg?: Record<string, unknown>;
   markMessageSeen?: (channel: string | undefined, ts: string | undefined) => boolean;
   releaseSeenMessage?: (channel: string | undefined, ts: string | undefined) => void;
   isChannelAllowed?: () => boolean;
@@ -187,7 +189,7 @@ describe("createSlackMessageHandler", () => {
       { source: "app_mention", wasMentioned: true },
     );
 
-    expect(reactSlackMessageMock).toHaveBeenCalledWith("C111", "1709000000.000100", "👀", {
+    expect(reactSlackMessageMock).toHaveBeenCalledWith("C111", "1709000000.000100", "eyes", {
       token: "xoxb-test",
       client: {},
     });
@@ -196,6 +198,33 @@ describe("createSlackMessageHandler", () => {
     );
     expect(resolveThreadTsMock).toHaveBeenCalledTimes(1);
     expect(enqueueMock).toHaveBeenCalledTimes(1);
+  });
+
+  it("falls back when an agent identity label is not a valid Slack reaction name", async () => {
+    const { handler } = createHandlerWithTracker({
+      cfg: {
+        agents: {
+          list: [{ id: "main", identity: { emoji: "SW" } }],
+        },
+      },
+    });
+
+    await handler(
+      {
+        type: "app_mention",
+        channel: "C111",
+        channel_type: "channel",
+        user: "U111",
+        ts: "1709000000.000100",
+        text: "<@UOPENCLAW> hello",
+      } as never,
+      { source: "app_mention", wasMentioned: true },
+    );
+
+    expect(reactSlackMessageMock).toHaveBeenCalledWith("C111", "1709000000.000100", "eyes", {
+      token: "xoxb-test",
+      client: {},
+    });
   });
 
   it("starts an ack for message events that directly mention the bot", async () => {
@@ -213,7 +242,7 @@ describe("createSlackMessageHandler", () => {
       { source: "message" },
     );
 
-    expect(reactSlackMessageMock).toHaveBeenCalledWith("C111", "1709000000.000100", "👀", {
+    expect(reactSlackMessageMock).toHaveBeenCalledWith("C111", "1709000000.000100", "eyes", {
       token: "xoxb-test",
       client: {},
     });

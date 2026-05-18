@@ -94,34 +94,10 @@ import {
 } from "../replies.js";
 import { dispatchReplyWithBufferedBlockDispatcher } from "../reply.runtime.js";
 import { finalizeSlackPreviewEdit } from "./preview-finalize.js";
+import { toSlackReactionName } from "./reactions.js";
 import { resolveSlackTimestampMs } from "./timestamp.js";
 import type { PreparedSlackMessage } from "./types.js";
 
-// Slack reactions.add/remove expect shortcode names, not raw unicode emoji.
-const UNICODE_TO_SLACK: Record<string, string> = {
-  "👀": "eyes",
-  "🤔": "thinking_face",
-  "🔥": "fire",
-  "👨‍💻": "male-technologist",
-  "👨💻": "male-technologist",
-  "👩‍💻": "female-technologist",
-  "⚡": "zap",
-  "🌐": "globe_with_meridians",
-  "✅": "white_check_mark",
-  "👍": "thumbsup",
-  "❌": "x",
-  "😱": "scream",
-  "🥱": "yawning_face",
-  "😨": "fearful",
-  "⏳": "hourglass_flowing_sand",
-  "⚠️": "warning",
-  "✍": "writing_hand",
-  "🗜️": "compression",
-  "🗜": "compression",
-  "🧠": "brain",
-  "🛠️": "hammer_and_wrench",
-  "💻": "computer",
-};
 const SLACK_REASONING_TAG_RE =
   /<\s*(\/?)\s*(?:(?:antml:|mm:)?(?:think(?:ing)?|thought)|antthinking)\b[^<>]*>/gi;
 const SLACK_REASONING_LABEL_PREFIX_RE = /^\s*(?:>\s*)?Reasoning:\s*/iu;
@@ -187,14 +163,7 @@ function resolveSlackBotLoopProtection(
 }
 
 function toSlackEmojiName(emoji: string): string {
-  let trimmed = emoji.trim();
-  while (trimmed.startsWith(":")) {
-    trimmed = trimmed.slice(1);
-  }
-  while (trimmed.endsWith(":")) {
-    trimmed = trimmed.slice(0, -1);
-  }
-  return UNICODE_TO_SLACK[trimmed] ?? trimmed;
+  return toSlackReactionName(emoji);
 }
 
 export function isSlackStreamingEnabled(params: {

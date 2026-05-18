@@ -72,6 +72,7 @@ import { resolveSlackMessageContent } from "./prepare-content.js";
 import { resolveSlackDmHistoryContext, resolveSlackDmHistoryLimit } from "./prepare-dm-history.js";
 import { resolveSlackRoutingContext } from "./prepare-routing.js";
 import { resolveSlackThreadContextData } from "./prepare-thread-context.js";
+import { normalizeSlackAckReactionName } from "./reactions.js";
 import { isSlackSubteamMentionForBot, normalizeSlackId } from "./subteam-mentions.js";
 import { resolveSlackTimestampMs } from "./timestamp.js";
 import type { PreparedSlackMessage } from "./types.js";
@@ -1193,11 +1194,12 @@ export async function prepareSlackMessage(params: {
     hasAbortRequest,
   });
 
-  const ackReaction = resolveAckReaction(cfg, route.agentId, {
-    channel: "slack",
-    accountId: account.accountId,
-  });
-  const ackReactionValue = ackReaction ?? "";
+  const ackReactionValue = normalizeSlackAckReactionName(
+    resolveAckReaction(cfg, route.agentId, {
+      channel: "slack",
+      accountId: account.accountId,
+    }),
+  );
   const sourceRepliesAreToolOnly =
     resolveChannelMessageSourceReplyDeliveryMode({
       cfg,
@@ -1206,7 +1208,7 @@ export async function prepareSlackMessage(params: {
   const statusReactionsExplicitlyEnabled = cfg.messages?.statusReactions?.enabled === true;
   const shouldAckReaction = () =>
     Boolean(
-      ackReaction &&
+      ackReactionValue &&
       shouldAckReactionGate({
         scope: ctx.ackReactionScope as AckReactionScope | undefined,
         isDirect: isDirectMessage,

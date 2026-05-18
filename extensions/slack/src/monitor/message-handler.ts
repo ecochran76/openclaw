@@ -25,6 +25,7 @@ import {
   buildSlackDebounceKey,
   buildTopLevelSlackConversationKey,
 } from "./message-handler/debounce-key.js";
+import { normalizeSlackAckReactionName, toSlackReactionName } from "./message-handler/reactions.js";
 import { createSlackThreadTsResolver } from "./thread-resolution.js";
 
 type SlackMessagePipeline = typeof import("./message-handler/pipeline.runtime.js");
@@ -91,17 +92,6 @@ function buildSeenMessageKey(channelId: string | undefined, ts: string | undefin
     return null;
   }
   return `${channelId}:${ts}`;
-}
-
-function toSlackReactionName(emoji: string): string {
-  const trimmed = emoji.trim().replace(/^:+|:+$/g, "");
-  if (trimmed === "👀") {
-    return "eyes";
-  }
-  if (trimmed === "⏳") {
-    return "hourglass_flowing_sand";
-  }
-  return trimmed;
 }
 
 function shouldAttemptPrePipelineAck(params: {
@@ -257,10 +247,12 @@ export function startPrePipelineAck(params: {
     return false;
   }
   const defaultAgentId = resolveDefaultAgentId(ctx.cfg);
-  const reaction = resolveAckReaction(ctx.cfg, defaultAgentId, {
-    channel: "slack",
-    accountId: account.accountId,
-  });
+  const reaction = normalizeSlackAckReactionName(
+    resolveAckReaction(ctx.cfg, defaultAgentId, {
+      channel: "slack",
+      accountId: account.accountId,
+    }),
+  );
   if (!reaction) {
     return false;
   }

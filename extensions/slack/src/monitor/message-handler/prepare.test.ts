@@ -903,6 +903,54 @@ describe("slack prepareSlackMessage inbound contract", () => {
     expect(prepared.ctxPayload.CommandBody).toBe("please stop");
   });
 
+  it("uses the default Slack ack reaction when identity emoji is a text label", async () => {
+    const reactionsAdd = vi.fn(async () => ({}));
+    const slackCtx = createInboundSlackCtx({
+      cfg: {
+        agents: {
+          list: [{ id: "main", identity: { emoji: "SW" } }],
+        },
+        messages: {
+          ackReactionScope: "all",
+          groupChat: { visibleReplies: "message_tool" },
+          statusReactions: { enabled: true },
+        },
+        channels: {
+          slack: {
+            enabled: true,
+            groupPolicy: "open",
+            replyToMode: "all",
+          },
+        },
+      } as OpenClawConfig,
+      replyToMode: "all",
+      appClient: {
+        reactions: {
+          add: reactionsAdd,
+        },
+      } as unknown as App["client"],
+    });
+    slackCtx.resolveUserName = async () => ({ name: "Alice" }) as any;
+    slackCtx.resolveChannelName = async () => ({ name: "general", type: "channel" });
+
+    const prepared = await prepareMessageWith(slackCtx, defaultAccount, {
+      channel: "C123",
+      channel_type: "channel",
+      user: "U1",
+      text: "<@B1> hi",
+      ts: "1.000",
+    } as SlackMessageEvent);
+
+    assertPrepared(prepared);
+    expect(prepared?.ackReactionValue).toBe("eyes");
+    expect(await prepared.ackReactionPromise).toBe(true);
+    expect(reactionsAdd).toHaveBeenCalledWith({
+      channel: "C123",
+      timestamp: "1.000",
+      name: "eyes",
+    });
+  });
+
   it("includes forwarded shared attachment text in raw body", async () => {
     const prepared = await prepareWithDefaultCtx(
       createSlackMessage({
