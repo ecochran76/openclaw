@@ -21,11 +21,17 @@ Use this skill for local runtime operations, not ordinary source edits.
    - `git rev-parse --short HEAD`
    - `command -v openclaw`
    - `openclaw --version`
-2. Check gateway service health:
+2. Capture the read-only operator snapshot:
+   - `node ~/.openclaw/workspace/scripts/openclaw-health-snapshot.mjs`
+   - Use `--json` when filing handoff notes or comparing repeated checks.
+3. Check gateway service health when the snapshot points at gateway/RPC trouble:
    - `openclaw gateway status --deep --require-rpc`
    - `systemctl --user status openclaw-gateway.service --no-pager`
    - `ss -ltnp 'sport = :18789' || true`
-3. If the service flaps or bootstrap fails, inspect bounded logs:
+4. Check wake-trigger health when a Slack turn promised to resume later:
+   - `node ~/.openclaw/workspace/scripts/wake-trigger.mjs status --json`
+   - `systemctl --user list-timers 'openclaw-wake-trigger-*' --all --no-pager`
+5. If the service flaps or bootstrap fails, inspect bounded logs:
    - `journalctl --user -u openclaw-gateway.service -n 200 --no-pager`
    - `tail -n 200 ~/.openclaw/logs/gateway-restart.log`
    - newest `/tmp/openclaw/openclaw-*.log`
@@ -47,5 +53,6 @@ Report:
 - gateway service state and PID
 - RPC probe result
 - listener result
+- wake-trigger status and alert/checker timer state when relevant
 - residual doctor/auth/plugin warnings
 - best next step

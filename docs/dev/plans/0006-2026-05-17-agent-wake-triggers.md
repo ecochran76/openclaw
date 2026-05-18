@@ -51,6 +51,9 @@ bounded, agent-facing "wake me when this predicate changes" workflow.
    - keep the checker as a short-lived scan-and-exit process, not a
      long-running watcher
    - expose status in `openclaw status` or a small diagnostic command
+   - current userland diagnostic:
+     `node ~/.openclaw/workspace/scripts/openclaw-health-snapshot.mjs`
+   - alert failed/stale wake records to the default tenant `oc-main-agent`
 4. Core integration:
    - evaluate promoting wake triggers into TaskFlow-managed state
    - reuse existing task audit and maintenance semantics for stale records
@@ -71,6 +74,8 @@ bounded, agent-facing "wake me when this predicate changes" workflow.
 - Slack-backed triggers can mark the watched user message with a meaningful
   active reaction and clean it up when the trigger is no longer active.
 - Trigger records are inspectable and removable by operators.
+- Failed, stale, or human-ack wake records are visible in a broader OpenClaw
+  health snapshot and can alert the default tenant operator channel.
 
 ## Definition Of Done
 

@@ -219,3 +219,14 @@ This runbook is a dated log of planning-contract and execution events that shoul
   - `.agents/skills/openclaw-agent-bootstrap-debugger/SKILL.md`
   - `.agents/skills/openclaw-plugin-survivability/SKILL.md`
 - Updated `ROADMAP.md` with the batch-2 skill catalog plan.
+
+## Turn 20 | 2026-05-18
+
+- Added `scripts/openclaw-health-snapshot.mjs` as a read-only, timeout-bounded
+  operator health surface.
+- The snapshot checks gateway RPC, Slack channel config, cron, wake-trigger
+  status, and wake-trigger checker/alert timers.
+- Updated the gateway operator and wake-trigger skills so agents check wake
+  health alongside gateway, Slack, cron, and timer health.
+- Updated the wake-trigger plan with the current userland diagnostic and alert
+  surfaces.

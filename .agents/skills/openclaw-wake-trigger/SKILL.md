@@ -164,6 +164,18 @@ not evaluate predicates or resume agents. It highlights `resume_failed`,
 `requires_human_ack`, `resume_exhausted`, timeout-overdue, and stale pending
 records.
 
+Include wake-trigger state in the broader OpenClaw operator snapshot:
+
+```bash
+node ~/.openclaw/workspace/scripts/openclaw-health-snapshot.mjs
+node ~/.openclaw/workspace/scripts/openclaw-health-snapshot.mjs --json
+```
+
+The snapshot is read-only and timeout-bounded. It checks gateway RPC, Slack
+channel config, cron, wake-trigger status, and the wake-trigger checker/alert
+timers so operators do not miss a failed wake path while debugging Slack or
+gateway responsiveness.
+
 Send an immediate alert if status needs attention:
 
 ```bash
