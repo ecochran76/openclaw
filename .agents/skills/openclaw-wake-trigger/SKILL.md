@@ -137,9 +137,15 @@ where no OpenClaw resume delivery will run.
 Inspect triggers:
 
 ```bash
+node ~/.openclaw/workspace/scripts/wake-trigger.mjs status
 node ~/.openclaw/workspace/scripts/wake-trigger.mjs list
 node ~/.openclaw/workspace/scripts/wake-trigger.mjs show --id <trigger-id>
 ```
+
+Use `status --json` for health checks and automation. It is read-only: it does
+not evaluate predicates or resume agents. It highlights `resume_failed`,
+`requires_human_ack`, `resume_exhausted`, timeout-overdue, and stale pending
+records.
 
 Remove a trigger:
 

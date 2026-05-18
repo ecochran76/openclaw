@@ -36,6 +36,7 @@ function usage(exitCode = 0) {
   wake-trigger.mjs set --name <name> --agent <id> --session-key <key> [options]
   wake-trigger.mjs check [--dry-run] [--state-dir <dir>]
   wake-trigger.mjs list [--state-dir <dir>] [--json]
+  wake-trigger.mjs status [--state-dir <dir>] [--json] [--stale-minutes <n>]
   wake-trigger.mjs show --id <id> [--state-dir <dir>]
   wake-trigger.mjs rm --id <id> [--state-dir <dir>]
   wake-trigger.mjs ack --session-key <key> [--state-dir <dir>]
@@ -75,6 +76,9 @@ Set options:
                             Default: ~/credentials/API-keys.env when present.
   --deliver                 Pass --deliver to openclaw agent when resuming.
   --state-dir <dir>         Default: ~/.openclaw/wake-triggers
+
+Status options:
+  --stale-minutes <n>       Mark non-terminal records stale after n minutes. Default: 15.
 
 Smoke options:
   --agent <id>              Agent to resume.
@@ -706,6 +710,91 @@ function listCommand(args) {
   }
 }
 
+function ageMs(value, nowMs) {
+  const parsed = Date.parse(value || "");
+  return Number.isFinite(parsed) ? nowMs - parsed : null;
+}
+
+function summarizeRecord(record, nowMs, staleMinutes) {
+  const updatedAgeMs = ageMs(record.updatedAt || record.createdAt, nowMs);
+  const timeoutAtMs = Date.parse(record.timeoutAt || "");
+  const timeoutOverdue =
+    record.state === "pending" && Number.isFinite(timeoutAtMs) && nowMs >= timeoutAtMs;
+  const stale =
+    !TERMINAL_STATES.has(record.state) &&
+    record.state !== "requires_human_ack" &&
+    updatedAgeMs !== null &&
+    updatedAgeMs >= staleMinutes * 60_000;
+  const attention =
+    record.state === "resume_failed" ||
+    record.state === "requires_human_ack" ||
+    record.state === "resume_exhausted" ||
+    timeoutOverdue ||
+    stale;
+  return {
+    id: record.id,
+    name: record.name,
+    agent: record.agent,
+    state: record.state,
+    attention,
+    stale,
+    timeoutOverdue,
+    updatedAt: record.updatedAt || "",
+    timeoutAt: record.timeoutAt || "",
+    lastFireReason: record.lastFireReason || "",
+    lastResumeExitCode: record.lastResumeExitCode ?? null,
+    lastResumeError: record.lastResumeError || "",
+    nextEligibleAt: record.nextEligibleAt || "",
+    humanAckReason: record.humanAckReason || "",
+  };
+}
+
+function statusCommand(args) {
+  const dir = stateDir(args);
+  const staleMinutes = readInt(args, "stale-minutes", 15, 1);
+  const nowMs = Date.now();
+  const records = recordPaths(dir).map((path) =>
+    summarizeRecord(readRecord(path), nowMs, staleMinutes),
+  );
+  records.sort((a, b) => {
+    if (a.attention !== b.attention) return a.attention ? -1 : 1;
+    return String(a.updatedAt).localeCompare(String(b.updatedAt));
+  });
+  const counts = {
+    total: records.length,
+    attention: records.filter((record) => record.attention).length,
+    pending: records.filter((record) => record.state === "pending").length,
+    resumeFailed: records.filter((record) => record.state === "resume_failed").length,
+    requiresHumanAck: records.filter((record) => record.state === "requires_human_ack").length,
+    exhausted: records.filter((record) => record.state === "resume_exhausted").length,
+    stale: records.filter((record) => record.stale).length,
+    timeoutOverdue: records.filter((record) => record.timeoutOverdue).length,
+  };
+  const output = {
+    ok: counts.attention === 0,
+    stateDir: dir,
+    staleMinutes,
+    counts,
+    records,
+  };
+  if (args.json) {
+    console.log(JSON.stringify(output, null, 2));
+    return;
+  }
+  console.log(
+    `wake-trigger status: ${output.ok ? "ok" : "attention"} total=${counts.total} attention=${counts.attention} pending=${counts.pending} failed=${counts.resumeFailed} humanAck=${counts.requiresHumanAck} stale=${counts.stale}`,
+  );
+  for (const record of records.filter((row) => row.attention)) {
+    const reasons = [];
+    if (record.state === "resume_failed") reasons.push("resume_failed");
+    if (record.state === "requires_human_ack") reasons.push("requires_human_ack");
+    if (record.state === "resume_exhausted") reasons.push("resume_exhausted");
+    if (record.timeoutOverdue) reasons.push("timeout_overdue");
+    if (record.stale) reasons.push("stale");
+    console.log(`${record.id}\t${record.state}\t${record.agent}\t${reasons.join(",")}`);
+  }
+}
+
 function showCommand(args) {
   const dir = stateDir(args);
   const id = requireString(args, "id");
@@ -1031,6 +1120,9 @@ async function main() {
       break;
     case "list":
       listCommand(args);
+      break;
+    case "status":
+      statusCommand(args);
       break;
     case "show":
       showCommand(args);
