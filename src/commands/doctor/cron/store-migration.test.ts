@@ -100,11 +100,11 @@ describe("normalizeStoredCronJobs", () => {
     expect(delivery?.channel).toBe("slack");
   });
 
-  it("rewrites legacy OpenAI Codex model refs in cron payloads", () => {
+  it("preserves supported OpenAI Codex model refs in cron payloads", () => {
     const { job, result } = normalizeOneJob(
       makeLegacyJob({
-        id: "legacy-codex-cron-model",
-        schedule: { kind: "every", everyMs: 60_000 },
+        id: "supported-codex-cron-model",
+        schedule: { kind: "every", everyMs: 60_000, anchorMs: 1_700_000_000_000 },
         payload: {
           kind: "agentTurn",
           message: "ping",
@@ -114,13 +114,35 @@ describe("normalizeStoredCronJobs", () => {
       }),
     );
 
+    expect(result.issues.legacyPayloadCodexModel).toBeUndefined();
+    const payload = job.payload as Record<string, unknown>;
+    expect(payload.kind).toBe("agentTurn");
+    expect(payload.message).toBe("ping");
+    expect(payload.model).toBe(" openai-codex/gpt-5.5 ");
+    expect(payload.fallbacks).toEqual(["anthropic/claude-opus-4.6", "openai-codex/gpt-5.4-mini"]);
+  });
+
+  it("rewrites retired OpenAI Codex model refs in cron payloads", () => {
+    const { job, result } = normalizeOneJob(
+      makeLegacyJob({
+        id: "legacy-codex-cron-model",
+        schedule: { kind: "every", everyMs: 60_000 },
+        payload: {
+          kind: "agentTurn",
+          message: "ping",
+          model: " openai-codex/gpt-5.3-codex ",
+          fallbacks: ["anthropic/claude-opus-4.6", "openai-codex/gpt-5.2"],
+        },
+      }),
+    );
+
     expect(result.mutated).toBe(true);
     expect(result.issues.legacyPayloadCodexModel).toBe(1);
     const payload = job.payload as Record<string, unknown>;
     expect(payload.kind).toBe("agentTurn");
     expect(payload.message).toBe("ping");
-    expect(payload.model).toBe("openai/gpt-5.5");
-    expect(payload.fallbacks).toEqual(["anthropic/claude-opus-4.6", "openai/gpt-5.4-mini"]);
+    expect(payload.model).toBe("openai/gpt-5.3-codex");
+    expect(payload.fallbacks).toEqual(["anthropic/claude-opus-4.6", "openai/gpt-5.2"]);
   });
 
   it("converts legacy agent command prompts into command cron payloads", () => {

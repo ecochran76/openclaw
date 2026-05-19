@@ -58,6 +58,9 @@ function toCanonicalOpenAIModelRef(value: unknown): string | undefined {
     return undefined;
   }
   const model = trimmed.slice(slash + 1).trim();
+  if (!/^gpt-5\.[123](?:$|[-.])/u.test(model.toLowerCase())) {
+    return undefined;
+  }
   return model ? `openai/${model}` : undefined;
 }
 
