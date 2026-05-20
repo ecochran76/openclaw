@@ -86,6 +86,17 @@ component whose missed admissions it is checking.
      `missing-admission`.
    - Support a permalink-targeted mode for post-mortem work and a bounded
      account/channel scan mode for scheduled checks.
+   - 2026-05-20: first reusable scanner helper landed in the Slack plugin
+     monitor layer. It classifies supplied Slack history against the admission
+     ledger as `admitted`, `explicitly-ignored`, `not-relevant`, or
+     `missing-admission`. The scheduled sidecar/CLI wrapper is still pending.
+   - 2026-05-20: the scanner and `channels watchdog-scan` wrapper were updated
+     to use Slack channel policy. Configured channels with
+     `requireMention=false` are eligible even without a bot mention, subject to
+     the configured channel user allowlist. The SoyLei `#ask-lei` Baker incident
+     validated this path: the read-only scan marked both missed top-level
+     messages as `missing-admission` while recognizing a later handled thread
+     reply as `admitted`.
 
 3. Notification mode.
    - Add a guarded notification target for missing admissions.

@@ -6,6 +6,7 @@ import type { SlackMessageEvent } from "../types.js";
 import {
   appendSlackAdmissionRecord,
   buildSlackAdmissionRecord,
+  readSlackAdmissionRecords,
   recordSlackAdmission,
   resolveSlackAdmissionLedgerPath,
 } from "./admission-ledger.js";
@@ -99,6 +100,30 @@ describe("slack admission ledger", () => {
       reason: "no-mention",
       ts: "1779124819.383009",
     });
+  });
+
+  it("reads recent JSONL records for watchdog scans", async () => {
+    const stateDir = await makeTempDir();
+    const env = { OPENCLAW_STATE_DIR: stateDir };
+    const first = buildSlackAdmissionRecord({
+      accountId: "soylei",
+      message: slackMessage({ ts: "1.000001" }),
+      outcome: "accepted",
+      now: new Date("2026-05-18T18:00:00.000Z"),
+    });
+    const second = buildSlackAdmissionRecord({
+      accountId: "soylei",
+      message: slackMessage({ ts: "1.000002" }),
+      outcome: "dropped",
+      reason: "slack-no-mention",
+      now: new Date("2026-05-18T18:01:00.000Z"),
+    });
+    await appendSlackAdmissionRecord({ accountId: "soylei", record: first, env });
+    await appendSlackAdmissionRecord({ accountId: "soylei", record: second, env });
+
+    await expect(
+      readSlackAdmissionRecords({ accountId: "soylei", env, limit: 1 }),
+    ).resolves.toEqual([expect.objectContaining({ ts: "1.000002", outcome: "dropped" })]);
   });
 
   it("logs and returns false when the ledger cannot be written", async () => {

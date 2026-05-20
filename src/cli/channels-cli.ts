@@ -115,6 +115,10 @@ export async function registerChannelsCli(
             "Correlate a Slack permalink with OpenClaw sessions and trajectories.",
           ],
           [
+            "openclaw channels watchdog-scan --account soylei --target channel:C123 --since 30m",
+            "Scan recent Slack history for messages missing OpenClaw admission records.",
+          ],
+          [
             "openclaw channels add --channel telegram --token <token>",
             "Add or update a channel account non-interactively.",
           ],
@@ -180,6 +184,29 @@ export async function registerChannelsCli(
       await runChannelsCommand(async () => {
         const { channelsInspectLinkCommand } = await loadChannelsCommands();
         await channelsInspectLinkCommand(String(permalink), opts, defaultRuntime);
+      });
+    });
+
+  channels
+    .command("watchdog-scan")
+    .description("Read-only Slack admission-gap scan for stale socket detection")
+    .option("--account <id>", "Slack account id", "default")
+    .requiredOption("--target <dest>", "Slack target (for example channel:C123 or D123)")
+    .option("--limit <n>", "Recent Slack messages to read", "50")
+    .option("--since <duration>", "History window to scan (for example 30m, 2h)", "30m")
+    .option("--bot-user <id>", "Slack bot user id; otherwise resolved via auth.test")
+    .option("--direct-message", "Treat target as a DM even if the id does not start with D", false)
+    .option(
+      "--active-thread <ts,csv>",
+      "Comma-separated active thread timestamps to treat as relevant",
+    )
+    .option("--ledger-limit <n>", "Recent admission ledger rows to read", "5000")
+    .option("--json", "Output JSON", false)
+    .action(async (opts) => {
+      await runChannelsCommand(async () => {
+        const { channelsSlackWatchdogScanCommand } =
+          await import("../commands/channels/slack-watchdog-scan.js");
+        await channelsSlackWatchdogScanCommand(opts, defaultRuntime);
       });
     });
 

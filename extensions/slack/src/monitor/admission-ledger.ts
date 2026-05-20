@@ -139,6 +139,56 @@ export async function appendSlackAdmissionRecord(params: {
   }
 }
 
+export async function readSlackAdmissionRecords(params: {
+  accountId: string;
+  env?: NodeJS.ProcessEnv;
+  logger?: SlackAdmissionLogger;
+  limit?: number;
+}): Promise<SlackAdmissionRecord[]> {
+  const ledgerPath = resolveSlackAdmissionLedgerPath({
+    accountId: params.accountId,
+    env: params.env,
+  });
+  let raw: string;
+  try {
+    raw = await fs.readFile(ledgerPath, "utf8");
+  } catch (error) {
+    if ((error as NodeJS.ErrnoException).code === "ENOENT") {
+      return [];
+    }
+    params.logger?.warn?.(
+      {
+        accountId: params.accountId,
+        path: ledgerPath,
+        error: error instanceof Error ? error.message : String(error),
+      },
+      "failed reading slack admission ledger",
+    );
+    return [];
+  }
+
+  const lines = raw.split("\n").filter((line) => line.trim().length > 0);
+  const selected =
+    params.limit && Number.isFinite(params.limit) && params.limit > 0
+      ? lines.slice(-Math.trunc(params.limit))
+      : lines;
+  const records: SlackAdmissionRecord[] = [];
+  for (const line of selected) {
+    try {
+      const parsed = JSON.parse(line) as Partial<SlackAdmissionRecord>;
+      if (parsed.version === 1 && parsed.accountId === params.accountId) {
+        records.push(parsed as SlackAdmissionRecord);
+      }
+    } catch {
+      params.logger?.warn?.(
+        { accountId: params.accountId, path: ledgerPath },
+        "ignored malformed slack admission ledger row",
+      );
+    }
+  }
+  return records;
+}
+
 export function recordSlackAdmission(params: {
   accountId: string;
   message: SlackMessageEvent;

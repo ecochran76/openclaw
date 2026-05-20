@@ -87,6 +87,22 @@ export {
   resolveSlackGroupToolPolicy,
 } from "./src/group-policy.js";
 export {
+  readSlackAdmissionRecords,
+  resolveSlackAdmissionLedgerPath,
+  type SlackAdmissionRecord,
+} from "./src/monitor/admission-ledger.js";
+export {
+  resolveSlackChannelConfig,
+  type SlackChannelConfigResolved,
+} from "./src/monitor/channel-config.js";
+export {
+  scanSlackAdmissionGaps,
+  type SlackWatchdogScanMessage,
+  type SlackWatchdogScanRecord,
+  type SlackWatchdogScanReport,
+  type SlackWatchdogVerdict,
+} from "./src/monitor/watchdog-scan.js";
+export {
   allowListMatches,
   normalizeAllowList,
   normalizeAllowListLower,
