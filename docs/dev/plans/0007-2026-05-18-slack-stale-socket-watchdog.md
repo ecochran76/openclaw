@@ -16,6 +16,15 @@ human reports a specific message. The missing product behavior is a
 deterministic sidecar watchdog that independently compares Slack reality
 against OpenClaw admission records and alerts or recovers when there is a gap.
 
+On 2026-05-20, SoyLei `#ask-lei` showed the same missing-admission shape for
+`/status` at `1779309189.369149`: Slack history contained the message, gateway
+status reported the SoyLei Socket Mode account as connected/healthy, but
+`lastInboundAt` was still `null` and `lastTransportActivityAt` had not advanced
+since the 15:13:40 stale-socket restart. As an immediate mitigation, the default
+transport-stale threshold was tightened from 30 minutes to 10 minutes. That
+shrinks the silent Socket Mode exposure window, but it does not replace the
+admission-ledger/watchdog work below.
+
 ## Scope
 
 - Add a Slack-plugin-owned watchdog that can run as a separate user process from

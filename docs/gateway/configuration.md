@@ -245,7 +245,7 @@ candidate contains redacted secret placeholders such as `***`.
     {
       gateway: {
         channelHealthCheckMinutes: 5,
-        channelStaleEventThresholdMinutes: 30,
+        channelStaleEventThresholdMinutes: 10,
         channelMaxRestartsPerHour: 10,
       },
       channels: {

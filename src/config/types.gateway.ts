@@ -518,7 +518,7 @@ export type GatewayConfig = {
   /**
    * Stale transport-activity threshold in minutes for the channel health monitor.
    * A connected channel that reports no provider-proven transport activity for
-   * this duration is treated as a stale socket and restarted. Default: 30.
+   * this duration is treated as a stale socket and restarted. Default: 10.
    */
   channelStaleEventThresholdMinutes?: number;
   /**
