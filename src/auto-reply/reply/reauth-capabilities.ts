@@ -5,8 +5,12 @@ import {
 } from "../../agents/auth-profiles/profile-id.js";
 import type { ChatReauthCapability } from "../../plugins/provider-auth-types.js";
 import { openAICodexChatReauthCapability } from "../../plugins/provider-openai-chatgpt-oauth.js";
+import { xaiChatReauthCapability } from "../../plugins/provider-xai-oauth.js";
 
-const CHAT_REAUTH_CAPABILITIES: readonly ChatReauthCapability[] = [openAICodexChatReauthCapability];
+const CHAT_REAUTH_CAPABILITIES: readonly ChatReauthCapability[] = [
+  openAICodexChatReauthCapability,
+  xaiChatReauthCapability,
+];
 
 export function getDefaultChatReauthProvider(): string | undefined {
   return getRegisteredDefaultChatReauthProvider();
@@ -44,7 +48,7 @@ export function resolveChatReauthProvider(params: {
 
 export function getChatReauthCapability(provider: string): ChatReauthCapability | null {
   const normalized = provider.trim();
-  if (normalized === "openai-codex") {
+  if (normalized === "openai" || normalized === "openai-codex") {
     return openAICodexChatReauthCapability;
   }
   return CHAT_REAUTH_CAPABILITIES.find((capability) => capability.provider === normalized) ?? null;

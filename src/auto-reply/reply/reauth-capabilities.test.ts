@@ -4,6 +4,9 @@ const hoisted = vi.hoisted(() => ({
   looksLikeCallbackInputMock: vi.fn(),
   createManualAuthorizationMock: vi.fn(),
   completeManualAuthorizationMock: vi.fn(),
+  xaiCreatePendingAuthorizationMock: vi.fn(),
+  xaiCompletePendingAuthorizationMock: vi.fn(),
+  xaiPollPendingAuthorizationMock: vi.fn(),
 }));
 
 vi.mock("../../plugins/provider-openai-chatgpt-oauth.js", () => ({
@@ -12,6 +15,16 @@ vi.mock("../../plugins/provider-openai-chatgpt-oauth.js", () => ({
     looksLikeCallbackInput: hoisted.looksLikeCallbackInputMock,
     createPendingAuthorization: hoisted.createManualAuthorizationMock,
     completePendingAuthorization: hoisted.completeManualAuthorizationMock,
+  },
+}));
+
+vi.mock("../../plugins/provider-xai-oauth.js", () => ({
+  xaiChatReauthCapability: {
+    provider: "xai",
+    looksLikeCallbackInput: vi.fn(() => false),
+    createPendingAuthorization: hoisted.xaiCreatePendingAuthorizationMock,
+    completePendingAuthorization: hoisted.xaiCompletePendingAuthorizationMock,
+    pollPendingAuthorization: hoisted.xaiPollPendingAuthorizationMock,
   },
 }));
 
@@ -68,6 +81,29 @@ describe("getChatReauthCapability", () => {
   it("uses openai as the canonical chat reauth provider", () => {
     expect(getChatReauthCapability("openai")?.provider).toBe("openai");
     expect(getChatReauthCapability("openai-codex")?.provider).toBe("openai");
+  });
+
+  it("adapts the xAI chat reauth flow", async () => {
+    hoisted.xaiCreatePendingAuthorizationMock.mockResolvedValue({
+      flow: "device_code",
+      deviceAuthId: "device-1",
+      userCode: "CODE-123",
+      verificationUrl: "https://auth.x.ai/device",
+      authorizationUrl: "https://auth.x.ai/device",
+      intervalMs: 5_000,
+      createdAt: 1,
+      expiresAt: 2,
+    });
+
+    const capability = getChatReauthCapability("xai");
+    expect(capability).not.toBeNull();
+    expect(capability?.looksLikeCallbackInput("http://localhost/callback?code=x")).toBe(false);
+    expect(
+      await capability?.createPendingAuthorization({ preferredFlow: "device_code" }),
+    ).toMatchObject({
+      flow: "device_code",
+      userCode: "CODE-123",
+    });
   });
 });
 

@@ -66,6 +66,18 @@ Use the path that matches your OpenClaw install state:
     daemon, channel, workspace, or other setup choices.
 
   </Step>
+  <Step title="Slack re-auth">
+    From an authorized OpenClaw Slack thread, start the same device-code flow
+    without local terminal access:
+
+    ```text
+    /reauth --device-code xai:default
+    ```
+
+    OpenClaw posts the xAI verification URL and code, watches for completion
+    for up to 10 minutes, and confirms when the OAuth profile is usable.
+
+  </Step>
   <Step title="API-key path">
     API-key setup still works for xAI Console keys and for media surfaces that
     require key-backed provider config:

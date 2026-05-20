@@ -1,4 +1,4 @@
-const CHAT_REAUTH_PROVIDERS = ["openai"] as const;
+const CHAT_REAUTH_PROVIDERS = ["openai", "xai"] as const;
 
 function normalizeChatReauthProvider(provider: string): string {
   const trimmed = provider.trim();
@@ -19,6 +19,9 @@ export function getDefaultChatReauthProvider(
         .filter((id) => id.length > 0),
     ),
   );
+  if (normalized.includes("openai")) {
+    return "openai";
+  }
   return normalized.length === 1 ? normalized[0] : undefined;
 }
 
