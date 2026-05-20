@@ -19,7 +19,7 @@ export async function buildStatusReply(
   const { command } = params;
   if (!command.isAuthorizedSender) {
     logVerbose(`Ignoring /status from unauthorized sender: ${command.senderId || "<unknown>"}`);
-    return undefined;
+    return { text: "You are not authorized to use this command." };
   }
 
   return {

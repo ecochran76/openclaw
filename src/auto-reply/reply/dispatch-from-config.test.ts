@@ -940,10 +940,8 @@ describe("dispatchReplyFromConfig", () => {
     await import("./dispatch-acp-command-bypass.js");
     await import("./dispatch-acp-tts.runtime.js");
     await import("./dispatch-acp-session.runtime.js");
-    ({
-      clearApprovalNativeRouteStateForTest,
-      createApprovalNativeRouteReporter,
-    } = await import("../../infra/approval-native-route-coordinator.js"));
+    ({ clearApprovalNativeRouteStateForTest, createApprovalNativeRouteReporter } =
+      await import("../../infra/approval-native-route-coordinator.js"));
     ({ setReplyPayloadMetadata } = await import("../types.js"));
     ({ resetInboundDedupe } = await import("./inbound-dedupe.js"));
     ({ tryDispatchAcpReplyHook } = await import("../../plugin-sdk/acp-runtime.js"));
@@ -4817,6 +4815,49 @@ describe("dispatchReplyFromConfig", () => {
       expect(
         laterTexts.filter((text) => text.includes("status: turn appears stalled")),
       ).toHaveLength(1);
+
+      resolveReply(undefined);
+      await dispatchPromise;
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it("does not emit a generic progress notice when source progress is visible", async () => {
+    vi.useFakeTimers();
+    try {
+      setNoAbort();
+      const cfg = emptyConfig;
+      const dispatcher = createDispatcher();
+      const ctx = buildTestCtx({
+        Provider: "slack",
+        Surface: "slack",
+        SessionKey: "agent:main:main",
+      });
+      let resolveReply: (value: ReplyPayload | undefined) => void = () => {};
+      let capturedOptions: GetReplyOptions | undefined;
+
+      const dispatchPromise = dispatchReplyFromConfig({
+        ctx,
+        cfg,
+        dispatcher,
+        replyOptions: {
+          onStartupProgress: vi.fn(),
+        },
+        replyResolver: vi.fn(async (_ctx: MsgContext, opts?: GetReplyOptions) => {
+          capturedOptions = opts;
+          await Promise.resolve(opts?.onAgentRunStart?.("run-visible-progress"));
+          return await new Promise<ReplyPayload | undefined>((resolve) => {
+            resolveReply = resolve;
+          });
+        }),
+      });
+
+      await vi.advanceTimersByTimeAsync(10_000);
+      await capturedOptions?.onStartupProgress?.({ phase: "model selected" });
+      await vi.advanceTimersByTimeAsync(15_000);
+
+      expect(dispatcher.sendBlockReply).not.toHaveBeenCalled();
 
       resolveReply(undefined);
       await dispatchPromise;

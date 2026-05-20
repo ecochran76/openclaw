@@ -292,6 +292,34 @@ describe("buildStatusReply subagent summary", () => {
     resetTaskRegistryForTests();
   });
 
+  it("returns a visible denial for unauthorized status commands", async () => {
+    const commandParams = buildCommandTestParams("/status", baseCfg);
+    commandParams.command.isAuthorizedSender = false;
+
+    const reply = await buildStatusReply({
+      cfg: baseCfg,
+      command: commandParams.command,
+      sessionEntry: commandParams.sessionEntry,
+      sessionKey: commandParams.sessionKey,
+      parentSessionKey: commandParams.sessionKey,
+      sessionScope: commandParams.sessionScope,
+      storePath: commandParams.storePath,
+      provider: "anthropic",
+      model: "claude-opus-4-5",
+      contextTokens: 0,
+      resolvedThinkLevel: commandParams.resolvedThinkLevel,
+      resolvedFastMode: false,
+      resolvedVerboseLevel: commandParams.resolvedVerboseLevel,
+      resolvedReasoningLevel: commandParams.resolvedReasoningLevel,
+      resolvedElevatedLevel: commandParams.resolvedElevatedLevel,
+      resolveDefaultThinkingLevel: commandParams.resolveDefaultThinkingLevel,
+      isGroup: commandParams.isGroup,
+      defaultGroupActivation: commandParams.defaultGroupActivation,
+    });
+
+    expect(reply).toEqual({ text: "You are not authorized to use this command." });
+  });
+
   it("counts ended orchestrators with active descendants as active", async () => {
     const parentKey = "agent:main:subagent:status-ended-parent";
     addSubagentRunForTests({

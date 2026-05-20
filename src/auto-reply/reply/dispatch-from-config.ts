@@ -3342,6 +3342,9 @@ export async function dispatchReplyFromConfig(
         if (shouldForwardProgressCallback(options)) {
           await options?.onForward?.(...args);
           await callback?.(...args);
+          if (trackedTurnId) {
+            updateTrackedTurn(trackedTurnId, { markVisible: true });
+          }
         }
       };
     };
@@ -3473,7 +3476,10 @@ export async function dispatchReplyFromConfig(
             onStartupProgress: async (progressCtx) => {
               markProgress();
               if (trackedTurnId) {
-                updateTrackedTurn(trackedTurnId, { markProgress: true });
+                updateTrackedTurn(trackedTurnId, {
+                  markProgress: true,
+                  markVisible: shouldForwardProgressCallback(),
+                });
               }
               await params.replyOptions?.onStartupProgress?.(progressCtx);
             },
