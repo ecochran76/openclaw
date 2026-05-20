@@ -49,7 +49,8 @@ vi.mock("./reauth-capabilities.js", async (importOriginal) => {
 });
 
 const { buildCommandTestParams } = await import("./commands.test-harness.js");
-const { handlePendingReauthInput, handleReauthCommand } = await import("./commands-reauth.js");
+const { applyPostReauthProviderConfig, handlePendingReauthInput, handleReauthCommand } =
+  await import("./commands-reauth.js");
 
 const cfg = {
   session: { mainKey: "main", scope: "per-sender" },
@@ -945,5 +946,40 @@ describe("/reauth commands", () => {
     expect(result?.reply?.text).toContain(
       "openclaw models auth login --provider anthropic --profile-id anthropic:work",
     );
+  });
+
+  it("makes xAI models visible after Slack reauth setup", () => {
+    const updated = applyPostReauthProviderConfig(
+      {
+        agents: {
+          defaults: {
+            model: { primary: "openai-codex/gpt-5.5" },
+            models: {
+              "openai-codex/gpt-5.5": {},
+            },
+          },
+        },
+      },
+      "xai",
+    );
+
+    expect(updated.agents?.defaults?.models).toEqual({
+      "openai-codex/gpt-5.5": {},
+      "xai/grok-4.3": { alias: "Grok" },
+    });
+  });
+
+  it("does not change model visibility for non-xAI reauth", () => {
+    const original = {
+      agents: {
+        defaults: {
+          models: {
+            "openai-codex/gpt-5.5": {},
+          },
+        },
+      },
+    } satisfies OpenClawConfig;
+
+    expect(applyPostReauthProviderConfig(original, "openai-codex")).toBe(original);
   });
 });

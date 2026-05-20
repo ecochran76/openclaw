@@ -6,6 +6,7 @@ import {
 import { normalizeProviderId } from "../../agents/model-selection.js";
 import { formatCliCommand } from "../../cli/command-format.js";
 import { updateConfig } from "../../commands/models/shared.js";
+import type { OpenClawConfig } from "../../config/config.js";
 import { updateSessionStore } from "../../config/sessions.js";
 import type { PendingOAuthReauth, SessionEntry } from "../../config/sessions/types.js";
 import { logVerbose } from "../../globals.js";
@@ -36,6 +37,7 @@ const DEVICE_CODE_WATCH_MIN_INTERVAL_MS = 1_000;
 const DEVICE_CODE_WATCH_MAX_INTERVAL_MS = 15_000;
 const POST_REAUTH_PROBE_TIMEOUT_MS = 45_000;
 const POST_REAUTH_PROBE_MAX_TOKENS = 16;
+const XAI_DEFAULT_MODEL_REF = "xai/grok-4.3";
 
 type ListProbeRuntime = typeof import("../../commands/models/list.probe.js");
 
@@ -347,11 +349,14 @@ async function persistOAuthCredentials(params: {
     agentDir: params.commandParams.agentDir,
   });
   const updatedConfig = await updateConfig((cfg) =>
-    applyAuthProfileConfig(cfg, {
-      profileId,
-      provider: params.provider,
-      mode: "oauth",
-    }),
+    applyPostReauthProviderConfig(
+      applyAuthProfileConfig(cfg, {
+        profileId,
+        provider: params.provider,
+        mode: "oauth",
+      }),
+      params.provider,
+    ),
   );
   params.commandParams.cfg = updatedConfig;
   await promoteAuthProfileInOrder({
@@ -360,6 +365,32 @@ async function persistOAuthCredentials(params: {
     profileId,
   });
   return profileId;
+}
+
+export function applyPostReauthProviderConfig(
+  cfg: OpenClawConfig,
+  provider: string,
+): OpenClawConfig {
+  const normalizedProvider = normalizeProviderId(provider);
+  if (normalizedProvider !== "xai") {
+    return cfg;
+  }
+  const models = { ...cfg.agents?.defaults?.models };
+  if (!models[XAI_DEFAULT_MODEL_REF]) {
+    // Slack reauth is a setup flow, not just token refresh. Without this
+    // picker entry, /models correctly hides xAI even after OAuth succeeds.
+    models[XAI_DEFAULT_MODEL_REF] = { alias: "Grok" };
+  }
+  return {
+    ...cfg,
+    agents: {
+      ...cfg.agents,
+      defaults: {
+        ...cfg.agents?.defaults,
+        models,
+      },
+    },
+  };
 }
 
 function resolvePostReauthModelCandidate(params: {
