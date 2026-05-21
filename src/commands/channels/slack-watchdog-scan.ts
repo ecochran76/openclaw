@@ -19,6 +19,9 @@ export type ChannelsSlackWatchdogScanOptions = {
   directMessage?: boolean;
   activeThread?: string;
   thread?: string;
+  alertTarget?: string;
+  alertAccount?: string;
+  alertState?: string;
   ledgerLimit?: string;
   timeout?: string;
   json?: boolean;
@@ -83,6 +86,16 @@ type WatchdogScanReport = {
   scanned: number;
   counts: Record<WatchdogVerdict, number>;
   records: WatchdogScanRecord[];
+  alert?: WatchdogAlertResult;
+};
+
+type WatchdogAlertResult = {
+  target: string;
+  accountId: string;
+  attempted: boolean;
+  sent: number;
+  skippedKnown: number;
+  statePath: string;
 };
 
 type SlackChannelPolicy = {
@@ -186,6 +199,23 @@ export function resolveSlackWatchdogLedgerPath(params: {
     "slack",
     "admission-ledger",
     `${sanitizePathSegment(params.accountId)}.jsonl`,
+  );
+}
+
+function resolveSlackWatchdogAlertStatePath(params: {
+  accountId: string;
+  env?: NodeJS.ProcessEnv;
+  explicitPath?: string;
+}): string {
+  const explicit = normalizeOptionalString(params.explicitPath);
+  if (explicit) {
+    return path.resolve(explicit);
+  }
+  return path.join(
+    resolveOpenClawStateDir(params.env),
+    "slack",
+    "watchdog-alerts",
+    `${sanitizePathSegment(params.accountId)}.json`,
   );
 }
 
@@ -472,12 +502,81 @@ function formatSlackWatchdogScanReport(report: WatchdogScanReport): string {
   const missing = report.records.filter((record) => record.verdict === "missing-admission");
   if (missing.length === 0) {
     lines.push("Missing admissions: none");
+    if (report.alert?.attempted) {
+      lines.push(
+        `Alert: sent=${report.alert.sent} skipped-known=${report.alert.skippedKnown} target=${report.alert.accountId}:${report.alert.target}`,
+      );
+    }
     return lines.join("\n");
   }
   lines.push("Missing admissions:");
   for (const record of missing.slice(0, 20)) {
     lines.push(`- ts=${record.ts ?? "<unknown>"} reason=${record.reason}`);
   }
+  if (report.alert?.attempted) {
+    lines.push(
+      `Alert: sent=${report.alert.sent} skipped-known=${report.alert.skippedKnown} target=${report.alert.accountId}:${report.alert.target}`,
+    );
+  }
+  return lines.join("\n");
+}
+
+function slackWatchdogAlertKey(record: WatchdogScanRecord): string {
+  return [
+    record.accountId,
+    record.channel,
+    record.ts ?? "",
+    record.clientMsgId ?? "",
+    record.threadTs ?? "",
+  ].join("\0");
+}
+
+async function readSlackWatchdogAlertState(statePath: string): Promise<Record<string, string>> {
+  try {
+    const raw = await fs.readFile(statePath, "utf8");
+    const parsed = JSON.parse(raw) as unknown;
+    return isRecord(parsed)
+      ? Object.fromEntries(
+          Object.entries(parsed).filter(
+            (entry): entry is [string, string] => typeof entry[1] === "string",
+          ),
+        )
+      : {};
+  } catch (error) {
+    if ((error as NodeJS.ErrnoException).code === "ENOENT") {
+      return {};
+    }
+    throw error;
+  }
+}
+
+async function writeSlackWatchdogAlertState(
+  statePath: string,
+  state: Record<string, string>,
+): Promise<void> {
+  await fs.mkdir(path.dirname(statePath), { recursive: true });
+  await fs.writeFile(statePath, `${JSON.stringify(state, null, 2)}\n`);
+}
+
+function formatSlackWatchdogAlert(params: {
+  report: WatchdogScanReport;
+  missing: readonly WatchdogScanRecord[];
+}): string {
+  const lines = [
+    ":warning: OpenClaw Slack admission watchdog detected missed inbound messages",
+    `source_account=${params.report.accountId} channel=${params.report.channel}`,
+    `scanned=${params.report.scanned} missing=${params.missing.length}`,
+    "new_missing:",
+  ];
+  for (const record of params.missing.slice(0, 10)) {
+    lines.push(
+      `- ts=${record.ts ?? "<unknown>"} thread=${record.threadTs ?? "<none>"} reason=${record.reason}`,
+    );
+  }
+  if (params.missing.length > 10) {
+    lines.push(`- ... ${params.missing.length - 10} more`);
+  }
+  lines.push("Run `openclaw channels watchdog-scan --json` for full records.");
   return lines.join("\n");
 }
 
@@ -518,6 +617,62 @@ async function readSlackMessagesViaGateway(params: {
     mode: GATEWAY_CLIENT_MODES.CLI,
   });
   return extractReadMessages(actionPayload);
+}
+
+async function sendSlackWatchdogAlert(params: {
+  callGatewayFn: typeof callGateway;
+  report: WatchdogScanReport;
+  alertAccountId: string;
+  alertTarget: string;
+  statePath: string;
+  timeoutMs: number;
+  now: Date;
+}): Promise<WatchdogAlertResult> {
+  const state = await readSlackWatchdogAlertState(params.statePath);
+  const missing = params.report.records.filter((record) => record.verdict === "missing-admission");
+  const newMissing = missing.filter((record) => !state[slackWatchdogAlertKey(record)]);
+  if (newMissing.length === 0) {
+    return {
+      target: params.alertTarget,
+      accountId: params.alertAccountId,
+      attempted: true,
+      sent: 0,
+      skippedKnown: missing.length,
+      statePath: params.statePath,
+    };
+  }
+
+  await params.callGatewayFn({
+    method: "message.action",
+    params: {
+      channel: "slack",
+      action: "send",
+      accountId: params.alertAccountId,
+      params: {
+        to: params.alertTarget,
+        accountId: params.alertAccountId,
+        message: formatSlackWatchdogAlert({ report: params.report, missing: newMissing }),
+      },
+      idempotencyKey: `channels-watchdog-alert:${randomUUID()}`,
+    },
+    timeoutMs: params.timeoutMs,
+    clientName: GATEWAY_CLIENT_NAMES.CLI,
+    mode: GATEWAY_CLIENT_MODES.CLI,
+  });
+
+  const alertedAt = params.now.toISOString();
+  for (const record of newMissing) {
+    state[slackWatchdogAlertKey(record)] = alertedAt;
+  }
+  await writeSlackWatchdogAlertState(params.statePath, state);
+  return {
+    target: params.alertTarget,
+    accountId: params.alertAccountId,
+    attempted: true,
+    sent: newMissing.length,
+    skippedKnown: missing.length - newMissing.length,
+    statePath: params.statePath,
+  };
 }
 
 export async function channelsSlackWatchdogScanCommand(
@@ -576,6 +731,22 @@ export async function channelsSlackWatchdogScanCommand(
     allowedUserIds:
       channelPolicy.allowed === false ? [] : normalizeAllowedUsers(channelPolicy.users),
   });
+  const alertTarget = normalizeOptionalString(opts.alertTarget);
+  if (alertTarget && report.counts["missing-admission"] > 0) {
+    report.alert = await sendSlackWatchdogAlert({
+      callGatewayFn: deps.callGateway ?? callGateway,
+      report,
+      alertAccountId: normalizeOptionalString(opts.alertAccount) ?? "default",
+      alertTarget,
+      statePath: resolveSlackWatchdogAlertStatePath({
+        accountId,
+        env: deps.env,
+        explicitPath: opts.alertState,
+      }),
+      timeoutMs,
+      now,
+    });
+  }
 
   if (opts.json) {
     writeRuntimeJson(runtime, report);

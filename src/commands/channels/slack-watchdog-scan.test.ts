@@ -381,4 +381,138 @@ describe("channelsSlackWatchdogScanCommand", () => {
       }),
     );
   });
+
+  it("posts one deduped alert for new missing admissions", async () => {
+    const runtime = createRuntime();
+    const stateDir = await makeTempState();
+    const callGateway = vi
+      .fn()
+      .mockResolvedValueOnce({
+        payload: {
+          messages: [
+            {
+              channel: "C0B0AK14B7X",
+              ts: "1779322434.225859",
+              thread_ts: "1779318546.276599",
+              user: "U012ETLV6NQ",
+              text: "<@U0B0BS18D70> play the song",
+            },
+          ],
+        },
+      })
+      .mockResolvedValueOnce({ payload: { ok: true } });
+
+    await channelsSlackWatchdogScanCommand(
+      {
+        account: "soylei",
+        target: "channel:C0B0AK14B7X",
+        thread: "1779318546.276599",
+        botUser: "U0B0BS18D70",
+        alertAccount: "default",
+        alertTarget: "channel:C0AHQQ123",
+        json: true,
+      },
+      runtime,
+      {
+        cfg: {
+          channels: {
+            slack: {
+              accounts: {
+                soylei: {
+                  channels: {
+                    C0B0AK14B7X: {
+                      requireMention: true,
+                      users: ["U012ETLV6NQ"],
+                    },
+                  },
+                },
+              },
+            },
+          },
+        } as never,
+        env: { OPENCLAW_STATE_DIR: stateDir },
+        now: new Date("2026-05-21T01:30:00.000Z"),
+        callGateway,
+      },
+    );
+
+    expect(callGateway).toHaveBeenCalledTimes(2);
+    expect(callGateway).toHaveBeenNthCalledWith(
+      2,
+      expect.objectContaining({
+        method: "message.action",
+        params: expect.objectContaining({
+          channel: "slack",
+          action: "send",
+          accountId: "default",
+          params: expect.objectContaining({
+            to: "channel:C0AHQQ123",
+            message: expect.stringContaining("OpenClaw Slack admission watchdog"),
+          }),
+        }),
+      }),
+    );
+    const report = JSON.parse(runtime.logs[0] ?? "{}") as {
+      alert?: { sent?: number; skippedKnown?: number };
+    };
+    expect(report.alert?.sent).toBe(1);
+    expect(report.alert?.skippedKnown).toBe(0);
+
+    const secondRuntime = createRuntime();
+    callGateway.mockClear();
+    callGateway.mockResolvedValueOnce({
+      payload: {
+        messages: [
+          {
+            channel: "C0B0AK14B7X",
+            ts: "1779322434.225859",
+            thread_ts: "1779318546.276599",
+            user: "U012ETLV6NQ",
+            text: "<@U0B0BS18D70> play the song",
+          },
+        ],
+      },
+    });
+
+    await channelsSlackWatchdogScanCommand(
+      {
+        account: "soylei",
+        target: "channel:C0B0AK14B7X",
+        thread: "1779318546.276599",
+        botUser: "U0B0BS18D70",
+        alertAccount: "default",
+        alertTarget: "channel:C0AHQQ123",
+        json: true,
+      },
+      secondRuntime,
+      {
+        cfg: {
+          channels: {
+            slack: {
+              accounts: {
+                soylei: {
+                  channels: {
+                    C0B0AK14B7X: {
+                      requireMention: true,
+                      users: ["U012ETLV6NQ"],
+                    },
+                  },
+                },
+              },
+            },
+          },
+        } as never,
+        env: { OPENCLAW_STATE_DIR: stateDir },
+        now: new Date("2026-05-21T01:31:00.000Z"),
+        callGateway,
+      },
+    );
+
+    expect(callGateway).toHaveBeenCalledTimes(1);
+    const secondReport = JSON.parse(secondRuntime.logs[0] ?? "{}") as {
+      alert?: { sent?: number; skippedKnown?: number };
+    };
+    expect(secondReport.alert?.sent).toBe(0);
+    expect(secondReport.alert?.skippedKnown).toBe(1);
+  });
 });

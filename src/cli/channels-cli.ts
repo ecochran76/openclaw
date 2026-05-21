@@ -201,6 +201,9 @@ export async function registerChannelsCli(
       "Comma-separated active thread timestamps to treat as relevant",
     )
     .option("--thread <ts>", "Read and scan replies from one Slack thread timestamp")
+    .option("--alert-target <dest>", "Post a deduped alert when missing admissions are found")
+    .option("--alert-account <id>", "Slack account id used for watchdog alerts", "default")
+    .option("--alert-state <path>", "Override alert dedupe state JSON path")
     .option("--ledger-limit <n>", "Recent admission ledger rows to read", "5000")
     .option("--timeout <ms>", "Gateway read timeout in ms", "10000")
     .option("--json", "Output JSON", false)
