@@ -311,4 +311,74 @@ describe("channelsSlackWatchdogScanCommand", () => {
       }),
     );
   });
+
+  it("reads explicit Slack thread replies through the gateway", async () => {
+    const runtime = createRuntime();
+    const callGateway = vi.fn(async () => ({
+      payload: {
+        messages: [
+          {
+            channel: "C0B0AK14B7X",
+            ts: "1779322434.225859",
+            thread_ts: "1779318546.276599",
+            user: "U012ETLV6NQ",
+            text: "<@U0B0BS18D70> this would be the time after Michael responds",
+          },
+        ],
+      },
+    }));
+
+    await channelsSlackWatchdogScanCommand(
+      {
+        account: "soylei",
+        target: "channel:C0B0AK14B7X",
+        thread: "1779318546.276599",
+        botUser: "U0B0BS18D70",
+        json: true,
+      },
+      runtime,
+      {
+        cfg: {
+          channels: {
+            slack: {
+              accounts: {
+                soylei: {
+                  channels: {
+                    C0B0AK14B7X: {
+                      requireMention: true,
+                      users: ["U012ETLV6NQ"],
+                    },
+                  },
+                },
+              },
+            },
+          },
+        } as never,
+        env: { OPENCLAW_STATE_DIR: await makeTempState() },
+        callGateway,
+      },
+    );
+
+    expect(callGateway).toHaveBeenCalledWith(
+      expect.objectContaining({
+        params: expect.objectContaining({
+          params: expect.objectContaining({
+            threadId: "1779318546.276599",
+          }),
+        }),
+      }),
+    );
+    const report = JSON.parse(runtime.logs[0] ?? "{}") as {
+      counts?: Record<string, number>;
+      records?: Array<{ ts?: string; verdict?: string; reason?: string }>;
+    };
+    expect(report.counts?.["missing-admission"]).toBe(1);
+    expect(report.records).toContainEqual(
+      expect.objectContaining({
+        ts: "1779322434.225859",
+        verdict: "missing-admission",
+        reason: "activation-without-ledger-record",
+      }),
+    );
+  });
 });

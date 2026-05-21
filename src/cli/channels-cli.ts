@@ -200,6 +200,7 @@ export async function registerChannelsCli(
       "--active-thread <ts,csv>",
       "Comma-separated active thread timestamps to treat as relevant",
     )
+    .option("--thread <ts>", "Read and scan replies from one Slack thread timestamp")
     .option("--ledger-limit <n>", "Recent admission ledger rows to read", "5000")
     .option("--timeout <ms>", "Gateway read timeout in ms", "10000")
     .option("--json", "Output JSON", false)

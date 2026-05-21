@@ -18,6 +18,7 @@ export type ChannelsSlackWatchdogScanOptions = {
   botUser?: string;
   directMessage?: boolean;
   activeThread?: string;
+  thread?: string;
   ledgerLimit?: string;
   timeout?: string;
   json?: boolean;
@@ -491,10 +492,12 @@ async function readSlackMessagesViaGateway(params: {
   callGatewayFn: typeof callGateway;
   accountId: string;
   channelId: string;
+  threadId?: string;
   limit: number;
   oldest: string;
   timeoutMs: number;
 }): Promise<WatchdogMessage[]> {
+  const threadId = normalizeOptionalString(params.threadId);
   const actionPayload = await params.callGatewayFn({
     method: "message.action",
     params: {
@@ -506,6 +509,7 @@ async function readSlackMessagesViaGateway(params: {
         accountId: params.accountId,
         limit: params.limit,
         after: params.oldest,
+        ...(threadId ? { threadId } : {}),
       },
       idempotencyKey: `channels-watchdog-scan:${randomUUID()}`,
     },
@@ -530,6 +534,7 @@ export async function channelsSlackWatchdogScanCommand(
   const limit = parsePositiveInteger(opts.limit, 50);
   const ledgerLimit = parsePositiveInteger(opts.ledgerLimit, 5_000);
   const timeoutMs = parsePositiveInteger(opts.timeout, 10_000);
+  const threadId = normalizeOptionalString(opts.thread);
   const channelPolicy = resolveSlackChannelPolicy({
     cfg,
     accountId,
@@ -541,6 +546,7 @@ export async function channelsSlackWatchdogScanCommand(
       callGatewayFn: deps.callGateway ?? callGateway,
       accountId,
       channelId: target.channelId,
+      threadId,
       limit,
       oldest,
       timeoutMs,
@@ -557,6 +563,7 @@ export async function channelsSlackWatchdogScanCommand(
     directMessage: opts.directMessage === true || target.directMessage,
     activeThreadTs: [
       ...new Set([
+        ...(threadId ? [threadId] : []),
         ...splitCsv(opts.activeThread),
         ...resolveActiveThreadTsFromLedger({
           accountId,
