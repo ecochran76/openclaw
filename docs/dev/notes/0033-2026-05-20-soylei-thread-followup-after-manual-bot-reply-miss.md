@@ -44,6 +44,36 @@ posted at `1779323876.197949`.
   `health-monitor` stale-socket restart at `19:16:14`, but no admission or
   dispatch entry for `1779322434.225859`.
 - Node service logs for the same window had no matching dispatch/error lines.
+- Added installed diagnostic command support for explicit thread scans:
+
+  ```bash
+  openclaw channels watchdog-scan \
+    --account soylei \
+    --target channel:C0B0AK14B7X \
+    --thread 1779318546.276599 \
+    --since 4h \
+    --limit 50 \
+    --bot-user U0B0BS18D70 \
+    --json
+  ```
+
+- Installed diagnostic scan result after live patch:
+  `scanned=20`, `admitted=5`, `not-relevant=9`, `missing-admission=6`.
+  Missing admissions included `1779319619.353539` and the explicit bot mention
+  at `1779322434.225859`.
+
+## Fixes Landed
+
+- `dac3fe61af Add Slack watchdog thread scan` adds `--thread <ts>` to
+  `openclaw channels watchdog-scan`.
+- The command now passes `threadId` through the gateway-backed Slack
+  `message.action read` path, so it uses Slack `conversations.replies` instead
+  of only channel history.
+- The scanner treats the explicit `--thread` value as an active thread and
+  still infers active threads from accepted admission-ledger rows.
+- Regression coverage now verifies that a Baker-style explicit bot mention in a
+  thread is read through the gateway with `threadId` and reported as
+  `missing-admission` when the admission ledger lacks a row.
 
 ## Working Hypothesis
 
