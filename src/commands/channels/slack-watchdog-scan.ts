@@ -1,6 +1,11 @@
-import type { WebClient } from "@slack/web-api";
+import { randomUUID } from "node:crypto";
+import fs from "node:fs/promises";
+import os from "node:os";
+import path from "node:path";
 import { getRuntimeConfig } from "../../config/config.js";
 import type { OpenClawConfig } from "../../config/types.openclaw.js";
+import { callGateway } from "../../gateway/call.js";
+import { GATEWAY_CLIENT_MODES, GATEWAY_CLIENT_NAMES } from "../../gateway/protocol/client-info.js";
 import { defaultRuntime, type RuntimeEnv, writeRuntimeJson } from "../../runtime.js";
 import { normalizeOptionalString } from "../../shared/string-coerce.js";
 import { theme } from "../../terminal/theme.js";
@@ -14,28 +19,75 @@ export type ChannelsSlackWatchdogScanOptions = {
   directMessage?: boolean;
   activeThread?: string;
   ledgerLimit?: string;
+  timeout?: string;
   json?: boolean;
 };
 
-type SlackApi = typeof import("@openclaw/slack/api.js");
-
 export type ChannelsSlackWatchdogScanDeps = {
   cfg?: OpenClawConfig;
-  slackApi?: Pick<
-    SlackApi,
-    | "createSlackWebClient"
-    | "readSlackAdmissionRecords"
-    | "readSlackMessages"
-    | "resolveSlackChannelConfig"
-    | "resolveSlackAccount"
-    | "scanSlackAdmissionGaps"
-  >;
   now?: Date;
+  env?: NodeJS.ProcessEnv;
+  callGateway?: typeof callGateway;
 };
 
 type ScanTarget = {
   channelId: string;
   directMessage: boolean;
+};
+
+type WatchdogVerdict = "admitted" | "explicitly-ignored" | "not-relevant" | "missing-admission";
+
+type WatchdogMessage = {
+  channel?: string;
+  ts?: string;
+  thread_ts?: string;
+  client_msg_id?: string;
+  user?: string;
+  bot_id?: string;
+  subtype?: string;
+  text?: string;
+};
+
+type AdmissionRecord = {
+  version: 1;
+  recordedAt: string;
+  accountId: string;
+  channel?: string;
+  ts?: string;
+  threadTs?: string;
+  clientMsgId?: string;
+  outcome: "accepted" | "dropped";
+  reason?: string;
+  routeAgentId?: string;
+  sessionKey?: string;
+};
+
+type WatchdogScanRecord = {
+  accountId: string;
+  channel: string;
+  ts?: string;
+  threadTs?: string;
+  clientMsgId?: string;
+  verdict: WatchdogVerdict;
+  reason: string;
+  ledgerRecord?: Pick<
+    AdmissionRecord,
+    "recordedAt" | "outcome" | "reason" | "routeAgentId" | "sessionKey"
+  >;
+};
+
+type WatchdogScanReport = {
+  accountId: string;
+  channel: string;
+  scanned: number;
+  counts: Record<WatchdogVerdict, number>;
+  records: WatchdogScanRecord[];
+};
+
+type SlackChannelPolicy = {
+  allowed: boolean;
+  requireMention: boolean;
+  users?: Array<string | number>;
 };
 
 const DURATION_RE = /^(\d+)(ms|s|m|h|d)?$/;
@@ -110,9 +162,305 @@ function formatSlackEpochSeconds(date: Date): string {
     : seconds.toFixed(3).replace(/0+$/, "").replace(/\.$/, "");
 }
 
-function formatSlackWatchdogScanReport(
-  report: ReturnType<SlackApi["scanSlackAdmissionGaps"]>,
-): string {
+function resolveOpenClawStateDir(env: NodeJS.ProcessEnv = process.env): string {
+  if (env.OPENCLAW_STATE_DIR?.trim()) {
+    return path.resolve(env.OPENCLAW_STATE_DIR.trim());
+  }
+  if (env.OPENCLAW_HOME?.trim()) {
+    return path.resolve(env.OPENCLAW_HOME.trim());
+  }
+  return path.join(os.homedir(), ".openclaw");
+}
+
+function sanitizePathSegment(value: string): string {
+  return value.trim().replace(/[^a-zA-Z0-9._-]+/g, "_") || "default";
+}
+
+export function resolveSlackWatchdogLedgerPath(params: {
+  accountId: string;
+  env?: NodeJS.ProcessEnv;
+}): string {
+  return path.join(
+    resolveOpenClawStateDir(params.env),
+    "slack",
+    "admission-ledger",
+    `${sanitizePathSegment(params.accountId)}.jsonl`,
+  );
+}
+
+async function readAdmissionRecords(params: {
+  accountId: string;
+  limit: number;
+  env?: NodeJS.ProcessEnv;
+}): Promise<AdmissionRecord[]> {
+  const ledgerPath = resolveSlackWatchdogLedgerPath({
+    accountId: params.accountId,
+    env: params.env,
+  });
+  let raw: string;
+  try {
+    raw = await fs.readFile(ledgerPath, "utf8");
+  } catch (error) {
+    if ((error as NodeJS.ErrnoException).code === "ENOENT") {
+      return [];
+    }
+    throw error;
+  }
+  const lines = raw
+    .split("\n")
+    .map((line) => line.trim())
+    .filter(Boolean)
+    .slice(-params.limit);
+  const records: AdmissionRecord[] = [];
+  for (const line of lines) {
+    try {
+      const parsed = JSON.parse(line) as Partial<AdmissionRecord>;
+      if (parsed.version === 1 && parsed.accountId === params.accountId) {
+        records.push(parsed as AdmissionRecord);
+      }
+    } catch {
+      // Ignore malformed rows. The watchdog is diagnostic and should not fail
+      // the whole scan because of one partial append or hand-edited line.
+    }
+  }
+  return records;
+}
+
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return Boolean(value && typeof value === "object" && !Array.isArray(value));
+}
+
+function readConfigRecord(value: unknown): Record<string, unknown> {
+  return isRecord(value) ? value : {};
+}
+
+function readChannelsConfig(cfg: OpenClawConfig, accountId: string): Record<string, unknown> {
+  const slack = readConfigRecord((cfg.channels as Record<string, unknown> | undefined)?.slack);
+  const accounts = readConfigRecord(slack.accounts);
+  const account = readConfigRecord(accounts[accountId]);
+  return {
+    ...slack,
+    ...account,
+    channels: account.channels ?? slack.channels,
+    requireMention: account.requireMention ?? slack.requireMention,
+  };
+}
+
+function resolveSlackChannelPolicy(params: {
+  cfg: OpenClawConfig;
+  accountId: string;
+  channelId: string;
+}): SlackChannelPolicy {
+  const slack = readChannelsConfig(params.cfg, params.accountId);
+  const channels = readConfigRecord(slack.channels);
+  const channelId = params.channelId;
+  const candidates = [
+    channelId,
+    channelId.toLowerCase(),
+    channelId.toUpperCase(),
+    `channel:${channelId}`,
+    `channel:${channelId.toLowerCase()}`,
+    `channel:${channelId.toUpperCase()}`,
+  ];
+  const matched = candidates.map((key) => channels[key]).find(isRecord);
+  const fallback = readConfigRecord(channels["*"]);
+  const entry = readConfigRecord(matched ?? fallback);
+  const defaultRequireMention =
+    typeof slack.requireMention === "boolean" ? slack.requireMention : true;
+  const allowed = typeof entry.enabled === "boolean" ? entry.enabled : Boolean(matched ?? fallback);
+  const requireMention =
+    typeof entry.requireMention === "boolean" ? entry.requireMention : defaultRequireMention;
+  const users = Array.isArray(entry.users) ? (entry.users as Array<string | number>) : undefined;
+  return {
+    allowed,
+    requireMention,
+    ...(users ? { users } : {}),
+  };
+}
+
+function isBotMessage(message: WatchdogMessage): boolean {
+  return Boolean(normalizeOptionalString(message.bot_id)) || message.subtype === "bot_message";
+}
+
+function messageContainsBotMention(
+  message: WatchdogMessage,
+  botUserIds: readonly string[],
+): boolean {
+  const text = message.text ?? "";
+  return botUserIds.some((botUserId) => text.includes(`<@${botUserId}>`));
+}
+
+function isAllowedSender(
+  message: WatchdogMessage,
+  allowedUserIds: readonly string[] | undefined,
+): boolean {
+  if (!allowedUserIds) {
+    return true;
+  }
+  const user = normalizeOptionalString(message.user);
+  return Boolean(user && allowedUserIds.includes(user));
+}
+
+function messageKey(message: WatchdogMessage, channel: string): string {
+  const ts = normalizeOptionalString(message.ts) ?? "";
+  const clientMsgId = normalizeOptionalString(message.client_msg_id) ?? "";
+  return `${channel}\0${ts}\0${clientMsgId}`;
+}
+
+function ledgerKey(record: AdmissionRecord): string {
+  const channel = normalizeOptionalString(record.channel) ?? "";
+  const ts = normalizeOptionalString(record.ts) ?? "";
+  const clientMsgId = normalizeOptionalString(record.clientMsgId) ?? "";
+  return `${channel}\0${ts}\0${clientMsgId}`;
+}
+
+function buildLedgerIndex(records: readonly AdmissionRecord[]) {
+  const index = new Map<string, AdmissionRecord>();
+  for (const record of records) {
+    if (!record.channel || !record.ts) {
+      continue;
+    }
+    index.set(ledgerKey(record), record);
+    index.set(`${record.channel}\0${record.ts}\0`, record);
+  }
+  return index;
+}
+
+function summarizeLedgerRecord(record: AdmissionRecord): WatchdogScanRecord["ledgerRecord"] {
+  return {
+    recordedAt: record.recordedAt,
+    outcome: record.outcome,
+    ...(record.reason ? { reason: record.reason } : {}),
+    ...(record.routeAgentId ? { routeAgentId: record.routeAgentId } : {}),
+    ...(record.sessionKey ? { sessionKey: record.sessionKey } : {}),
+  };
+}
+
+function resolveActiveThreadTsFromLedger(params: {
+  accountId: string;
+  channelId: string;
+  records: readonly AdmissionRecord[];
+}): string[] {
+  const active = new Set<string>();
+  for (const record of params.records) {
+    if (
+      record.accountId !== params.accountId ||
+      record.channel !== params.channelId ||
+      record.outcome !== "accepted"
+    ) {
+      continue;
+    }
+    const threadTs = normalizeOptionalString(record.threadTs);
+    if (threadTs) {
+      active.add(threadTs);
+    }
+  }
+  return [...active];
+}
+
+function scanAdmissionGaps(params: {
+  accountId: string;
+  channel: string;
+  messages: readonly WatchdogMessage[];
+  ledgerRecords: readonly AdmissionRecord[];
+  botUserIds?: readonly string[];
+  directMessage?: boolean;
+  activeThreadTs?: readonly string[];
+  channelRequiresMention?: boolean;
+  allowedUserIds?: readonly string[];
+}): WatchdogScanReport {
+  const botUserIds = params.botUserIds ?? [];
+  const activeThreadTs = new Set(params.activeThreadTs ?? []);
+  const ledger = buildLedgerIndex(
+    params.ledgerRecords.filter((record) => record.accountId === params.accountId),
+  );
+  const records: WatchdogScanRecord[] = [];
+  const counts: Record<WatchdogVerdict, number> = {
+    admitted: 0,
+    "explicitly-ignored": 0,
+    "not-relevant": 0,
+    "missing-admission": 0,
+  };
+
+  for (const message of params.messages) {
+    const ts = normalizeOptionalString(message.ts);
+    const threadTs = normalizeOptionalString(message.thread_ts);
+    const channel = normalizeOptionalString(message.channel) ?? params.channel;
+    const base = {
+      accountId: params.accountId,
+      channel,
+      ...(ts ? { ts } : {}),
+      ...(threadTs ? { threadTs } : {}),
+      ...(normalizeOptionalString(message.client_msg_id)
+        ? { clientMsgId: normalizeOptionalString(message.client_msg_id) }
+        : {}),
+    };
+
+    const admission =
+      ledger.get(messageKey(message, channel)) ??
+      (ts ? ledger.get(`${channel}\0${ts}\0`) : undefined);
+    if (admission?.outcome === "accepted") {
+      records.push({
+        ...base,
+        verdict: "admitted",
+        reason: "ledger-accepted",
+        ledgerRecord: summarizeLedgerRecord(admission),
+      });
+      counts.admitted += 1;
+      continue;
+    }
+    if (admission?.outcome === "dropped") {
+      records.push({
+        ...base,
+        verdict: "explicitly-ignored",
+        reason: admission.reason ?? "ledger-dropped",
+        ledgerRecord: summarizeLedgerRecord(admission),
+      });
+      counts["explicitly-ignored"] += 1;
+      continue;
+    }
+
+    const botMessage = isBotMessage(message);
+    const allowedSender = isAllowedSender(message, params.allowedUserIds);
+    const relevant =
+      !botMessage &&
+      allowedSender &&
+      (params.directMessage === true ||
+        params.channelRequiresMention === false ||
+        messageContainsBotMention(message, botUserIds) ||
+        Boolean(threadTs && activeThreadTs.has(threadTs)));
+    if (!relevant) {
+      records.push({
+        ...base,
+        verdict: "not-relevant",
+        reason: botMessage
+          ? "bot-message"
+          : !allowedSender
+            ? "sender-not-allowlisted"
+            : "no-activation-signal",
+      });
+      counts["not-relevant"] += 1;
+      continue;
+    }
+
+    records.push({
+      ...base,
+      verdict: "missing-admission",
+      reason: "activation-without-ledger-record",
+    });
+    counts["missing-admission"] += 1;
+  }
+
+  return {
+    accountId: params.accountId,
+    channel: params.channel,
+    scanned: params.messages.length,
+    counts,
+    records,
+  };
+}
+
+function formatSlackWatchdogScanReport(report: WatchdogScanReport): string {
   const lines = [
     theme.heading("Slack Watchdog Scan"),
     `Account: ${report.accountId}`,
@@ -132,32 +480,40 @@ function formatSlackWatchdogScanReport(
   return lines.join("\n");
 }
 
-async function loadSlackApi(): Promise<ChannelsSlackWatchdogScanDeps["slackApi"]> {
-  return await import("@openclaw/slack/api.js");
+function extractReadMessages(payload: unknown): WatchdogMessage[] {
+  const root = payload && typeof payload === "object" ? (payload as Record<string, unknown>) : {};
+  const nested = root.payload && typeof root.payload === "object" ? root.payload : root;
+  const messages = (nested as Record<string, unknown>).messages;
+  return Array.isArray(messages) ? (messages as WatchdogMessage[]) : [];
 }
 
-async function resolveBotUserId(params: {
-  slackApi: NonNullable<ChannelsSlackWatchdogScanDeps["slackApi"]>;
-  cfg: OpenClawConfig;
+async function readSlackMessagesViaGateway(params: {
+  callGatewayFn: typeof callGateway;
   accountId: string;
-  explicitBotUser?: string;
-}): Promise<string | undefined> {
-  const explicit = normalizeOptionalString(params.explicitBotUser);
-  if (explicit) {
-    return explicit;
-  }
-  const account = params.slackApi.resolveSlackAccount({
-    cfg: params.cfg,
-    accountId: params.accountId,
+  channelId: string;
+  limit: number;
+  oldest: string;
+  timeoutMs: number;
+}): Promise<WatchdogMessage[]> {
+  const actionPayload = await params.callGatewayFn({
+    method: "message.action",
+    params: {
+      channel: "slack",
+      action: "read",
+      accountId: params.accountId,
+      params: {
+        to: `channel:${params.channelId}`,
+        accountId: params.accountId,
+        limit: params.limit,
+        after: params.oldest,
+      },
+      idempotencyKey: `channels-watchdog-scan:${randomUUID()}`,
+    },
+    timeoutMs: params.timeoutMs,
+    clientName: GATEWAY_CLIENT_NAMES.CLI,
+    mode: GATEWAY_CLIENT_MODES.CLI,
   });
-  if (!account.botToken) {
-    throw new Error(
-      `Slack account ${params.accountId} has no resolved bot token for watchdog scan.`,
-    );
-  }
-  const client = params.slackApi.createSlackWebClient(account.botToken) as WebClient;
-  const auth = await client.auth.test();
-  return normalizeOptionalString(auth.user_id);
+  return extractReadMessages(actionPayload);
 }
 
 export async function channelsSlackWatchdogScanCommand(
@@ -166,7 +522,6 @@ export async function channelsSlackWatchdogScanCommand(
   deps: ChannelsSlackWatchdogScanDeps = {},
 ) {
   const cfg = deps.cfg ?? getRuntimeConfig();
-  const slackApi = deps.slackApi ?? (await loadSlackApi());
   const accountId = normalizeOptionalString(opts.account) ?? "default";
   const target = parseSlackWatchdogTarget(opts.target);
   const now = deps.now ?? new Date();
@@ -174,40 +529,45 @@ export async function channelsSlackWatchdogScanCommand(
   const oldest = formatSlackEpochSeconds(new Date(now.getTime() - sinceMs));
   const limit = parsePositiveInteger(opts.limit, 50);
   const ledgerLimit = parsePositiveInteger(opts.ledgerLimit, 5_000);
-  const account = slackApi.resolveSlackAccount({ cfg, accountId });
-  const channelConfig = slackApi.resolveSlackChannelConfig({
-    channelId: target.channelId,
-    channels: account.config.channels,
-    defaultRequireMention: account.config.requireMention,
-  });
-  const botUserId = await resolveBotUserId({
-    slackApi,
+  const timeoutMs = parsePositiveInteger(opts.timeout, 10_000);
+  const channelPolicy = resolveSlackChannelPolicy({
     cfg,
     accountId,
-    explicitBotUser: opts.botUser,
+    channelId: target.channelId,
   });
 
   const [messages, ledgerRecords] = await Promise.all([
-    slackApi.readSlackMessages(target.channelId, {
-      cfg,
+    readSlackMessagesViaGateway({
+      callGatewayFn: deps.callGateway ?? callGateway,
       accountId,
+      channelId: target.channelId,
       limit,
-      after: oldest,
+      oldest,
+      timeoutMs,
     }),
-    slackApi.readSlackAdmissionRecords({ accountId, limit: ledgerLimit }),
+    readAdmissionRecords({ accountId, limit: ledgerLimit, env: deps.env }),
   ]);
 
-  const report = slackApi.scanSlackAdmissionGaps({
+  const report = scanAdmissionGaps({
     accountId,
     channel: target.channelId,
-    messages: messages.messages,
+    messages,
     ledgerRecords,
-    botUserIds: botUserId ? [botUserId] : [],
+    botUserIds: splitCsv(opts.botUser),
     directMessage: opts.directMessage === true || target.directMessage,
-    activeThreadTs: splitCsv(opts.activeThread),
-    channelRequiresMention: channelConfig?.requireMention,
+    activeThreadTs: [
+      ...new Set([
+        ...splitCsv(opts.activeThread),
+        ...resolveActiveThreadTsFromLedger({
+          accountId,
+          channelId: target.channelId,
+          records: ledgerRecords,
+        }),
+      ]),
+    ],
+    channelRequiresMention: channelPolicy.requireMention,
     allowedUserIds:
-      channelConfig?.allowed === false ? [] : normalizeAllowedUsers(channelConfig?.users),
+      channelPolicy.allowed === false ? [] : normalizeAllowedUsers(channelPolicy.users),
   });
 
   if (opts.json) {

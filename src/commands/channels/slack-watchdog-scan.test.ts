@@ -1,9 +1,25 @@
-import { describe, expect, it, vi } from "vitest";
+import fs from "node:fs/promises";
+import os from "node:os";
+import path from "node:path";
+import { afterEach, describe, expect, it, vi } from "vitest";
 import {
   channelsSlackWatchdogScanCommand,
   parseSlackWatchdogDurationMs,
   parseSlackWatchdogTarget,
+  resolveSlackWatchdogLedgerPath,
 } from "./slack-watchdog-scan.js";
+
+const tempDirs: string[] = [];
+
+async function makeTempState() {
+  const dir = await fs.mkdtemp(path.join(os.tmpdir(), "openclaw-watchdog-scan-"));
+  tempDirs.push(dir);
+  return dir;
+}
+
+afterEach(async () => {
+  await Promise.all(tempDirs.splice(0).map((dir) => fs.rm(dir, { recursive: true, force: true })));
+});
 
 function createRuntime() {
   return {
@@ -24,6 +40,19 @@ function createRuntime() {
       throw new Error(`exit:${code ?? 0}`);
     },
   };
+}
+
+async function writeLedger(
+  stateDir: string,
+  accountId: string,
+  records: Array<Record<string, unknown>>,
+) {
+  const ledgerPath = resolveSlackWatchdogLedgerPath({
+    accountId,
+    env: { OPENCLAW_STATE_DIR: stateDir },
+  });
+  await fs.mkdir(path.dirname(ledgerPath), { recursive: true });
+  await fs.writeFile(ledgerPath, `${records.map((record) => JSON.stringify(record)).join("\n")}\n`);
 }
 
 describe("parseSlackWatchdogDurationMs", () => {
@@ -52,178 +81,118 @@ describe("parseSlackWatchdogTarget", () => {
 });
 
 describe("channelsSlackWatchdogScanCommand", () => {
-  it("scans Slack history directly and reports missing admissions", async () => {
+  it("reads Slack history through the gateway and reports missing admissions", async () => {
     const runtime = createRuntime();
-    const scanSlackAdmissionGaps = vi.fn(() => ({
-      accountId: "soylei",
-      channel: "C123",
-      scanned: 1,
-      counts: {
-        admitted: 0,
-        "explicitly-ignored": 0,
-        "not-relevant": 0,
-        "missing-admission": 1,
+    const callGateway = vi.fn(async () => ({
+      payload: {
+        messages: [
+          {
+            channel: "C123",
+            ts: "1779309189.369149",
+            text: "<@UOPENCLAW> status?",
+            user: "U1",
+          },
+        ],
       },
-      records: [
-        {
-          accountId: "soylei",
-          channel: "C123",
-          ts: "1779309189.369149",
-          verdict: "missing-admission",
-          reason: "activation-without-ledger-record",
-        },
-      ],
     }));
-    const readSlackMessages = vi.fn(async () => ({
-      messages: [{ ts: "1779309189.369149", text: "<@UOPENCLAW> status?", user: "U1" }],
-      hasMore: false,
-    }));
-    const readSlackAdmissionRecords = vi.fn(async () => []);
-    const authTest = vi.fn(async () => ({ user_id: "UOPENCLAW" }));
 
     await channelsSlackWatchdogScanCommand(
       {
         account: "soylei",
         target: "channel:C123",
         since: "30m",
+        botUser: "UOPENCLAW",
       },
       runtime,
       {
         cfg: { channels: { slack: {} } } as never,
         now: new Date("2026-05-20T21:00:00.000Z"),
-        slackApi: {
-          createSlackWebClient: vi.fn(() => ({ auth: { test: authTest } }) as never),
-          readSlackAdmissionRecords,
-          readSlackMessages,
-          resolveSlackChannelConfig: vi.fn(() => ({
-            allowed: true,
-            requireMention: true,
-          })),
-          resolveSlackAccount: vi.fn(
-            () =>
-              ({
-                accountId: "soylei",
-                botToken: "xoxb-test",
-                config: {},
-              }) as never,
-          ),
-          scanSlackAdmissionGaps,
-        },
+        env: { OPENCLAW_STATE_DIR: await makeTempState() },
+        callGateway,
       },
     );
 
-    expect(readSlackMessages).toHaveBeenCalledWith(
-      "C123",
+    expect(callGateway).toHaveBeenCalledWith(
       expect.objectContaining({
-        accountId: "soylei",
-        after: "1779309000",
-        limit: 50,
-      }),
-    );
-    expect(readSlackAdmissionRecords).toHaveBeenCalledWith({
-      accountId: "soylei",
-      limit: 5000,
-    });
-    expect(scanSlackAdmissionGaps).toHaveBeenCalledWith(
-      expect.objectContaining({
-        accountId: "soylei",
-        channel: "C123",
-        botUserIds: ["UOPENCLAW"],
+        method: "message.action",
+        params: expect.objectContaining({
+          channel: "slack",
+          action: "read",
+          accountId: "soylei",
+          params: expect.objectContaining({
+            to: "channel:C123",
+            after: "1779309000",
+            limit: 50,
+          }),
+        }),
       }),
     );
     expect(runtime.logs.join("\n")).toContain("Missing admissions:");
     expect(runtime.logs.join("\n")).toContain("1779309189.369149");
   });
 
-  it("uses explicit bot user id without auth.test", async () => {
-    const authTest = vi.fn(async () => ({ user_id: "UOPENCLAW" }));
+  it("marks matching ledger records as admitted", async () => {
+    const stateDir = await makeTempState();
+    await writeLedger(stateDir, "soylei", [
+      {
+        version: 1,
+        recordedAt: "2026-05-20T23:17:51.389Z",
+        accountId: "soylei",
+        channel: "C123",
+        ts: "1779309189.369149",
+        outcome: "accepted",
+        routeAgentId: "soylei-primary",
+      },
+    ]);
+    const runtime = createRuntime();
 
     await channelsSlackWatchdogScanCommand(
       {
         account: "soylei",
         target: "channel:C123",
-        botUser: "UCONFIGURED",
+        botUser: "UOPENCLAW",
         json: true,
       },
-      createRuntime(),
+      runtime,
       {
         cfg: { channels: { slack: {} } } as never,
-        slackApi: {
-          createSlackWebClient: vi.fn(() => ({ auth: { test: authTest } }) as never),
-          readSlackAdmissionRecords: vi.fn(async () => []),
-          readSlackMessages: vi.fn(async () => ({ messages: [], hasMore: false })),
-          resolveSlackChannelConfig: vi.fn(() => ({
-            allowed: true,
-            requireMention: true,
-          })),
-          resolveSlackAccount: vi.fn(
-            () =>
-              ({
-                accountId: "soylei",
-                botToken: "xoxb-test",
-                config: {},
-              }) as never,
-          ),
-          scanSlackAdmissionGaps: vi.fn(() => ({
-            accountId: "soylei",
-            channel: "C123",
-            scanned: 0,
-            counts: {
-              admitted: 0,
-              "explicitly-ignored": 0,
-              "not-relevant": 0,
-              "missing-admission": 0,
-            },
-            records: [],
-          })),
-        },
+        env: { OPENCLAW_STATE_DIR: stateDir },
+        callGateway: vi.fn(async () => ({
+          payload: {
+            messages: [
+              {
+                channel: "C123",
+                ts: "1779309189.369149",
+                text: "<@UOPENCLAW> status?",
+                user: "U1",
+              },
+            ],
+          },
+        })),
       },
     );
 
-    expect(authTest).not.toHaveBeenCalled();
+    const report = JSON.parse(runtime.logs[0] ?? "{}") as { counts?: Record<string, number> };
+    expect(report.counts?.admitted).toBe(1);
+    expect(report.counts?.["missing-admission"]).toBe(0);
   });
 
-  it("passes requireMention=false channel policy into the scanner", async () => {
-    const scanSlackAdmissionGaps = vi.fn(() => ({
-      accountId: "soylei",
-      channel: "C0B0AK14B7X",
-      scanned: 1,
-      counts: {
-        admitted: 0,
-        "explicitly-ignored": 0,
-        "not-relevant": 0,
-        "missing-admission": 1,
-      },
-      records: [],
-    }));
+  it("uses requireMention=false channel policy and sender allowlist", async () => {
+    const runtime = createRuntime();
 
     await channelsSlackWatchdogScanCommand(
       {
         account: "soylei",
         target: "channel:C0B0AK14B7X",
-        botUser: "UOPENCLAW",
+        json: true,
       },
-      createRuntime(),
+      runtime,
       {
-        cfg: { channels: { slack: {} } } as never,
-        slackApi: {
-          createSlackWebClient: vi.fn(() => ({ auth: { test: vi.fn() } }) as never),
-          readSlackAdmissionRecords: vi.fn(async () => []),
-          readSlackMessages: vi.fn(async () => ({
-            messages: [{ ts: "1779318546.276599", user: "U012ETLV6NQ", text: "plain ask" }],
-            hasMore: false,
-          })),
-          resolveSlackChannelConfig: vi.fn(() => ({
-            allowed: true,
-            requireMention: false,
-            users: ["U012ETLV6NQ"],
-          })),
-          resolveSlackAccount: vi.fn(
-            () =>
-              ({
-                accountId: "soylei",
-                botToken: "xoxb-test",
-                config: {
+        cfg: {
+          channels: {
+            slack: {
+              accounts: {
+                soylei: {
                   channels: {
                     C0B0AK14B7X: {
                       requireMention: false,
@@ -231,17 +200,114 @@ describe("channelsSlackWatchdogScanCommand", () => {
                     },
                   },
                 },
-              }) as never,
-          ),
-          scanSlackAdmissionGaps,
-        },
+              },
+            },
+          },
+        } as never,
+        env: { OPENCLAW_STATE_DIR: await makeTempState() },
+        callGateway: vi.fn(async () => ({
+          payload: {
+            messages: [
+              {
+                channel: "C0B0AK14B7X",
+                ts: "1779318546.276599",
+                user: "U012ETLV6NQ",
+                text: "plain ask",
+              },
+              {
+                channel: "C0B0AK14B7X",
+                ts: "1779318547.276599",
+                user: "UNOTLISTED",
+                text: "plain chatter",
+              },
+            ],
+          },
+        })),
       },
     );
 
-    expect(scanSlackAdmissionGaps).toHaveBeenCalledWith(
+    const report = JSON.parse(runtime.logs[0] ?? "{}") as {
+      counts?: Record<string, number>;
+      records?: Array<{ ts?: string; verdict?: string; reason?: string }>;
+    };
+    expect(report.counts?.["missing-admission"]).toBe(1);
+    expect(report.counts?.["not-relevant"]).toBe(1);
+    expect(report.records).toContainEqual(
       expect.objectContaining({
-        channelRequiresMention: false,
-        allowedUserIds: ["U012ETLV6NQ"],
+        ts: "1779318547.276599",
+        verdict: "not-relevant",
+        reason: "sender-not-allowlisted",
+      }),
+    );
+  });
+
+  it("infers active Slack threads from accepted admission ledger records", async () => {
+    const stateDir = await makeTempState();
+    await writeLedger(stateDir, "soylei", [
+      {
+        version: 1,
+        recordedAt: "2026-05-20T23:17:51.389Z",
+        accountId: "soylei",
+        channel: "C0B0AK14B7X",
+        ts: "1779319161.100189",
+        threadTs: "1779318546.276599",
+        outcome: "accepted",
+        routeAgentId: "soylei-primary",
+      },
+    ]);
+    const runtime = createRuntime();
+
+    await channelsSlackWatchdogScanCommand(
+      {
+        account: "soylei",
+        target: "channel:C0B0AK14B7X",
+        json: true,
+      },
+      runtime,
+      {
+        cfg: {
+          channels: {
+            slack: {
+              accounts: {
+                soylei: {
+                  channels: {
+                    C0B0AK14B7X: {
+                      requireMention: true,
+                      users: ["U012ETLV6NQ"],
+                    },
+                  },
+                },
+              },
+            },
+          },
+        } as never,
+        env: { OPENCLAW_STATE_DIR: stateDir },
+        callGateway: vi.fn(async () => ({
+          payload: {
+            messages: [
+              {
+                channel: "C0B0AK14B7X",
+                ts: "1779319619.353539",
+                thread_ts: "1779318546.276599",
+                user: "U012ETLV6NQ",
+                text: "Lei please incorporate the word Breh",
+              },
+            ],
+          },
+        })),
+      },
+    );
+
+    const report = JSON.parse(runtime.logs[0] ?? "{}") as {
+      counts?: Record<string, number>;
+      records?: Array<{ ts?: string; verdict?: string; reason?: string }>;
+    };
+    expect(report.counts?.["missing-admission"]).toBe(1);
+    expect(report.records).toContainEqual(
+      expect.objectContaining({
+        ts: "1779319619.353539",
+        verdict: "missing-admission",
+        reason: "activation-without-ledger-record",
       }),
     );
   });

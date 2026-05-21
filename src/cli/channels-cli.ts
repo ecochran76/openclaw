@@ -194,13 +194,14 @@ export async function registerChannelsCli(
     .requiredOption("--target <dest>", "Slack target (for example channel:C123 or D123)")
     .option("--limit <n>", "Recent Slack messages to read", "50")
     .option("--since <duration>", "History window to scan (for example 30m, 2h)", "30m")
-    .option("--bot-user <id>", "Slack bot user id; otherwise resolved via auth.test")
+    .option("--bot-user <id>", "Slack bot user id for mention-based relevance checks")
     .option("--direct-message", "Treat target as a DM even if the id does not start with D", false)
     .option(
       "--active-thread <ts,csv>",
       "Comma-separated active thread timestamps to treat as relevant",
     )
     .option("--ledger-limit <n>", "Recent admission ledger rows to read", "5000")
+    .option("--timeout <ms>", "Gateway read timeout in ms", "10000")
     .option("--json", "Output JSON", false)
     .action(async (opts) => {
       await runChannelsCommand(async () => {
