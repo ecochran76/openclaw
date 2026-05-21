@@ -16,6 +16,16 @@ Lei please incorporate the word "Breh" into your vocabulary as well
 Lei did not answer until the operator asked for recovery. A manual bot-token
 reply was posted at `1779321504.707029`.
 
+The same thread later missed another explicit mention. Baker posted at
+`1779322434.225859`:
+
+```text
+<@U0B0BS18D70> this would be the time after Michael responds to play an excerpt of that song that I sent
+```
+
+Lei again did not answer until operator recovery. A manual bot-token reply was
+posted at `1779323876.197949`.
+
 ## Evidence Checked
 
 - Slack Web API `conversations.replies` showed the Baker message and no
@@ -26,6 +36,14 @@ reply was posted at `1779321504.707029`.
   entries for the thread/message/channel/user search terms.
 - The thread already had Lei participation before Baker's follow-up, including
   OpenClaw-generated Lei replies and one manual bot-token Lei reply.
+- For the second miss, Slack Web API showed the selected message and no
+  intervening Lei reply before manual recovery.
+- `openclaw tasks list --json` did not reveal a task created for
+  `1779322434.225859`.
+- Gateway logs for `2026-05-20 19:10-19:18 CDT` showed a default Slack
+  `health-monitor` stale-socket restart at `19:16:14`, but no admission or
+  dispatch entry for `1779322434.225859`.
+- Node service logs for the same window had no matching dispatch/error lines.
 
 ## Working Hypothesis
 
@@ -40,6 +58,12 @@ thread visibly contains a Lei bot reply.
 The thread also had earlier OpenClaw-authored Lei replies, so this may still be
 the broader stale-socket/admission-ledger issue rather than only a manual-reply
 edge case.
+
+The second miss is stronger evidence of a repeated admission gap because the
+message explicitly mentioned the Lei bot in an already-active thread. The nearby
+stale-socket restart may be relevant, but the message timestamp precedes the
+restart by roughly two minutes, so the fix should inspect both pre-restart
+socket liveness and admission-ledger behavior.
 
 ## Desired Behavior
 
@@ -61,7 +85,10 @@ edge case.
 3. Add a regression test for: channel configured always-respond, thread has a
    bot-authored Lei reply visible in Slack, authorized user posts unmentioned
    follow-up, OpenClaw admits and dispatches it.
-4. If the canonical fix is an admission-ledger repair, keep it in the Slack
+4. Add a second regression test for: authorized user posts an explicit bot
+   mention in an already-active thread shortly before a stale-socket restart;
+   the event must be admitted or surfaced as a missed-event diagnostic.
+5. If the canonical fix is an admission-ledger repair, keep it in the Slack
    extension/runtime surface and avoid solving this with user-scoped scripts.
 
 ## Related Notes
