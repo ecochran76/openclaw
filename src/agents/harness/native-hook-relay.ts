@@ -473,10 +473,7 @@ export function registerNativeHookRelay(
       }
       current.expiresAtMs = renewedExpiresAtMs;
       handle.expiresAtMs = renewedExpiresAtMs;
-      const bridge = relayBridges.get(relayId);
-      if (bridge) {
-        writeNativeHookRelayBridgeRecordForRegistration(current, bridge);
-      }
+      refreshNativeHookRelayBridgeExpiry(current);
     },
     unregister: () => unregisterNativeHookRelay(relayId, registration),
   };
@@ -996,6 +993,14 @@ function registerNativeHookRelayBridge(registration: ActiveNativeHookRelayRegist
     writeNativeHookRelayBridgeRecordForRegistration(registration, bridge);
   }
   server.unref();
+}
+
+function refreshNativeHookRelayBridgeExpiry(registration: NativeHookRelayRegistration): void {
+  const bridge = relayBridges.get(registration.relayId);
+  if (!bridge) {
+    return;
+  }
+  writeNativeHookRelayBridgeRecordForRegistration(registration, bridge);
 }
 
 function writeNativeHookRelayBridgeRecordForRegistration(

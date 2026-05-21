@@ -259,6 +259,12 @@ describe("native hook relay registry", () => {
     );
     expect(relay.shouldRelayEvent("pre_tool_use")).toBe(true);
     expect(relay.shouldRelayEvent("post_tool_use")).toBe(false);
+    const beforeRenew = relay.expiresAtMs;
+    relay.renew(60_000);
+    expect(relay.expiresAtMs).toBeGreaterThan(beforeRenew);
+    expect(testing.getNativeHookRelayRegistrationForTests(relay.relayId)?.expiresAtMs).toBe(
+      relay.expiresAtMs,
+    );
   });
 
   it("rejects relay registrations when expiry would exceed Date range", () => {
