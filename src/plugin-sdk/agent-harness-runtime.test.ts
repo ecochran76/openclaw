@@ -5,10 +5,13 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 import {
   attachModelProviderRequestTransport,
   buildAgentHarnessUserInputAnswers,
+  buildAgentHookContextChannelFields,
   classifyAgentHarnessTerminalOutcome,
   deliverAgentHarnessUserInputPrompt,
   formatAgentHarnessUserInputPrompt,
   getModelProviderRequestTransport,
+  hasBeforeToolCallPolicy,
+  resolveSessionWriteLockOptions,
   type AgentHarnessTerminalOutcomeClassification,
 } from "./agent-harness-runtime.js";
 
@@ -240,5 +243,31 @@ describe("agent harness user input helpers", () => {
         { formatText: (text) => text.replaceAll("<", "&lt;") },
       ),
     ).toContain("a &lt; b");
+  });
+});
+
+describe("agent harness runtime compatibility exports", () => {
+  it("exposes channel context helpers expected by external harness plugins", () => {
+    expect(
+      buildAgentHookContextChannelFields({
+        sessionKey: "agent:lei:slack:channel:C123",
+        messageProvider: "slack",
+      }),
+    ).toMatchObject({
+      channelId: "C123",
+      messageProvider: "slack",
+    });
+  });
+
+  it("exposes session write-lock options expected by external harness plugins", () => {
+    expect(
+      resolveSessionWriteLockOptions({
+        session: { writeLock: { acquireTimeoutMs: 12_345 } },
+      }),
+    ).toMatchObject({ timeoutMs: 12_345 });
+  });
+
+  it("reports whether before-tool-call policy is active", () => {
+    expect(typeof hasBeforeToolCallPolicy()).toBe("boolean");
   });
 });

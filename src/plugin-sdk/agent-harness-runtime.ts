@@ -112,7 +112,6 @@ export type {
 export { VERSION as OPENCLAW_VERSION } from "../version.js";
 export { formatErrorMessage } from "../infra/errors.js";
 export { formatApprovalDisplayPath } from "../infra/approval-display-paths.js";
-export { buildAgentHookContextChannelFields } from "../plugins/hook-agent-context.js";
 export { emitAgentEvent, onAgentEvent, resetAgentEventsForTest } from "../infra/agent-events.js";
 export { runAgentCleanupStep } from "../agents/run-cleanup-timeout.js";
 export { log as embeddedAgentLog } from "../agents/embedded-agent-runner/logger.js";
@@ -286,6 +285,7 @@ export {
   resolveSessionWriteLockOptions,
   type SessionWriteLockAcquireTimeoutConfig,
 } from "../agents/session-write-lock.js";
+export { buildAgentHookContextChannelFields } from "../plugins/hook-agent-context.js";
 export { appendSessionTranscriptMessage } from "../config/sessions/transcript-append.js";
 export { emitSessionTranscriptUpdate } from "../sessions/transcript-events.js";
 export {
