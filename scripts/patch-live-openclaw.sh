@@ -19,6 +19,7 @@ set -euo pipefail
 #   OPENCLAW_PATCH_CLI_TIMEOUT_SEC=180
 #   OPENCLAW_PATCH_RESTART_TIMEOUT_SEC=180
 #   OPENCLAW_PATCH_EXTERNAL_PLUGINS=auto|slack,discord
+#   OPENCLAW_PATCH_INCLUDE_ALL_NVM_INSTALLS=1
 
 DRY_RUN=0
 PATCH_EXPECT_BRANCH="${OPENCLAW_PATCH_EXPECT_BRANCH:-}"
@@ -28,6 +29,7 @@ PATCH_RESTART_FLAG_FILE="${OPENCLAW_PATCH_RESTART_FLAG_FILE:-}"
 PATCH_CLI_TIMEOUT_SEC="${OPENCLAW_PATCH_CLI_TIMEOUT_SEC:-180}"
 PATCH_RESTART_TIMEOUT_SEC="${OPENCLAW_PATCH_RESTART_TIMEOUT_SEC:-180}"
 PATCH_EXTERNAL_PLUGINS_SPEC="${OPENCLAW_PATCH_EXTERNAL_PLUGINS:-}"
+PATCH_INCLUDE_ALL_NVM_INSTALLS="${OPENCLAW_PATCH_INCLUDE_ALL_NVM_INSTALLS:-0}"
 PATCH_EXTERNAL_PLUGIN_IDS=()
 
 while [[ $# -gt 0 ]]; do
@@ -456,6 +458,9 @@ collect_install_npm_bins() {
   while IFS= read -r gateway_package_dir; do
     append_npm_for_package_dir "$gateway_package_dir"
   done < <(collect_gateway_package_dirs)
+  if [[ "$PATCH_INCLUDE_ALL_NVM_INSTALLS" != "1" && "$PATCH_INCLUDE_ALL_NVM_INSTALLS" != "true" ]]; then
+    return 0
+  fi
   local nvm_npm_bin
   while IFS= read -r nvm_npm_bin; do
     append_unique_npm_bin "$nvm_npm_bin"

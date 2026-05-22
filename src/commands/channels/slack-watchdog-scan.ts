@@ -12,7 +12,9 @@ import { theme } from "../../terminal/theme.js";
 
 export type ChannelsSlackWatchdogScanOptions = {
   account?: string;
+  tenantLabel?: string;
   target?: string;
+  channelName?: string;
   limit?: string;
   since?: string;
   botUser?: string;
@@ -83,10 +85,19 @@ type WatchdogScanRecord = {
 type WatchdogScanReport = {
   accountId: string;
   channel: string;
+  presentation?: WatchdogScanPresentation;
   scanned: number;
   counts: Record<WatchdogVerdict, number>;
   records: WatchdogScanRecord[];
   alert?: WatchdogAlertResult;
+};
+
+type WatchdogScanPresentation = {
+  timeZone: string;
+  tenant: string;
+  channel: string;
+  windowStart?: string;
+  windowEnd?: string;
 };
 
 type WatchdogAlertResult = {
@@ -105,6 +116,7 @@ type SlackChannelPolicy = {
 };
 
 const DURATION_RE = /^(\d+)(ms|s|m|h|d)?$/;
+const SLACK_WATCHDOG_REPORT_TIME_ZONE = "America/Chicago";
 
 function parsePositiveInteger(raw: string | undefined, fallback: number): number {
   const parsed = Number.parseInt(raw ?? "", 10);
@@ -174,6 +186,34 @@ function formatSlackEpochSeconds(date: Date): string {
   return Number.isInteger(seconds)
     ? String(seconds)
     : seconds.toFixed(3).replace(/0+$/, "").replace(/\.$/, "");
+}
+
+function slackTsToDate(raw: string | undefined): Date | undefined {
+  const trimmed = normalizeOptionalString(raw);
+  if (!trimmed) {
+    return undefined;
+  }
+  const seconds = Number.parseFloat(trimmed);
+  if (!Number.isFinite(seconds)) {
+    return undefined;
+  }
+  return new Date(seconds * 1000);
+}
+
+function formatChicagoTime(date: Date | undefined): string {
+  if (!date) {
+    return "<unknown>";
+  }
+  return new Intl.DateTimeFormat("en-US", {
+    timeZone: SLACK_WATCHDOG_REPORT_TIME_ZONE,
+    year: "numeric",
+    month: "short",
+    day: "numeric",
+    hour: "numeric",
+    minute: "2-digit",
+    second: "2-digit",
+    timeZoneName: "short",
+  }).format(date);
 }
 
 function resolveOpenClawStateDir(env: NodeJS.ProcessEnv = process.env): string {
@@ -274,6 +314,67 @@ function readChannelsConfig(cfg: OpenClawConfig, accountId: string): Record<stri
     ...account,
     channels: account.channels ?? slack.channels,
     requireMention: account.requireMention ?? slack.requireMention,
+  };
+}
+
+function resolveSlackAccountLabel(params: {
+  cfg: OpenClawConfig;
+  accountId: string;
+  explicit?: string;
+}): string {
+  const explicit = normalizeOptionalString(params.explicit);
+  if (explicit) {
+    return `${explicit} (${params.accountId})`;
+  }
+  const slack = readConfigRecord(
+    (params.cfg.channels as Record<string, unknown> | undefined)?.slack,
+  );
+  const accounts = readConfigRecord(slack.accounts);
+  const account = readConfigRecord(accounts[params.accountId]);
+  const label =
+    normalizeOptionalString(account.name) ??
+    normalizeOptionalString(account.teamName) ??
+    normalizeOptionalString(account.workspaceName) ??
+    normalizeOptionalString(slack.name) ??
+    normalizeOptionalString(slack.teamName) ??
+    normalizeOptionalString(slack.workspaceName);
+  return label ? `${label} (${params.accountId})` : params.accountId;
+}
+
+function resolveSlackChannelLabel(params: { channelId: string; explicitName?: string }): string {
+  const explicitName = normalizeOptionalString(params.explicitName)?.replace(/^#+/, "");
+  if (explicitName) {
+    return `#${explicitName} (${params.channelId})`;
+  }
+  if (params.channelId.startsWith("D")) {
+    return `DM ${params.channelId}`;
+  }
+  return `<#${params.channelId}> (${params.channelId})`;
+}
+
+function attachSlackWatchdogPresentation(params: {
+  report: WatchdogScanReport;
+  cfg: OpenClawConfig;
+  accountId: string;
+  channelId: string;
+  tenantLabel?: string;
+  channelName?: string;
+  windowStart: Date;
+  windowEnd: Date;
+}): void {
+  params.report.presentation = {
+    timeZone: SLACK_WATCHDOG_REPORT_TIME_ZONE,
+    tenant: resolveSlackAccountLabel({
+      cfg: params.cfg,
+      accountId: params.accountId,
+      explicit: params.tenantLabel,
+    }),
+    channel: resolveSlackChannelLabel({
+      channelId: params.channelId,
+      explicitName: params.channelName,
+    }),
+    windowStart: formatChicagoTime(params.windowStart),
+    windowEnd: formatChicagoTime(params.windowEnd),
   };
 }
 
@@ -492,10 +593,14 @@ function scanAdmissionGaps(params: {
 }
 
 function formatSlackWatchdogScanReport(report: WatchdogScanReport): string {
+  const presentation = report.presentation;
   const lines = [
     theme.heading("Slack Watchdog Scan"),
-    `Account: ${report.accountId}`,
-    `Channel: ${report.channel}`,
+    `Slack tenant: ${presentation?.tenant ?? report.accountId}`,
+    `Channel: ${presentation?.channel ?? report.channel}`,
+    presentation?.windowStart && presentation?.windowEnd
+      ? `Window: ${presentation.windowStart} to ${presentation.windowEnd} (${presentation.timeZone})`
+      : `Time zone: ${SLACK_WATCHDOG_REPORT_TIME_ZONE}`,
     `Scanned: ${report.scanned}`,
     `Counts: admitted=${report.counts.admitted} explicitly-ignored=${report.counts["explicitly-ignored"]} not-relevant=${report.counts["not-relevant"]} missing-admission=${report.counts["missing-admission"]}`,
   ];
@@ -511,7 +616,9 @@ function formatSlackWatchdogScanReport(report: WatchdogScanReport): string {
   }
   lines.push("Missing admissions:");
   for (const record of missing.slice(0, 20)) {
-    lines.push(`- ts=${record.ts ?? "<unknown>"} reason=${record.reason}`);
+    lines.push(
+      `- ${formatChicagoTime(slackTsToDate(record.ts))} - ts=${record.ts ?? "<unknown>"} - reason=${record.reason}`,
+    );
   }
   if (report.alert?.attempted) {
     lines.push(
@@ -562,15 +669,20 @@ function formatSlackWatchdogAlert(params: {
   report: WatchdogScanReport;
   missing: readonly WatchdogScanRecord[];
 }): string {
+  const presentation = params.report.presentation;
   const lines = [
     ":warning: OpenClaw Slack admission watchdog detected missed inbound messages",
-    `source_account=${params.report.accountId} channel=${params.report.channel}`,
+    `Slack tenant: ${presentation?.tenant ?? params.report.accountId}`,
+    `Channel: ${presentation?.channel ?? params.report.channel}`,
+    presentation?.windowStart && presentation?.windowEnd
+      ? `Window: ${presentation.windowStart} to ${presentation.windowEnd} (${presentation.timeZone})`
+      : `Time zone: ${SLACK_WATCHDOG_REPORT_TIME_ZONE}`,
     `scanned=${params.report.scanned} missing=${params.missing.length}`,
     "new_missing:",
   ];
   for (const record of params.missing.slice(0, 10)) {
     lines.push(
-      `- ts=${record.ts ?? "<unknown>"} thread=${record.threadTs ?? "<none>"} reason=${record.reason}`,
+      `- ${formatChicagoTime(slackTsToDate(record.ts))} - ts=${record.ts ?? "<unknown>"} - thread=${record.threadTs ?? "<none>"} - reason=${record.reason}`,
     );
   }
   if (params.missing.length > 10) {
@@ -685,7 +797,8 @@ export async function channelsSlackWatchdogScanCommand(
   const target = parseSlackWatchdogTarget(opts.target);
   const now = deps.now ?? new Date();
   const sinceMs = parseSlackWatchdogDurationMs(opts.since, 30 * 60_000);
-  const oldest = formatSlackEpochSeconds(new Date(now.getTime() - sinceMs));
+  const windowStart = new Date(now.getTime() - sinceMs);
+  const oldest = formatSlackEpochSeconds(windowStart);
   const limit = parsePositiveInteger(opts.limit, 50);
   const ledgerLimit = parsePositiveInteger(opts.ledgerLimit, 5_000);
   const timeoutMs = parsePositiveInteger(opts.timeout, 10_000);
@@ -730,6 +843,16 @@ export async function channelsSlackWatchdogScanCommand(
     channelRequiresMention: channelPolicy.requireMention,
     allowedUserIds:
       channelPolicy.allowed === false ? [] : normalizeAllowedUsers(channelPolicy.users),
+  });
+  attachSlackWatchdogPresentation({
+    report,
+    cfg,
+    accountId,
+    channelId: target.channelId,
+    tenantLabel: opts.tenantLabel,
+    channelName: opts.channelName,
+    windowStart,
+    windowEnd: now,
   });
   const alertTarget = normalizeOptionalString(opts.alertTarget);
   if (alertTarget && report.counts["missing-admission"] > 0) {

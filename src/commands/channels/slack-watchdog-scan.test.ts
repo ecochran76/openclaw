@@ -131,6 +131,45 @@ describe("channelsSlackWatchdogScanCommand", () => {
     expect(runtime.logs.join("\n")).toContain("1779309189.369149");
   });
 
+  it("formats human-readable tenant, channel, and Chicago-local times", async () => {
+    const runtime = createRuntime();
+
+    await channelsSlackWatchdogScanCommand(
+      {
+        account: "soylei",
+        tenantLabel: "SoyLei",
+        target: "channel:C0B0AK14B7X",
+        channelName: "ask-lei",
+        since: "30m",
+        botUser: "UOPENCLAW",
+      },
+      runtime,
+      {
+        cfg: { channels: { slack: {} } } as never,
+        now: new Date("2026-05-20T21:00:00.000Z"),
+        env: { OPENCLAW_STATE_DIR: await makeTempState() },
+        callGateway: vi.fn(async () => ({
+          payload: {
+            messages: [
+              {
+                channel: "C0B0AK14B7X",
+                ts: "1779309189.369149",
+                text: "<@UOPENCLAW> status?",
+                user: "U1",
+              },
+            ],
+          },
+        })),
+      },
+    );
+
+    const output = runtime.logs.join("\n");
+    expect(output).toContain("Slack tenant: SoyLei (soylei)");
+    expect(output).toContain("Channel: #ask-lei (C0B0AK14B7X)");
+    expect(output).toContain("America/Chicago");
+    expect(output).toContain("May 20, 2026, 3:33:09 PM CDT");
+  });
+
   it("marks matching ledger records as admitted", async () => {
     const stateDir = await makeTempState();
     await writeLedger(stateDir, "soylei", [
@@ -452,6 +491,10 @@ describe("channelsSlackWatchdogScanCommand", () => {
         }),
       }),
     );
+    const alertMessage = callGateway.mock.calls[1]?.[0]?.params?.params?.message;
+    expect(alertMessage).toContain("Slack tenant: soylei");
+    expect(alertMessage).toContain("Channel: <#C0B0AK14B7X> (C0B0AK14B7X)");
+    expect(alertMessage).toContain("CDT");
     const report = JSON.parse(runtime.logs[0] ?? "{}") as {
       alert?: { sent?: number; skippedKnown?: number };
     };
