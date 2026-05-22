@@ -129,6 +129,14 @@ describe("chat reauth provider resolution", () => {
     ).toBe("openai:dillan");
   });
 
+  it("maps provider/model refs to that provider's default auth profile", () => {
+    expect(
+      resolveRequestedChatReauthProfileId({
+        requestedProfileId: "xai/grok-4.3",
+      }),
+    ).toBe("xai:default");
+  });
+
   it("derives the provider from the normalized profile id first", () => {
     expect(
       resolveChatReauthProvider({

@@ -27,10 +27,27 @@ export function resolveRequestedChatReauthProfileId(params: {
   if (requested.includes(":")) {
     return requested;
   }
+  const modelRefProvider = resolveProviderFromModelRef(requested);
+  if (modelRefProvider) {
+    return normalizeRequestedProfileId(modelRefProvider, "default");
+  }
   const defaultProvider =
     resolveAuthProfileProviderId(params.sessionAuthProfileOverride) ||
     getDefaultChatReauthProvider();
   return defaultProvider ? normalizeRequestedProfileId(defaultProvider, requested) : undefined;
+}
+
+function resolveProviderFromModelRef(value: string): string | undefined {
+  const slash = value.indexOf("/");
+  if (slash <= 0) {
+    return undefined;
+  }
+  const provider = value.slice(0, slash).trim();
+  const model = value.slice(slash + 1).trim();
+  if (!provider || !model) {
+    return undefined;
+  }
+  return provider;
 }
 
 export function resolveChatReauthProvider(params: {

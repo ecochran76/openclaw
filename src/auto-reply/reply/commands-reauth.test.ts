@@ -948,6 +948,55 @@ describe("/reauth commands", () => {
     );
   });
 
+  it("routes provider/model reauth requests to that provider's default profile", async () => {
+    const createPendingAuthorization = vi.fn(() => ({
+      flow: "device_code",
+      deviceAuthId: "device-xai",
+      userCode: "GROK-123",
+      verificationUrl: "https://auth.x.ai/device",
+      intervalMs: 5_000,
+      createdAt: 1,
+      expiresAt: Date.now() + 60_000,
+    }));
+    hoisted.ensureAuthProfileStoreMock.mockReturnValue({
+      profiles: {
+        "xai:default": { provider: "xai", type: "oauth", access: "a" },
+      },
+    });
+    hoisted.getChatReauthCapabilityMock.mockImplementation((provider: string) =>
+      provider === "xai"
+        ? {
+            provider: "xai",
+            looksLikeCallbackInput: vi.fn(() => false),
+            createPendingAuthorization,
+            completePendingAuthorization: vi.fn(),
+            pollPendingAuthorization: vi.fn(),
+          }
+        : null,
+    );
+
+    const params = buildCommandTestParams("/reauth xai/grok-4.3", cfg);
+    params.agentDir = "/tmp/agent";
+    params.sessionEntry = { sessionId: "s1", updatedAt: 1 };
+    params.sessionStore = {};
+
+    const result = await handleReauthCommand(params, true);
+
+    expect(result?.reply?.text).toContain("Re-auth pending for xai:default");
+    expect(result?.reply?.text).toContain("https://auth.x.ai/device");
+    expect(result?.reply?.text).toContain("Code: GROK-123");
+    expect(hoisted.getChatReauthCapabilityMock).toHaveBeenCalledWith("xai");
+    expect(createPendingAuthorization).toHaveBeenCalledWith({
+      originator: "pi",
+      preferredFlow: undefined,
+    });
+    expect(params.sessionEntry.pendingOAuthReauth).toMatchObject({
+      provider: "xai",
+      profileId: "xai:default",
+      flow: "device_code",
+    });
+  });
+
   it("makes xAI models visible after Slack reauth setup", () => {
     const updated = applyPostReauthProviderConfig(
       {
