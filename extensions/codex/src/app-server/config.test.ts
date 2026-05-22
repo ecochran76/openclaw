@@ -2499,6 +2499,28 @@ allowed_sandbox_modes = ["read-only", "workspace-write"]
     );
   });
 
+  it("derives distinct shared-client keys for distinct auth account keys without exposing them", () => {
+    const startOptions = {
+      transport: "stdio" as const,
+      command: "codex",
+      args: ["app-server"],
+      headers: {},
+    };
+
+    const first = codexAppServerStartOptionsKey(startOptions, {
+      authProfileId: "openai-codex:work",
+      authAccountCacheKey: "account-123:token:first-secret",
+    });
+    const second = codexAppServerStartOptionsKey(startOptions, {
+      authProfileId: "openai-codex:work",
+      authAccountCacheKey: "account-123:token:second-secret",
+    });
+
+    expect(first).not.toEqual(second);
+    expect(first).not.toContain("first-secret");
+    expect(second).not.toContain("second-secret");
+  });
+
   it("keeps runtime config keys aligned with manifest schema and UI hints", async () => {
     const manifest = JSON.parse(
       await fs.readFile(new URL("../../openclaw.plugin.json", import.meta.url), "utf8"),

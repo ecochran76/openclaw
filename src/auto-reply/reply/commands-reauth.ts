@@ -17,6 +17,7 @@ import {
 import type { CommandHandler } from "./commands-types.js";
 import {
   getChatReauthCapability,
+  looksLikeChatReauthCallbackInput,
   resolveChatReauthProvider,
   resolveRequestedChatReauthProfileId,
 } from "./reauth-capabilities.js";
@@ -62,6 +63,7 @@ type PostReauthProbeResult = {
   model?: string;
   status?: string;
   error?: string;
+  storedCredentials?: boolean;
 };
 
 function resolveMessageBody(params: Parameters<CommandHandler>[0]): string {
@@ -414,10 +416,15 @@ function formatPostReauthProbeFailure(probe: PostReauthProbeResult): string {
   ]
     .filter(Boolean)
     .join("; ");
+  const headline = probe.storedCredentials
+    ? `⚠️ Stored re-auth credentials are present for ${probe.profileId}, but the live model probe did not pass.`
+    : `⚠️ Re-auth credentials were updated for ${probe.profileId}, but the live model probe did not pass.`;
   return [
-    `⚠️ Re-auth credentials were updated for ${probe.profileId}, but the live model probe did not pass.`,
+    headline,
     detail ? `Probe: ${detail}` : undefined,
-    "The profile is not verified usable yet.",
+    probe.storedCredentials
+      ? `The profile is not verified usable yet. Reply /reauth --oauth ${probe.profileId} to replace the stored credentials, or /reauth cancel to clear this pending flow.`
+      : "The profile is not verified usable yet.",
   ]
     .filter(Boolean)
     .join("\n");
@@ -477,14 +484,18 @@ async function completeDeviceCodeReauthFromStoredCredentials(params: {
   if (!hasUsableStoredOAuthCredentials(params)) {
     return null;
   }
+  const probe = await probeReauthenticatedProfile({
+    commandParams: params.commandParams,
+    provider: params.pending.provider,
+    profileId: params.pending.profileId,
+  });
+  if (!probe.ok) {
+    return { ...probe, storedCredentials: true };
+  }
   stopDeviceCodeReauthWatcher(params.commandParams, params.pending);
   clearPendingReauth(params.commandParams);
   await persistSessionEntry(params.commandParams);
-  return {
-    ok: true,
-    profileId: params.pending.profileId,
-    status: "already_ok",
-  };
+  return { ...probe, status: "already_ok", storedCredentials: true };
 }
 
 async function replaceDeviceCodePendingWithCallback(params: {
@@ -713,7 +724,9 @@ function startDeviceCodeReauthWatcher(params: {
         });
         if (alreadyCompleted) {
           await params.commandParams.opts?.onBlockReply?.({
-            text: formatPostReauthProbeSuccess(alreadyCompleted),
+            text: alreadyCompleted.ok
+              ? formatPostReauthProbeSuccess(alreadyCompleted)
+              : formatPostReauthProbeFailure(alreadyCompleted),
           });
           return;
         }
@@ -754,7 +767,21 @@ function startDeviceCodeReauthWatcher(params: {
 
 export const handlePendingReauthInput: CommandHandler = async (params) => {
   const rawBody = resolveMessageBody(params);
-  return await completePendingReauthCallback(params, rawBody, { requireCallbackLikeInput: true });
+  const result = await completePendingReauthCallback(params, rawBody, {
+    requireCallbackLikeInput: true,
+  });
+  if (result) {
+    return result;
+  }
+  if (!looksLikeChatReauthCallbackInput(rawBody)) {
+    return null;
+  }
+  return {
+    shouldContinue: false,
+    reply: {
+      text: "⚠️ No matching pending re-auth flow was found for that callback. Reply /reauth status or start a new flow with /reauth --oauth <profile-id>.",
+    },
+  };
 };
 
 async function completePendingReauthCallback(
@@ -917,7 +944,11 @@ export const handleReauthCommand: CommandHandler = async (params, allowTextComma
             if (alreadyCompleted) {
               return {
                 shouldContinue: false,
-                reply: { text: formatPostReauthProbeSuccess(alreadyCompleted) },
+                reply: {
+                  text: alreadyCompleted.ok
+                    ? formatPostReauthProbeSuccess(alreadyCompleted)
+                    : formatPostReauthProbeFailure(alreadyCompleted),
+                },
               };
             }
             try {

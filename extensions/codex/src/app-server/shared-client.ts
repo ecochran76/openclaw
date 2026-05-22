@@ -7,6 +7,7 @@ import {
   applyCodexAppServerAuthProfile,
   bridgeCodexAppServerStartOptions,
   refreshCodexAppServerAuthTokens,
+  resolveCodexAppServerAuthAccountCacheKey,
   resolveCodexAppServerAuthProfileIdForAgent,
   resolveCodexAppServerAuthProfileStore,
   resolveCodexAppServerFallbackApiKeyCacheKey,
@@ -26,6 +27,7 @@ type SharedCodexAppServerClientEntry = {
   activeLeases: number;
   pendingAcquires: number;
   closeWhenIdle: boolean;
+  authScopeKey?: string;
 };
 
 type SharedCodexAppServerClientState = {
@@ -217,13 +219,29 @@ async function acquireSharedCodexAppServerClient(
   const fallbackApiKeyCacheKey = authProfileId
     ? undefined
     : resolveCodexAppServerFallbackApiKeyCacheKey({ startOptions });
+  const authAccountCacheKey = usesNativeAuth
+    ? undefined
+      : await resolveCodexAppServerAuthAccountCacheKey({
+          authProfileId,
+          agentDir,
+          config: options?.config,
+        });
   const key = codexAppServerStartOptionsKey(startOptions, {
     authProfileId,
+    authAccountCacheKey,
     agentDir: usesNativeAuth ? undefined : agentDir,
     fallbackApiKeyCacheKey,
   });
+  const authScopeKey =
+    authAccountCacheKey === undefined
+      ? undefined
+      : codexAppServerStartOptionsKey(startOptions, {
+          authProfileId,
+          agentDir: usesNativeAuth ? undefined : agentDir,
+          fallbackApiKeyCacheKey,
+        });
   const state = getSharedCodexAppServerClientState();
-  const entry = getOrCreateSharedClientEntry(state, key);
+  const entry = getOrCreateSharedClientEntry(state, key, { authScopeKey });
   const releasePendingAcquire = retainPendingSharedClientAcquire(entry);
   let cleanupAbandonSignal: (() => void) | undefined;
   if (options?.abandonSignal) {
@@ -524,13 +542,32 @@ export async function clearSharedCodexAppServerClientAndWait(options?: {
 function getOrCreateSharedClientEntry(
   state: SharedCodexAppServerClientState,
   key: string,
+  metadata?: { authScopeKey?: string },
 ): SharedCodexAppServerClientEntry {
   let entry = state.clients.get(key);
   if (!entry) {
+    clearSupersededSharedClientEntriesForAuthScope(state, key, metadata?.authScopeKey);
     entry = { activeLeases: 0, pendingAcquires: 0, closeWhenIdle: false };
     state.clients.set(key, entry);
   }
+  entry.authScopeKey = metadata?.authScopeKey;
   return entry;
+}
+
+function clearSupersededSharedClientEntriesForAuthScope(
+  state: SharedCodexAppServerClientState,
+  key: string,
+  authScopeKey: string | undefined,
+): void {
+  if (!authScopeKey) {
+    return;
+  }
+  for (const [existingKey, existingEntry] of state.clients) {
+    if (existingKey !== key && existingEntry.authScopeKey === authScopeKey) {
+      state.clients.delete(existingKey);
+      existingEntry.client?.close();
+    }
+  }
 }
 
 function clearSharedClientEntry(key: string, entry: SharedCodexAppServerClientEntry): void {

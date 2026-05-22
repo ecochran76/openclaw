@@ -1575,6 +1575,10 @@ describe("classifyProviderRuntimeFailureKind", () => {
   });
 
   it("classifies OAuth refresh timeouts and lock contention distinctly", () => {
+    expect(classifyFailoverReason("auth refresh request timed out after 10s")).toBe("auth");
+    expect(classifyProviderRuntimeFailureKind("auth refresh request timed out after 10s")).toBe(
+      "refresh_timeout",
+    );
     expect(
       classifyProviderRuntimeFailureKind(
         'OAuth refresh call "refreshProviderOAuthCredentialWithPlugin(openai)" exceeded hard timeout (120000ms)',

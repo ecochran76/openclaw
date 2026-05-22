@@ -102,13 +102,13 @@ describe("delivery-observer", () => {
       await vi.advanceTimersByTimeAsync(100_000);
       const stalledTexts = sendWatcherPayload.mock.calls
         .map((call) => (call[0] as ReplyPayload | undefined)?.text ?? "")
-        .filter((text) => text.includes("status: turn appears stalled"));
+        .filter((text) => text.includes("working: still waiting for agent progress"));
       expect(stalledTexts).toHaveLength(1);
 
       await vi.advanceTimersByTimeAsync(180_000);
       const laterStalledTexts = sendWatcherPayload.mock.calls
         .map((call) => (call[0] as ReplyPayload | undefined)?.text ?? "")
-        .filter((text) => text.includes("status: turn appears stalled"));
+        .filter((text) => text.includes("working: still waiting for agent progress"));
       expect(laterStalledTexts).toHaveLength(1);
 
       observer.finishRun({ status: "done", phase: "done" });
@@ -149,7 +149,7 @@ describe("delivery-observer", () => {
         (call) => (call[0] as ReplyPayload | undefined)?.text ?? "",
       );
       expect(texts).toContain("working: tool still running (exec)");
-      expect(texts.some((text) => text.includes("status: turn appears stalled"))).toBe(false);
+      expect(texts.some((text) => text.includes("still waiting for agent progress"))).toBe(false);
 
       observer.finishRun({ status: "done", phase: "done" });
     } finally {
@@ -179,7 +179,7 @@ describe("delivery-observer", () => {
       expect(
         sendWatcherPayload.mock.calls
           .map((call) => (call[0] as ReplyPayload | undefined)?.text ?? "")
-          .filter((text) => text.includes("status: turn appears stalled")),
+          .filter((text) => text.includes("working: still waiting for agent progress")),
       ).toHaveLength(1);
       expect(getActiveTrackedTurn(sessionKey)?.phase).toBe("stalled");
 
@@ -189,7 +189,7 @@ describe("delivery-observer", () => {
       expect(
         sendWatcherPayload.mock.calls
           .map((call) => (call[0] as ReplyPayload | undefined)?.text ?? "")
-          .filter((text) => text.includes("status: turn appears stalled")),
+          .filter((text) => text.includes("working: still waiting for agent progress")),
       ).toHaveLength(1);
 
       observer.finishRun({ status: "done", phase: "done" });

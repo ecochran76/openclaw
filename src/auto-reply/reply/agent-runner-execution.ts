@@ -509,6 +509,26 @@ function buildDirectAuthFailureMessage(params: {
   return `🔐 Auth failed for ${profileId || selected}. ${recoveryHint}`;
 }
 
+function buildRuntimeAuthRefreshTimeoutFailureMessage(params: {
+  message: string;
+  provider: string;
+  model: string;
+  authProfileId?: string;
+}): string | undefined {
+  if (!/\bauth refresh request timed out\b/i.test(params.message)) {
+    return undefined;
+  }
+  const profileId = params.authProfileId?.trim();
+  const selected = `${params.provider}/${params.model}`;
+  const recoveryHint = formatAuthRecoveryHint({
+    provider: params.provider,
+    authProfileId: profileId,
+    allowChatReauth: true,
+    includeCliAlternative: true,
+  });
+  return `🔐 Model login refresh timed out for ${profileId || selected}. ${recoveryHint}`;
+}
+
 function isToolResultTurnMismatchError(message: string): boolean {
   const lower = normalizeLowercaseStringOrEmpty(message);
   return (
@@ -2557,6 +2577,12 @@ export async function runAgentTurnWithFallback(params: {
       });
       const directAuthFailureText =
         authFailureSummaryText ??
+        buildRuntimeAuthRefreshTimeoutFailureMessage({
+          message,
+          provider: params.followupRun.run.provider,
+          model: params.followupRun.run.model,
+          authProfileId: params.followupRun.run.authProfileId,
+        }) ??
         buildDirectAuthFailureMessage({
           message,
           provider: params.followupRun.run.provider,

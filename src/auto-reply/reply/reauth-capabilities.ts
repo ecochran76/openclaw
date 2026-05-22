@@ -70,3 +70,13 @@ export function getChatReauthCapability(provider: string): ChatReauthCapability 
   }
   return CHAT_REAUTH_CAPABILITIES.find((capability) => capability.provider === normalized) ?? null;
 }
+
+export function looksLikeChatReauthCallbackInput(input: string): boolean {
+  const candidate = input.trim();
+  if (!candidate) {
+    return false;
+  }
+  return CHAT_REAUTH_CAPABILITIES.some((capability) =>
+    capability.looksLikeCallbackInput(candidate),
+  );
+}

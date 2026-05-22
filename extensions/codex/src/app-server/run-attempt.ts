@@ -907,8 +907,8 @@ export async function runCodexAppServerAttempt(
     config: params.config,
   });
   const startupAuthProfileCandidate =
-    params.runtimePlan?.auth.forwardedAuthProfileId ??
     params.authProfileId ??
+    params.runtimePlan?.auth.forwardedAuthProfileId ??
     startupBinding?.authProfileId ??
     startupBindingAuthProfileId;
   const startupAuthProfileId = params.authProfileStore
@@ -3025,7 +3025,7 @@ export async function runCodexAppServerAttempt(
         ? turnCompletionIdleTimeoutMessage
         : timedOut
           ? "codex app-server attempt timed out"
-          : (result.promptError ?? terminalErrorPrompt));
+          : (result.promptError ?? terminalErrorPrompt ?? null));
     const finalPromptErrorMessage =
       typeof finalPromptError === "string"
         ? finalPromptError

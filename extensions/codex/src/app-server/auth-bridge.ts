@@ -50,6 +50,7 @@ const CODEX_APP_SERVER_HOME_ENV_VARS = [CODEX_HOME_ENV_VAR, HOME_ENV_VAR];
 const CODEX_AUTH_JSON_FILENAME = "auth.json";
 const CODEX_HOME_DIRNAME = ".codex";
 const CODEX_CLI_FALLBACK_EXPIRY_MS = 60 * 60 * 1000;
+const CODEX_APP_SERVER_OAUTH_REFRESH_SKEW_MS = 5 * 60_000;
 
 type AuthProfileOrderConfig = Parameters<typeof resolveAuthProfileOrder>[0]["cfg"];
 const scopedOAuthRefreshQueues = new WeakMap<
@@ -271,7 +272,18 @@ export async function resolveCodexAppServerAuthAccountCacheKey(params: {
       profileId,
       agentDir,
     });
-    const accessToken = resolved?.apiKey?.trim();
+    const accessToken = normalizeCodexAccessToken(resolved?.apiKey).token;
+    return accessToken
+      ? `${resolveChatgptAccountId(profileId, credential)}:${fingerprintTokenAuthProfileCacheKey(accessToken)}`
+      : resolveChatgptAccountId(profileId, credential);
+  }
+  if (credential.type === "oauth") {
+    const resolved = await resolveApiKeyForProfile({
+      store,
+      profileId,
+      agentDir,
+    });
+    const accessToken = normalizeCodexAccessToken(resolved?.apiKey).token;
     return accessToken
       ? `${resolveChatgptAccountId(profileId, credential)}:${fingerprintTokenAuthProfileCacheKey(accessToken)}`
       : resolveChatgptAccountId(profileId, credential);
@@ -634,9 +646,13 @@ function resolveCodexCliAuthFileOAuthCacheKey(env: NodeJS.ProcessEnv): string | 
     const credential = parseCodexCliAuthFileOAuthCredential(
       fsSync.readFileSync(resolveCodexCliAuthFilePath(env), "utf8"),
     );
-    return credential
-      ? resolveChatgptAccountId(OPENAI_CODEX_DEFAULT_PROFILE_ID, credential)
-      : undefined;
+    if (!credential) {
+      return undefined;
+    }
+    const accountId = resolveChatgptAccountId(OPENAI_CODEX_DEFAULT_PROFILE_ID, credential);
+    return credential.access?.trim()
+      ? `${accountId}:${fingerprintTokenAuthProfileCacheKey(credential.access)}`
+      : accountId;
   } catch {
     return undefined;
   }
@@ -743,6 +759,15 @@ async function resolveOAuthCredentialForCodexAppServer(
     isCodexAppServerAuthProvider(ownerCredential.provider, params.config)
       ? ownerCredential
       : undefined;
+  if (params.forceRefresh) {
+    const currentCredential = persistedOAuthCredential ?? overlaidOAuthCredential;
+    if (isUsableCodexOAuthAccessCredential(currentCredential)) {
+      // The Codex app-server may ask for a refresh after losing its local copy.
+      // Avoid rotating a still-valid OpenClaw refresh token just to hand back
+      // credentials that are already usable.
+      return currentCredential;
+    }
+  }
   if (useScopedCredential && overlaidOAuthCredential) {
     return await resolveScopedOAuthCredential({
       store,
@@ -875,6 +900,22 @@ async function resolveScopedOAuthCredential(params: {
       storeRefreshes.delete(params.profileId);
     }
   }
+}
+
+function isUsableCodexOAuthAccessCredential(
+  credential: OAuthCredential | undefined,
+  nowMs = Date.now(),
+): credential is OAuthCredential {
+  const access = credential?.access?.trim();
+  if (!access) {
+    return false;
+  }
+  const expires = credential?.expires;
+  return (
+    typeof expires === "number" &&
+    Number.isFinite(expires) &&
+    expires > nowMs + CODEX_APP_SERVER_OAUTH_REFRESH_SKEW_MS
+  );
 }
 
 function isCodexAppServerAuthProvider(provider: string, config?: AuthProfileOrderConfig): boolean {

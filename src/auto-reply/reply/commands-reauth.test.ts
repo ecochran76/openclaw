@@ -301,7 +301,10 @@ describe("/reauth commands", () => {
     });
 
     const params = buildCommandTestParams("/reauth status", cfg);
+    params.provider = "openai-codex";
+    params.model = "gpt-5.5";
     params.agentDir = "/tmp/agent";
+    params.agentId = "main";
     params.sessionEntry = {
       sessionId: "s1",
       updatedAt: 1,
@@ -319,14 +322,28 @@ describe("/reauth commands", () => {
       },
     };
     params.sessionStore = {};
+    hoisted.runAuthProbesMock.mockResolvedValue({
+      results: [
+        {
+          provider: "openai-codex",
+          model: "openai-codex/gpt-5.5",
+          profileId: "openai-codex:soylei",
+          status: "auth",
+          error: "401 status code",
+        },
+      ],
+    });
 
     const result = await handleReauthCommand(params, true);
 
     expect(createPendingAuthorization).not.toHaveBeenCalled();
-    expect(result?.reply?.text).toBe(
-      "🔐 Re-auth already complete for openai-codex:soylei. Stored credentials are usable; cleared the stale pending login-code request.",
+    expect(result?.reply?.text).toContain(
+      "Stored re-auth credentials are present for openai-codex:soylei",
     );
-    expect(params.sessionEntry.pendingOAuthReauth).toBeUndefined();
+    expect(result?.reply?.text).toContain("live model probe did not pass");
+    expect(result?.reply?.text).toContain("/reauth --oauth openai-codex:soylei");
+    expect(result?.reply?.text).not.toContain("Stored credentials are usable");
+    expect(params.sessionEntry.pendingOAuthReauth).toBeDefined();
   });
 
   it("falls back to callback OAuth when device-code status hits token exchange user error", async () => {
@@ -897,6 +914,21 @@ describe("/reauth commands", () => {
     params.sessionStore = {};
 
     const result = await handleReauthCommand(params, true);
+
+    expect(result?.shouldContinue).toBe(false);
+    expect(result?.reply?.text).toContain("No matching pending re-auth flow");
+  });
+
+  it("does not route an unmatched bare callback to the agent", async () => {
+    const params = buildCommandTestParams(
+      "http://localhost:1455/auth/callback?code=test&state=missing",
+      cfg,
+    );
+    params.agentDir = "/tmp/agent";
+    params.sessionEntry = { sessionId: "message-session", updatedAt: 1 };
+    params.sessionStore = {};
+
+    const result = await handlePendingReauthInput(params, true);
 
     expect(result?.shouldContinue).toBe(false);
     expect(result?.reply?.text).toContain("No matching pending re-auth flow");

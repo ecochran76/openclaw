@@ -333,6 +333,42 @@ describe("handleInlineActions", () => {
     expect(mockObjectArg(handleCommandsMock, "handleCommands").agentDir).toBe(agentDir);
   });
 
+  it("runs command handlers for bare OAuth callback input", async () => {
+    const typing = createTypingController();
+    handleCommandsMock.mockResolvedValue({
+      shouldContinue: false,
+      reply: { text: "callback handled" },
+    });
+
+    const callbackInput = "http://localhost:1455/auth/callback?code=test&state=state-1";
+    const ctx = buildTestCtx({
+      Body: callbackInput,
+      CommandBody: callbackInput,
+    });
+
+    const result = await handleInlineActions(
+      createHandleInlineActionsInput({
+        ctx,
+        typing,
+        cleanedBody: callbackInput,
+        command: {
+          isAuthorizedSender: true,
+          rawBodyNormalized: callbackInput,
+          commandBodyNormalized: callbackInput,
+        },
+        overrides: {
+          cfg: { commands: { text: true } },
+        },
+      }),
+    );
+
+    expect(result).toEqual({ kind: "reply", reply: { text: "callback handled" } });
+    expect(handleCommandsMock).toHaveBeenCalledTimes(1);
+    expect(mockObjectArg(handleCommandsMock, "handleCommands").command.commandBodyNormalized).toBe(
+      callbackInput,
+    );
+  });
+
   it("prefers the target session entry when routing inline commands into handleCommands", async () => {
     const typing = createTypingController();
 

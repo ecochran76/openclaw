@@ -77,9 +77,6 @@ export function describeEmbeddedAgentStreamStrategy(params: {
   model: EmbeddedRunAttemptParams["model"];
   resolvedApiKey?: string;
 }): string {
-  if (params.providerStreamFn) {
-    return "provider";
-  }
   if (params.shouldUseWebSocketTransport) {
     return "session-http-fallback";
   }
@@ -94,6 +91,14 @@ export function describeEmbeddedAgentStreamStrategy(params: {
   ) {
     return "openclaw-native-codex-responses";
   }
+  if (shouldPreferBoundaryAwareStreamOverSessionCustom(params.model)) {
+    return createBoundaryAwareStreamFnForModel(params.model)
+      ? `boundary-aware:${params.model.api}`
+      : "session-custom";
+  }
+  if (params.providerStreamFn) {
+    return "provider";
+  }
   if (isDefaultOpenClawStreamFnForModel(params.model, params.currentStreamFn)) {
     return createBoundaryAwareStreamFnForModel(params.model)
       ? `boundary-aware:${params.model.api}`
@@ -106,6 +111,16 @@ export function describeEmbeddedAgentStreamStrategy(params: {
     return `boundary-aware:${params.model.api}`;
   }
   return "session-custom";
+}
+
+function shouldPreferBoundaryAwareStreamOverSessionCustom(
+  model: EmbeddedRunAttemptParams["model"],
+): boolean {
+  return (
+    model.provider === "openai-codex" ||
+    model.api === "openai-codex-responses" ||
+    model.api === "openai-chatgpt-responses"
+  );
 }
 
 export async function resolveEmbeddedAgentApiKey(params: {
@@ -133,24 +148,6 @@ export function resolveEmbeddedAgentStreamFn(params: {
   authProfileId?: string;
   authStorage?: { getApiKey(provider: string): Promise<string | undefined> };
 }): StreamFn {
-  if (params.providerStreamFn) {
-    return wrapEmbeddedAgentStreamFn(params.providerStreamFn, {
-      runSignal: params.signal,
-      resolvedApiKey: params.resolvedApiKey,
-      authProfileId: params.authProfileId,
-      authStorage: params.authStorage,
-      providerId: params.model.provider,
-      promptCacheKey: params.promptCacheKey,
-      transformContext: (context) =>
-        context.systemPrompt
-          ? {
-              ...context,
-              systemPrompt: stripSystemPromptCacheBoundary(context.systemPrompt),
-            }
-          : context,
-    });
-  }
-
   const currentStreamFn = params.currentStreamFn ?? streamSimple;
   if (params.shouldUseWebSocketTransport) {
     return currentStreamFn;
@@ -172,6 +169,46 @@ export function resolveEmbeddedAgentStreamFn(params: {
       authStorage: params.authStorage,
       providerId: params.model.provider,
       sessionId: params.sessionId,
+      promptCacheKey: params.promptCacheKey,
+      transformContext: (context) =>
+        context.systemPrompt
+          ? {
+              ...context,
+              systemPrompt: stripSystemPromptCacheBoundary(context.systemPrompt),
+            }
+          : context,
+    });
+  }
+
+  if (shouldPreferBoundaryAwareStreamOverSessionCustom(params.model)) {
+    const boundaryAwareStreamFn = createBoundaryAwareStreamFnForModel(params.model);
+    if (boundaryAwareStreamFn) {
+      return wrapEmbeddedAgentStreamFn(boundaryAwareStreamFn, {
+        runSignal: params.signal,
+        resolvedApiKey: params.resolvedApiKey,
+        authProfileId: params.authProfileId,
+        authStorage: params.authStorage,
+        providerId: params.model.provider,
+        sessionId: params.sessionId,
+        promptCacheKey: params.promptCacheKey,
+        transformContext: (context) =>
+          context.systemPrompt
+            ? {
+                ...context,
+                systemPrompt: stripSystemPromptCacheBoundary(context.systemPrompt),
+              }
+            : context,
+      });
+    }
+  }
+
+  if (params.providerStreamFn) {
+    return wrapEmbeddedAgentStreamFn(params.providerStreamFn, {
+      runSignal: params.signal,
+      resolvedApiKey: params.resolvedApiKey,
+      authProfileId: params.authProfileId,
+      authStorage: params.authStorage,
+      providerId: params.model.provider,
       promptCacheKey: params.promptCacheKey,
       transformContext: (context) =>
         context.systemPrompt

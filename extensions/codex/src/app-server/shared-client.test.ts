@@ -10,6 +10,7 @@ const mocks = vi.hoisted(() => ({
   applyCodexAppServerAuthProfile: vi.fn(
     async (_params?: { agentDir?: string; authProfileId?: string; config?: unknown }) => undefined,
   ),
+  resolveCodexAppServerAuthAccountCacheKey: vi.fn(async () => undefined as string | undefined),
   resolveCodexAppServerAuthProfileIdForAgent: vi.fn(
     (params?: { authProfileId?: string }) => params?.authProfileId,
   ),
@@ -30,6 +31,7 @@ const mocks = vi.hoisted(() => ({
 vi.mock("./auth-bridge.js", () => ({
   applyCodexAppServerAuthProfile: mocks.applyCodexAppServerAuthProfile,
   bridgeCodexAppServerStartOptions: mocks.bridgeCodexAppServerStartOptions,
+  resolveCodexAppServerAuthAccountCacheKey: mocks.resolveCodexAppServerAuthAccountCacheKey,
   resolveCodexAppServerAuthProfileIdForAgent: mocks.resolveCodexAppServerAuthProfileIdForAgent,
   resolveCodexAppServerAuthProfileStore: mocks.resolveCodexAppServerAuthProfileStore,
   refreshCodexAppServerAuthTokens: mocks.refreshCodexAppServerAuthTokens,
@@ -151,6 +153,8 @@ describe("shared Codex app-server client", () => {
     vi.useRealTimers();
     mocks.bridgeCodexAppServerStartOptions.mockClear();
     mocks.applyCodexAppServerAuthProfile.mockClear();
+    mocks.resolveCodexAppServerAuthAccountCacheKey.mockReset();
+    mocks.resolveCodexAppServerAuthAccountCacheKey.mockImplementation(async () => undefined);
     mocks.resolveCodexAppServerAuthProfileIdForAgent.mockClear();
     mocks.resolveCodexAppServerAuthProfileIdForAgent.mockImplementation(
       (params?: { authProfileId?: string }) => params?.authProfileId,
@@ -644,6 +648,37 @@ describe("shared Codex app-server client", () => {
     expect(startSpy).toHaveBeenCalledTimes(2);
     expect(first.process.stdin.destroyed).toBe(false);
     expect(second.process.stdin.destroyed).toBe(false);
+  });
+
+  it("restarts the shared client when the auth account cache key changes", async () => {
+    const first = createClientHarness();
+    const second = createClientHarness();
+    const startSpy = vi
+      .spyOn(CodexAppServerClient, "start")
+      .mockReturnValueOnce(first.client)
+      .mockReturnValueOnce(second.client);
+    mocks.resolveCodexAppServerAuthAccountCacheKey
+      .mockResolvedValueOnce("account-123:token:first")
+      .mockResolvedValueOnce("account-123:token:second");
+
+    const firstList = listCodexAppServerModels({
+      timeoutMs: 1000,
+      authProfileId: "openai-codex:work",
+    });
+    await sendInitializeResult(first, "openclaw/0.125.0 (macOS; test)");
+    await sendEmptyModelList(first);
+    await expect(firstList).resolves.toEqual({ models: [] });
+
+    const secondList = listCodexAppServerModels({
+      timeoutMs: 1000,
+      authProfileId: "openai-codex:work",
+    });
+    await sendInitializeResult(second, "openclaw/0.125.0 (macOS; test)");
+    await sendEmptyModelList(second);
+    await expect(secondList).resolves.toEqual({ models: [] });
+
+    expect(startSpy).toHaveBeenCalledTimes(2);
+    expect(first.process.stdin.destroyed).toBe(true);
   });
 
   it("does not let one shared-client failure tear down another keyed client", async () => {

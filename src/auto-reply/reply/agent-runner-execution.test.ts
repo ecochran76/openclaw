@@ -4085,6 +4085,33 @@ describe("runAgentTurnWithFallback", () => {
     expect(result.payload.text).not.toContain("req_secret");
   });
 
+  it("surfaces runtime auth refresh timeouts with chat reauth guidance in channel sessions", async () => {
+    state.runEmbeddedPiAgentMock.mockRejectedValueOnce(
+      new Error("auth refresh request timed out after 10s"),
+    );
+
+    const runAgentTurnWithFallback = await getRunAgentTurnWithFallback();
+    const followupRun = createFollowupRun();
+    followupRun.run.provider = "openai-codex";
+    followupRun.run.model = "gpt-5.5";
+    followupRun.run.authProfileId = "openai-codex:soylei";
+    const result = await runAgentTurnWithFallback({
+      ...createMinimalRunAgentTurnParams({ followupRun }),
+      sessionCtx: {
+        Provider: "slack",
+        ChatType: "channel",
+        MessageSid: "msg",
+      } as unknown as TemplateContext,
+    });
+
+    expect(result.kind).toBe("final");
+    if (result.kind !== "final") {
+      throw new Error("expected final reply");
+    }
+    expect(result.payload.text).toContain("Model login refresh timed out for openai-codex:soylei");
+    expect(result.payload.text).toContain("/reauth --device-code openai-codex:soylei");
+  });
+
   it.each([
     {
       rejection: new Error("CLI exceeded timeout (300s) and was terminated."),

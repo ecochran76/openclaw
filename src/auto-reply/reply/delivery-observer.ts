@@ -256,7 +256,7 @@ export function createDeliveryObserver(params: {
               }
               await params.onSendWatcherPayload(
                 {
-                  text: `status: turn appears stalled${active.activeTool ? ` (${active.activeTool})` : ""}`,
+                  text: `working: still waiting for agent progress${active.activeTool ? ` (${active.activeTool})` : ""}`,
                 },
                 "dispatcher rejected stalled notice",
               );

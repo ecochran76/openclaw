@@ -635,8 +635,15 @@ function isTimeoutTransportErrorMessage(raw: string, status?: number): boolean {
   return false;
 }
 
+function isAuthRefreshRequestTimeoutMessage(raw: string): boolean {
+  return /\bauth refresh request timed out\b/i.test(raw);
+}
+
 function isOAuthRefreshTimeoutMessage(raw: string): boolean {
-  return /\boauth refresh call\b.*\bexceeded hard timeout\b/i.test(raw);
+  return (
+    isAuthRefreshRequestTimeoutMessage(raw) ||
+    /\boauth refresh call\b.*\bexceeded hard timeout\b/i.test(raw)
+  );
 }
 
 function isOAuthRefreshContentionMessage(raw: string): boolean {
@@ -1038,6 +1045,9 @@ function classifyFailoverClassificationFromMessage(
   }
   if (isContextOverflowError(raw)) {
     return { kind: "context_overflow" };
+  }
+  if (isAuthRefreshRequestTimeoutMessage(raw)) {
+    return toReasonClassification("auth");
   }
   const reasonFrom402Text = classifyFailoverReasonFrom402Text(raw);
   if (reasonFrom402Text) {

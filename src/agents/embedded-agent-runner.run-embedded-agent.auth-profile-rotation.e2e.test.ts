@@ -1589,4 +1589,31 @@ describe("runEmbeddedAgent auth profile rotation", () => {
       expect(usageStats["openai:p2"]?.cooldownUntil).toBe(p2CooldownUntil);
     });
   });
+
+  it("rotates auto profiles after auth refresh request timeouts", async () => {
+    await withAgentWorkspace(async ({ agentDir, workspaceDir }) => {
+      await writeAuthStore(agentDir);
+      mockPromptErrorThenSuccessfulAttempt("auth refresh request timed out after 10s");
+
+      await runAutoPinnedOpenAiTurn({
+        agentDir,
+        workspaceDir,
+        sessionKey: "agent:test:auth-refresh-timeout-rotate",
+        runId: "run:auth-refresh-timeout-rotate",
+      });
+
+      expect(runEmbeddedAttemptMock).toHaveBeenCalledTimes(2);
+      expect(runEmbeddedAttemptMock.mock.calls.at(0)?.[0]).toMatchObject({
+        authProfileId: "openai:p1",
+        authProfileIdSource: "auto",
+      });
+      expect(runEmbeddedAttemptMock.mock.calls.at(1)?.[0]).toMatchObject({
+        authProfileId: "openai:p2",
+        authProfileIdSource: "auto",
+      });
+      const usageStats = await readUsageStats(agentDir);
+      expect(usageStats["openai:p1"]?.failureCounts?.auth).toBe(1);
+      expect(typeof usageStats["openai:p2"]?.lastUsed).toBe("number");
+    });
+  });
 });

@@ -31,6 +31,7 @@ vi.mock("../../plugins/provider-xai-oauth.js", () => ({
 const {
   getChatReauthCapability,
   getDefaultChatReauthProvider,
+  looksLikeChatReauthCallbackInput,
   resolveChatReauthProvider,
   resolveRequestedChatReauthProfileId,
 } = await import("./reauth-capabilities.js");
@@ -104,6 +105,17 @@ describe("getChatReauthCapability", () => {
       flow: "device_code",
       userCode: "CODE-123",
     });
+  });
+
+  it("recognizes callback-looking input across chat reauth capabilities", () => {
+    hoisted.looksLikeCallbackInputMock.mockImplementation((input: string) =>
+      input.includes("/auth/callback?code="),
+    );
+
+    expect(
+      looksLikeChatReauthCallbackInput("http://localhost:1455/auth/callback?code=test&state=s"),
+    ).toBe(true);
+    expect(looksLikeChatReauthCallbackInput("status?")).toBe(false);
   });
 });
 

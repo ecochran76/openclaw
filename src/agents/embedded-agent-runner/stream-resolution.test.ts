@@ -471,6 +471,31 @@ describe("resolveEmbeddedAgentStreamFn", () => {
     expect(nativeStreamFn).toHaveBeenCalledTimes(1);
   });
 
+  it("keeps Codex Responses on the boundary-aware stream instead of provider-owned wrappers", async () => {
+    const nativeStreamFn = vi.fn(async (_model, _context, options) => options);
+    const providerStreamFn = vi.fn(async (_model, _context, options) => options);
+    testing.setOpenClawNativeCodexResponsesStreamFnForTest(nativeStreamFn as never);
+    const streamFn = resolveEmbeddedAgentStreamFn({
+      currentStreamFn: undefined,
+      providerStreamFn,
+      sessionId: "session-1",
+      model: {
+        api: "openai-chatgpt-responses",
+        provider: "openai",
+        id: "gpt-5.5",
+      } as never,
+      resolvedApiKey: "oauth-bearer-token",
+    });
+
+    const result = await expectStreamResultRecord(
+      streamFn({ provider: "openai", id: "gpt-5.5" } as never, {} as never, {}),
+      "codex boundary result",
+    );
+    expect(result.apiKey).toBe("oauth-bearer-token");
+    expect(nativeStreamFn).toHaveBeenCalledTimes(1);
+    expect(providerStreamFn).not.toHaveBeenCalled();
+  });
+
   it("falls back to authStorage when no resolved api key is available for OpenClaw native fallback", async () => {
     const nativeStreamFn = vi.fn(async (_model, _context, options) => options);
     const authStorage = {

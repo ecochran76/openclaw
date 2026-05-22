@@ -2475,7 +2475,7 @@ export async function dispatchReplyFromConfig(
               }
               await sendWatcherPayload(
                 {
-                  text: `status: turn appears stalled${active.activeTool ? ` (${active.activeTool})` : ""}`,
+                  text: `working: still waiting for agent progress${active.activeTool ? ` (${active.activeTool})` : ""}`,
                 },
                 shouldRouteToOriginating
                   ? "route-reply failed"

@@ -4803,7 +4803,7 @@ describe("dispatchReplyFromConfig", () => {
         (call) => (call[0] as ReplyPayload | undefined)?.text ?? "",
       );
       expect(
-        blockTexts.filter((text) => text.includes("status: turn appears stalled")),
+        blockTexts.filter((text) => text.includes("working: still waiting for agent progress")),
       ).toHaveLength(1);
       expect(getActiveTrackedTurn(ctx.SessionKey ?? "agent:main:main")?.phase).toBe("stalled");
 
@@ -4813,7 +4813,7 @@ describe("dispatchReplyFromConfig", () => {
         (call) => (call[0] as ReplyPayload | undefined)?.text ?? "",
       );
       expect(
-        laterTexts.filter((text) => text.includes("status: turn appears stalled")),
+        laterTexts.filter((text) => text.includes("working: still waiting for agent progress")),
       ).toHaveLength(1);
 
       resolveReply(undefined);

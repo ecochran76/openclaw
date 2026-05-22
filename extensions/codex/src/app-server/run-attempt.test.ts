@@ -9141,6 +9141,30 @@ describe("runCodexAppServerAttempt", () => {
     expect(requests.map((entry) => entry.method)).toContain("turn/start");
   });
 
+  it("prefers the current attempt auth profile over the static runtime plan profile", async () => {
+    const seenAuthProfileIds: Array<string | undefined> = [];
+    const { waitForMethod, completeTurn } = createStartedThreadHarness(undefined, {
+      onStart: (authProfileId) => {
+        seenAuthProfileIds.push(authProfileId);
+      },
+    });
+    const params = createParams(
+      path.join(tempDir, "session.jsonl"),
+      path.join(tempDir, "workspace"),
+    );
+    params.authProfileId = "openai-codex:rotated";
+    params.runtimePlan = {
+      ...createCodexRuntimePlanFixture(),
+      auth: { forwardedAuthProfileId: "openai-codex:stale" },
+    };
+
+    const run = runCodexAppServerAttempt(params);
+    await waitForMethod("turn/start", 120_000);
+    expect(seenAuthProfileIds).toEqual(["openai-codex:rotated"]);
+    await completeTurn({ threadId: "thread-1", turnId: "turn-1" });
+    await run;
+  });
+
   it("times out turn start before the active run handle is installed", async () => {
     const request = vi.fn(
       async (method: string, _params?: unknown, options?: { timeoutMs?: number }) => {

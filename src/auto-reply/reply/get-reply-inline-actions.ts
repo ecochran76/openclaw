@@ -63,6 +63,15 @@ const commandsRuntimeLoader = createLazyImportLoader<CommandsRuntime>(
 );
 let builtinSlashCommands: Set<string> | null = null;
 
+function looksLikeReauthCallbackInput(input: string): boolean {
+  const trimmed = input.trim();
+  return (
+    /\bhttps?:\/\/[^\s<>]*\/auth\/callback\?[^\s<>]*\bcode=/i.test(trimmed) ||
+    /(?:^|[?\s&])code=[^&\s<>]+&[^\s<>]*\bstate=/i.test(trimmed) ||
+    /(?:^|[?\s&])state=[^&\s<>]+&[^\s<>]*\bcode=/i.test(trimmed)
+  );
+}
+
 function loadSkillCommandsRuntime(): Promise<SkillCommandsRuntime> {
   return skillCommandsRuntimeLoader.load();
 }
@@ -570,7 +579,8 @@ export async function handleInlineActions(params: {
     inlineCommand !== null ||
     directiveAck !== undefined ||
     inlineStatusRequested ||
-    command.commandBodyNormalized.trim().startsWith("/");
+    command.commandBodyNormalized.trim().startsWith("/") ||
+    looksLikeReauthCallbackInput(command.commandBodyNormalized);
   if (!shouldRunCommandHandlers) {
     return {
       kind: "continue",
