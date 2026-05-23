@@ -239,7 +239,6 @@ export function createAutomationTool(
   return {
     label: "Automation",
     name: "automation",
-    ownerOnly: true,
     description:
       "Run bounded background automation with explicit stop caps. Use this for /automation-style requests, including natural-language asks to start, list, steer, or stop a capped background run for the current session. Do not emulate /automation with sessions_spawn or ACP. Actions: run, list, status, steer, stop.",
     parameters: AutomationToolSchema,

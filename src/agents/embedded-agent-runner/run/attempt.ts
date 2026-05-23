@@ -795,7 +795,6 @@ export function shouldCreateBundleMcpRuntimeForAttempt(params: {
       senderName: params.senderName,
       senderUsername: params.senderUsername,
       senderE164: params.senderE164,
-      senderIsOwner: params.senderIsOwner,
       warn: params.warn ?? ((message) => log.warn(message)),
     }).length > 0
   );
