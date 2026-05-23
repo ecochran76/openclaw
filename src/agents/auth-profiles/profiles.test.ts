@@ -38,23 +38,6 @@ function readPersistedTree(rootDir: string): string {
   return chunks.join("\n");
 }
 
-function expectOAuthProfileRefId(value: unknown): asserts value is string {
-  expect(typeof value).toBe("string");
-  if (typeof value !== "string") {
-    throw new Error("Expected OAuth profile ref id");
-  }
-  expect(value).toMatch(/^[a-f0-9]{32}$/);
-}
-
-function readPersistedOAuthRefId(agentDir: string, profileId: string): string {
-  const persisted = JSON.parse(fs.readFileSync(resolveAuthStorePath(agentDir), "utf8")) as {
-    profiles: Record<string, { oauthRef?: { id?: string } }>;
-  };
-  const refId = persisted.profiles[profileId]?.oauthRef?.id;
-  expectOAuthProfileRefId(refId);
-  return refId;
-}
-
 function resolvePersistedOAuthSecretPath(refId: string): string {
   return path.join(resolveOAuthDir(), "auth-profiles", `${refId}.json`);
 }
@@ -100,22 +83,8 @@ function expectOAuthCredentialFields(
   return credential;
 }
 
-function expectOpenClawCredentialsOAuthRef(
-  credential: Record<string, unknown>,
-  provider: string,
-): void {
-  const oauthRef = credential.oauthRef;
-  if (!oauthRef || typeof oauthRef !== "object") {
-    throw new Error("Expected OAuth credential ref");
-  }
-  const ref = oauthRef as Record<string, unknown>;
-  expect(ref.source).toBe("openclaw-credentials");
-  expect(ref.provider).toBe(provider);
-  expectOAuthProfileRefId(ref.id);
-}
-
 describe("promoteAuthProfileInOrder", () => {
-  it("normalizes copied secrets when using the locked upsert path", async () => {
+  it("keeps inline openai-codex oauth secrets when using the locked upsert path", async () => {
     const stateDir = fs.mkdtempSync(path.join(os.tmpdir(), "openclaw-auth-profile-upsert-"));
     const agentDir = path.join(stateDir, "agents", "main", "agent");
     const previousStateDir = process.env.OPENCLAW_STATE_DIR;
@@ -449,25 +418,29 @@ describe("promoteAuthProfileInOrder", () => {
     try {
       fs.mkdirSync(agentDir, { recursive: true });
       const profileId = "openai-codex:default";
-      saveAuthProfileStore(
+      const legacyRef = {
+        source: "openclaw-credentials" as const,
+        provider: "openai-codex" as const,
+        id: "0123456789abcdef0123456789abcdef",
+      };
+      const expires = Date.now() + 60 * 60 * 1000;
+      const legacyAuthStore = `${JSON.stringify(
         {
           version: AUTH_STORE_VERSION,
           profiles: {
             [profileId]: {
               type: "oauth",
               provider: "openai-codex",
-              access: "sidecar-access-token",
-              refresh: "sidecar-refresh-token",
-              expires: Date.now() + 60 * 60 * 1000,
+              expires,
+              oauthRef: legacyRef,
             },
           },
         },
-        agentDir,
-        { filterExternalAuthProfiles: false },
-      );
-      const secretPath = resolvePersistedOAuthSecretPath(
-        readPersistedOAuthRefId(agentDir, profileId),
-      );
+        null,
+        2,
+      )}\n`;
+      fs.writeFileSync(resolveAuthStorePath(agentDir), legacyAuthStore);
+      const secretPath = resolvePersistedOAuthSecretPath(legacyRef.id);
       const legacySidecar = `${JSON.stringify(
         {
           version: 1,
@@ -479,6 +452,7 @@ describe("promoteAuthProfileInOrder", () => {
         null,
         2,
       )}\n`;
+      fs.mkdirSync(path.dirname(secretPath), { recursive: true });
       fs.writeFileSync(secretPath, legacySidecar, "utf8");
 
       process.env.OPENCLAW_AUTH_STORE_READONLY = "1";
@@ -494,6 +468,7 @@ describe("promoteAuthProfileInOrder", () => {
           refresh: "legacy-sidecar-refresh",
         },
       );
+      expect(fs.readFileSync(resolveAuthStorePath(agentDir), "utf8")).toBe(legacyAuthStore);
       expect(fs.readFileSync(secretPath, "utf8")).toBe(legacySidecar);
     } finally {
       if (previousStateDir === undefined) {
@@ -566,22 +541,20 @@ describe("promoteAuthProfileInOrder", () => {
         order?: Record<string, string[]>;
       };
       const credential = persisted.profiles[profileId];
-      expectOpenClawCredentialsOAuthRef(
-        expectOAuthCredentialFields(credential, {
-          provider: "openai-codex",
-          expires,
-          accountId: "acct-existing",
-        }),
-        "openai-codex",
-      );
+      expectOAuthCredentialFields(credential, {
+        provider: "openai-codex",
+        access: "existing-access-token",
+        refresh: "existing-refresh-token",
+        idToken: "existing-id-token",
+        expires,
+        accountId: "acct-existing",
+      });
       expect(persisted.order?.["openai-codex"]).toEqual([profileId]);
-      expect(credential).not.toHaveProperty("access");
-      expect(credential).not.toHaveProperty("refresh");
-      expect(credential).not.toHaveProperty("idToken");
+      expect(credential).not.toHaveProperty("oauthRef");
       const persistedStateTree = readPersistedTree(stateDir);
-      expect(persistedStateTree).not.toContain("existing-access-token");
-      expect(persistedStateTree).not.toContain("existing-refresh-token");
-      expect(persistedStateTree).not.toContain("existing-id-token");
+      expect(persistedStateTree).toContain("existing-access-token");
+      expect(persistedStateTree).toContain("existing-refresh-token");
+      expect(persistedStateTree).toContain("existing-id-token");
 
       clearRuntimeAuthProfileStoreSnapshots();
       expectOAuthCredentialFields(
@@ -670,7 +643,7 @@ describe("promoteAuthProfileInOrder", () => {
     }
   });
 
-  it("reclaims a dead auth-store lock before rewriting inline openai-codex oauth secrets", () => {
+  it("reclaims a dead auth-store lock without rewriting inline openai-codex oauth secrets", () => {
     const stateDir = fs.mkdtempSync(
       path.join(os.tmpdir(), "openclaw-auth-profile-dead-rewrite-lock-"),
     );
@@ -724,9 +697,13 @@ describe("promoteAuthProfileInOrder", () => {
       };
       const credential = persisted.profiles[profileId];
       expect(credential).toBeDefined();
-      expectOpenClawCredentialsOAuthRef(credential ?? {}, "openai-codex");
-      expect(credential).not.toHaveProperty("access");
-      expect(credential).not.toHaveProperty("refresh");
+      expectOAuthCredentialFields(credential, {
+        provider: "openai-codex",
+        access: "dead-lock-access-token",
+        refresh: "dead-lock-refresh-token",
+        expires,
+      });
+      expect(credential).not.toHaveProperty("oauthRef");
       expect(fs.existsSync(lockPath)).toBe(false);
     } finally {
       if (previousStateDir === undefined) {

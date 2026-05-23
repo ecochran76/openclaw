@@ -55,7 +55,6 @@ type CredentialRejectReason = "non_object" | "invalid_type" | "missing_provider"
 type RejectedCredentialEntry = { key: string; reason: CredentialRejectReason };
 
 const AUTH_PROFILE_TYPES = new Set<AuthProfileCredential["type"]>(["api_key", "oauth", "token"]);
-const REDACTED_OAUTH_TOKEN_PROVIDER_IDS = new Set(["openai-codex"]);
 const LEGACY_OAUTH_REF_PROVIDER = "openai-codex";
 const OAUTH_PROFILE_SECRET_REF_SOURCE = "openclaw-credentials" as const;
 const OAUTH_PROFILE_SECRET_DIRNAME = "auth-profiles";
@@ -126,11 +125,10 @@ function buildLegacyOAuthSecretMaterialFingerprint(
 function shouldPersistOAuthWithoutInlineSecrets(
   credential: AuthProfileCredential,
 ): credential is OAuthCredential {
-  return (
-    credential.type === "oauth" &&
-    (REDACTED_OAUTH_TOKEN_PROVIDER_IDS.has(credential.provider) ||
-      REDACTED_OAUTH_TOKEN_PROVIDER_IDS.has(normalizeProviderId(credential.provider)))
-  );
+  // Legacy oauthRef sidecars are read-only migration inputs. New saves keep
+  // OAuth material inline so doctor --fix does not immediately recreate refs.
+  void credential;
+  return false;
 }
 
 function resolveOAuthProfileSecretId(params: { agentDir?: string; profileId: string }): string {
@@ -244,7 +242,9 @@ function createMacOAuthProfileSecretKey(): string | undefined {
 
 function isPathInsideOrEqual(parentDir: string, candidatePath: string): boolean {
   const relative = path.relative(path.resolve(parentDir), path.resolve(candidatePath));
-  return relative === "" || (!!relative && !relative.startsWith("..") && !path.isAbsolute(relative));
+  return (
+    relative === "" || (!!relative && !relative.startsWith("..") && !path.isAbsolute(relative))
+  );
 }
 
 function uniquePaths(paths: Array<string | undefined>): string[] {
