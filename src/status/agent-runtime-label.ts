@@ -26,6 +26,7 @@ export function resolveAgentRuntimeLabel(args: {
   >;
   resolvedHarness?: string;
   fallbackProvider?: string;
+  allowPluginCliBackends?: boolean;
 }): string {
   const acpAgentRaw = normalizeOptionalString(args.sessionEntry?.acp?.agent);
   const acpAgent = acpAgentRaw ? sanitizeTerminalText(acpAgentRaw) : undefined;
@@ -48,7 +49,12 @@ export function resolveAgentRuntimeLabel(args: {
     normalizeOptionalString(args.sessionEntry?.providerOverride) ??
     normalizeOptionalString(args.fallbackProvider);
   const provider = providerRaw ? sanitizeTerminalText(providerRaw) : undefined;
-  if (provider && isCliProvider(provider, args.config)) {
+  if (
+    provider &&
+    isCliProvider(provider, args.config, {
+      allowPluginRuntime: args.allowPluginCliBackends,
+    })
+  ) {
     return (
       AGENT_RUNTIME_LABELS[normalizeOptionalLowercaseString(providerRaw) ?? ""] ??
       `${provider} (cli)`

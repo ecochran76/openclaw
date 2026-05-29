@@ -17,6 +17,7 @@ import {
 } from "../status/codex-synthetic-usage.js";
 import type { HealthSummary } from "./health.js";
 import { getDaemonStatusSummary, getNodeDaemonStatusSummary } from "./status.daemon.js";
+import { traceStatusPhase } from "./status.trace.ts";
 
 const providerUsageLoader = createLazyImportLoader(() => import("../infra/provider-usage.js"));
 const securityAuditModuleLoader = createLazyImportLoader(
@@ -263,14 +264,18 @@ export async function resolveStatusRuntimeDetails(params: {
     timeoutMs?: number;
   }) => Promise<StatusGatewayHealth>;
 }) {
+  traceStatusPhase("statusRuntimeDetails:start");
   const resolveUsageSummary = params.resolveUsage ?? resolveStatusUsageSummary;
   const resolveGatewayHealthSummary = params.resolveHealth ?? resolveStatusGatewayHealth;
+  traceStatusPhase("statusRuntimeDetails:usage:start");
   const usage = params.usage
     ? await resolveUsageSummary({
         timeoutMs: params.timeoutMs,
         config: params.config,
       })
     : undefined;
+  traceStatusPhase("statusRuntimeDetails:usage:done");
+  traceStatusPhase("statusRuntimeDetails:health:start");
   const health = params.deep
     ? params.suppressHealthErrors
       ? await resolveGatewayHealthSummary({
@@ -283,6 +288,8 @@ export async function resolveStatusRuntimeDetails(params: {
         })
     : undefined;
   // Last heartbeat is a deep-only gateway call; fast status should not spend network time here.
+  traceStatusPhase("statusRuntimeDetails:health:done");
+  traceStatusPhase("statusRuntimeDetails:lastHeartbeat:start");
   const lastHeartbeat = params.deep
     ? await resolveStatusLastHeartbeat({
         config: params.config,
@@ -290,7 +297,10 @@ export async function resolveStatusRuntimeDetails(params: {
         gatewayReachable: params.gatewayReachable,
       })
     : null;
+  traceStatusPhase("statusRuntimeDetails:lastHeartbeat:done");
+  traceStatusPhase("statusRuntimeDetails:services:start");
   const [gatewayService, nodeService] = await resolveStatusServiceSummaries();
+  traceStatusPhase("statusRuntimeDetails:services:done");
   const result = {
     usage,
     health,
@@ -328,6 +338,8 @@ export async function resolveStatusRuntimeSnapshot(params: {
     timeoutMs?: number;
   }) => Promise<StatusGatewayHealth>;
 }) {
+  traceStatusPhase("statusRuntimeSnapshot:start");
+  traceStatusPhase("statusRuntimeSnapshot:security:start");
   const securityAudit = params.includeSecurityAudit
     ? await (params.resolveSecurityAudit ?? resolveStatusSecurityAudit)({
         config: params.config,
@@ -335,6 +347,8 @@ export async function resolveStatusRuntimeSnapshot(params: {
         timeoutMs: params.timeoutMs,
       })
     : undefined;
+  traceStatusPhase("statusRuntimeSnapshot:security:done");
+  traceStatusPhase("statusRuntimeSnapshot:details:start");
   const runtimeDetails = await resolveStatusRuntimeDetails({
     config: params.config,
     timeoutMs: params.timeoutMs,
@@ -345,6 +359,7 @@ export async function resolveStatusRuntimeSnapshot(params: {
     resolveUsage: params.resolveUsage,
     resolveHealth: params.resolveHealth,
   });
+  traceStatusPhase("statusRuntimeSnapshot:details:done");
   return {
     securityAudit,
     ...runtimeDetails,

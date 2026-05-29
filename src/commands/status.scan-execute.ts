@@ -11,6 +11,7 @@ import {
   type MemoryPluginStatus,
   type MemoryStatusSnapshot,
 } from "./status.scan.shared.js";
+import { traceStatusPhase } from "./status.trace.ts";
 
 /** Builds a full status scan result from an overview scan plus channel/plugin compatibility data. */
 export async function executeStatusScanFromOverview(params: {
@@ -29,8 +30,10 @@ export async function executeStatusScanFromOverview(params: {
   channels: StatusScanResult["channels"];
   pluginCompatibility: PluginCompatibilityNotice[];
 }) {
+  traceStatusPhase("statusScanExecute:start");
   const memoryPlugin = resolveMemoryPluginStatus(params.overview.cfg);
   // Memory probing can hit disk/plugin code, so run it alongside session/task summary collection.
+  traceStatusPhase("statusScanExecute:memory+summary:start");
   const [memory, summary] = await Promise.all([
     params.resolveMemory({
       cfg: params.overview.cfg,
@@ -43,7 +46,9 @@ export async function executeStatusScanFromOverview(params: {
       includeChannelSummary: params.summary?.includeChannelSummary,
     }),
   ]);
+  traceStatusPhase("statusScanExecute:memory+summary:done");
 
+  traceStatusPhase("statusScanExecute:buildResult:start");
   return buildStatusScanResult({
     cfg: params.overview.cfg,
     sourceConfig: params.overview.sourceConfig,

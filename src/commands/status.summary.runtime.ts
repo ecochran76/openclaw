@@ -39,6 +39,7 @@ function resolveStatusModelRefFromRaw(params: {
         continue;
       }
       const parsed = parseModelRef(modelKey, params.defaultProvider, {
+        allowManifestNormalization: false,
         allowPluginNormalization: false,
       });
       if (parsed) {
@@ -48,6 +49,7 @@ function resolveStatusModelRefFromRaw(params: {
     return { provider: params.defaultProvider, model: trimmed };
   }
   return parseModelRef(trimmed, params.defaultProvider, {
+    allowManifestNormalization: false,
     allowPluginNormalization: false,
   });
 }
@@ -104,13 +106,16 @@ function resolveSessionModelRef(
     | SessionEntry
     | Pick<SessionEntry, "model" | "modelProvider" | "modelOverride" | "providerOverride">,
   agentId?: string,
+  configured?: { provider: string; model: string },
 ): { provider: string; model: string } {
-  const resolved = resolveConfiguredStatusModelRef({
-    cfg,
-    defaultProvider: DEFAULT_PROVIDER,
-    defaultModel: DEFAULT_MODEL,
-    agentId,
-  });
+  const resolved =
+    configured ??
+    resolveConfiguredStatusModelRef({
+      cfg,
+      defaultProvider: DEFAULT_PROVIDER,
+      defaultModel: DEFAULT_MODEL,
+      agentId,
+    });
   return (
     // Persisted selected model or overrides describe the active session, not just current config.
     resolvePersistedSelectedModelRef({
@@ -120,6 +125,7 @@ function resolveSessionModelRef(
       overrideProvider: entry?.providerOverride,
       overrideModel: entry?.modelOverride,
       allowPluginNormalization: false,
+      allowManifestNormalization: false,
     }) ?? resolved
   );
 }
@@ -157,6 +163,7 @@ function resolveSessionRuntimeLabel(params: {
     sessionEntry: params.entry,
     resolvedHarness,
     fallbackProvider: params.provider,
+    allowPluginCliBackends: false,
   });
 }
 

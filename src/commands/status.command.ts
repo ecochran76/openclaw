@@ -26,6 +26,7 @@ import { formatUpdateRestartStatusValue } from "./status-update-restart.ts";
 import { buildStatusCommandReportData } from "./status.command-report-data.ts";
 import { buildStatusCommandReportLines } from "./status.command-report.ts";
 import { logGatewayConnectionDetails } from "./status.gateway-connection.ts";
+import { traceStatusPhase } from "./status.trace.ts";
 
 const statusScanModuleLoader = createLazyImportLoader(() => import("./status.scan.js"));
 const statusScanFastJsonModuleLoader = createLazyImportLoader(
@@ -123,15 +124,19 @@ export async function statusCommand(
   },
   runtime: RuntimeEnv,
 ) {
+  traceStatusPhase("statusCommand:start");
   if (opts.all && !opts.json) {
     // Human `--all` has a dedicated report path; JSON `--all` stays on the JSON schema.
+    traceStatusPhase("statusCommand:all:start");
     await loadStatusAllModule().then(({ statusAllCommand }) =>
       statusAllCommand(runtime, { timeoutMs: opts.timeoutMs }),
     );
+    traceStatusPhase("statusCommand:all:done");
     return;
   }
 
   if (opts.json) {
+    traceStatusPhase("statusCommand:json:start");
     await runStatusJsonCommand({
       opts,
       runtime,
@@ -143,12 +148,15 @@ export async function statusCommand(
           scanStatusJsonFast(scanOpts, runtimeForScan),
         ),
     });
+    traceStatusPhase("statusCommand:json:done");
     return;
   }
 
+  traceStatusPhase("statusCommand:scan:start");
   const scan = await loadStatusScanModule().then(({ scanStatus }) =>
     scanStatus({ json: false, timeoutMs: opts.timeoutMs, all: opts.all, deep: opts.deep }, runtime),
   );
+  traceStatusPhase("statusCommand:scan:done");
 
   const {
     cfg,
@@ -175,6 +183,7 @@ export async function statusCommand(
     pluginCompatibility,
   } = scan;
 
+  traceStatusPhase("statusCommand:runtimeSnapshot:start");
   const {
     securityAudit,
     usage,
@@ -218,8 +227,10 @@ export async function statusCommand(
         async () => await resolveStatusGatewayHealth(input),
       ),
   });
+  traceStatusPhase("statusCommand:runtimeSnapshot:done");
 
   const rich = true;
+  traceStatusPhase("statusCommand:textRuntime:start");
   const {
     buildStatusUpdateSurface,
     formatCliCommand,
@@ -239,6 +250,7 @@ export async function statusCommand(
     shortenText,
     theme,
   } = await loadStatusCommandTextRuntime();
+  traceStatusPhase("statusCommand:textRuntime:done");
   const muted = (value: string) => (rich ? theme.muted(value) : value);
   const ok = (value: string) => (rich ? theme.success(value) : value);
   const warn = (value: string) => (rich ? theme.warn(value) : value);
@@ -277,12 +289,14 @@ export async function statusCommand(
     runtime.log("");
   }
 
+  traceStatusPhase("statusCommand:nodeOnly:start");
   const nodeOnlyGateway = await loadStatusNodeModeModule().then(({ resolveNodeOnlyGatewayInfo }) =>
     resolveNodeOnlyGatewayInfo({
       daemon,
       node: nodeDaemon,
     }),
   );
+  traceStatusPhase("statusCommand:nodeOnly:done");
   const pairingRecovery = resolvePairingRecoveryContext({
     error: gatewayProbe?.error ?? null,
     closeReason: gatewayProbe?.close?.reason ?? null,

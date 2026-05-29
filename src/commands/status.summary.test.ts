@@ -526,6 +526,7 @@ describe("getStatusSummary", () => {
       .mock.calls.map(([params]) => params.sessionKey);
     expect(hydratedKeys).not.toContain("agent:main:session-1");
     expect(hydratedKeys).not.toContain("agent:main:session-2");
+    expect(statusSummaryRuntime.resolveSessionModelRef).toHaveBeenCalledTimes(10);
   });
 
   it("preserves store order for tied recent session timestamps", async () => {

@@ -24,6 +24,7 @@ import {
 } from "../tasks/task-registry.audit.js";
 import { createEmptyTaskRegistrySummary } from "../tasks/task-registry.summary.js";
 import { resolveRuntimeServiceVersion } from "../version.js";
+import { traceStatusPhase } from "./status.trace.ts";
 import type { HeartbeatStatus, SessionStatus, StatusSummary } from "./status.types.js";
 
 const RECENT_SESSION_LIMIT = 10;
@@ -251,13 +252,16 @@ export async function getStatusSummary(
     sourceConfig?: OpenClawConfig;
   } = {},
 ): Promise<StatusSummary> {
+  traceStatusPhase("statusSummary:start");
   const {
     includeSensitive = true,
     includeChannelSummary = true,
     includeSessions = true,
     includeTasks = true,
   } = options;
+  traceStatusPhase("statusSummary:runtime:start");
   const statusRuntime = includeSessions ? await loadStatusSummaryRuntimeModule() : null;
+  traceStatusPhase("statusSummary:runtime:done");
   const cfg = options.config ?? getRuntimeConfig();
   const contextSourceConfig =
     options.sourceConfig !== undefined
@@ -307,11 +311,13 @@ export async function getStatusSummary(
     (await loadChannelPluginIdsModule().then(({ hasConfiguredChannelsForReadOnlyScope }) =>
       hasConfiguredChannelsForReadOnlyScope(channelScopeConfig),
     ));
+  traceStatusPhase("statusSummary:linkContext:start");
   const linkContext = needsChannelPlugins
     ? await loadLinkChannelModule().then(({ resolveLinkChannelContext }) =>
         resolveLinkChannelContext(cfg, { sourceConfig: options.sourceConfig }),
       )
     : null;
+  traceStatusPhase("statusSummary:linkContext:done");
   const agentList = listGatewayAgentsBasic(cfg);
   const heartbeatAgents: HeartbeatStatus[] = agentList.agents.map((agent) => {
     const summary = resolveHeartbeatSummaryForAgent(cfg, agent.id);
@@ -322,6 +328,7 @@ export async function getStatusSummary(
       everyMs: summary.everyMs,
     } satisfies HeartbeatStatus;
   });
+  traceStatusPhase("statusSummary:channelSummary:start");
   const channelSummary = needsChannelPlugins
     ? await loadChannelSummaryModule().then(({ buildChannelSummary }) =>
         buildChannelSummary(cfg, {
@@ -331,9 +338,11 @@ export async function getStatusSummary(
         }),
       )
     : [];
+  traceStatusPhase("statusSummary:channelSummary:done");
   const mainSessionKey = resolveMainSessionKey(cfg);
   const queuedSystemEvents = peekSystemEvents(mainSessionKey);
   const now = Date.now();
+  traceStatusPhase("statusSummary:tasks:start");
   const taskMaintenanceModule = includeTasks ? await loadTaskRegistryMaintenanceModule() : null;
   if (taskMaintenanceModule) {
     // Configure maintenance store before reading task summaries so cron-backed tasks are in scope.
@@ -353,6 +362,7 @@ export async function getStatusSummary(
     : createEmptyTaskAuditSummary();
   const taskAuditRetainedLost = summarizeRetainedLostTaskAuditFindings(taskAuditFindings, { now });
   const tasks = discountRetainedLostTaskFailures(rawTasks, taskAuditRetainedLost.count);
+  traceStatusPhase("statusSummary:tasks:done");
 
   const resolved = statusRuntime
     ? statusRuntime.resolveConfiguredStatusModelRef({
@@ -391,6 +401,25 @@ export async function getStatusSummary(
     candidateCache.set(cacheKey, candidates);
     return candidates;
   };
+  const configuredModelCache = new Map<string, { provider: string; model: string }>();
+  const resolveConfiguredForSession = (agentId: string | undefined) => {
+    const cacheKey = agentId ?? "";
+    const cached = configuredModelCache.get(cacheKey);
+    if (cached) {
+      return cached;
+    }
+    const configured = statusRuntime?.resolveConfiguredStatusModelRef({
+      cfg,
+      defaultProvider: DEFAULT_PROVIDER,
+      defaultModel: DEFAULT_MODEL,
+      agentId,
+    }) ?? {
+      provider: resolved.provider ?? DEFAULT_PROVIDER,
+      model: configModel,
+    };
+    configuredModelCache.set(cacheKey, configured);
+    return configured;
+  };
   const buildSessionRows = async (
     candidates: SessionCandidate[],
     opts: { agentIdOverride?: string } = {},
@@ -400,21 +429,14 @@ export async function getStatusSummary(
         const age = updatedAt ? now - updatedAt : null;
         const parsedAgentId = parseAgentSessionKey(key)?.agentId;
         const agentId = opts.agentIdOverride ?? parsedAgentId;
-        const configuredForSession = statusRuntime?.resolveConfiguredStatusModelRef({
-          cfg,
-          defaultProvider: DEFAULT_PROVIDER,
-          defaultModel: DEFAULT_MODEL,
-          agentId,
-        }) ?? {
-          provider: resolved.provider ?? DEFAULT_PROVIDER,
-          model: configModel,
-        };
+        const configuredForSession = resolveConfiguredForSession(agentId);
         const configuredSessionModel = configuredForSession.model ?? DEFAULT_MODEL;
         const configuredSessionModelLabel = `${configuredForSession.provider ?? DEFAULT_PROVIDER}/${configuredSessionModel}`;
         const resolvedModel = statusRuntime?.resolveSessionModelRef(
           cfg,
           entry,
           opts.agentIdOverride,
+          configuredForSession,
         ) ?? {
           provider: configuredForSession.provider ?? resolved.provider,
           model: configuredSessionModel,
@@ -465,11 +487,12 @@ export async function getStatusSummary(
             agentId,
             sessionKey: key,
           }) ?? "unknown";
+        const kind = statusRuntime?.classifySessionKey(key, entry) ?? "unknown";
 
         return {
           agentId,
           key,
-          kind: statusRuntime?.classifySessionKey(key, entry) ?? "unknown",
+          kind,
           sessionId: entry?.sessionId,
           updatedAt,
           age,
@@ -506,6 +529,7 @@ export async function getStatusSummary(
   }));
   const paths = new Set<string>();
   const pathCounts = new Map<string, number>();
+  traceStatusPhase("statusSummary:sessions:start");
   if (includeSessions) {
     for (const source of storeSources) {
       paths.add(source.storePath);
@@ -516,12 +540,15 @@ export async function getStatusSummary(
   const byAgent = includeSessions
     ? await Promise.all(
         agentList.agents.map(async (agent) => {
+          traceStatusPhase(`statusSummary:sessions:agent:${agent.id}:start`);
           const storePath = resolveStorePath(cfg.session?.store, { agentId: agent.id });
           const candidates = loadSessionCandidates(storePath, agent.id);
+          traceStatusPhase(`statusSummary:sessions:agent:${agent.id}:loaded:${candidates.length}`);
           const sessions = await buildSessionRows(
             selectRecentSessionCandidates(candidates, RECENT_SESSION_LIMIT),
             { agentIdOverride: agent.id },
           );
+          traceStatusPhase(`statusSummary:sessions:agent:${agent.id}:rows:${sessions.length}`);
           return {
             agentId: agent.id,
             path: storePath,
@@ -532,6 +559,7 @@ export async function getStatusSummary(
       )
     : [];
 
+  traceStatusPhase("statusSummary:sessions:all:start");
   const allSessions = includeSessions
     ? storeSources
         .filter((source, index, sources) => {
@@ -547,9 +575,18 @@ export async function getStatusSummary(
         )
     : [];
   const recent = includeSessions
-    ? await buildSessionRows(selectRecentSessionCandidates(allSessions, RECENT_SESSION_LIMIT))
+    ? Array.from(
+        new Map(
+          byAgent
+            .flatMap((entry) => entry.recent)
+            .toSorted((a, b) => (b.updatedAt ?? 0) - (a.updatedAt ?? 0))
+            .map((session) => [session.key, session] as const),
+        ).values(),
+      ).slice(0, RECENT_SESSION_LIMIT)
     : [];
   const totalSessions = allSessions.length;
+  traceStatusPhase("statusSummary:sessions:all:done");
+  traceStatusPhase("statusSummary:sessions:done");
 
   const summary: StatusSummary = {
     runtimeVersion: resolveRuntimeServiceVersion(process.env),
@@ -581,5 +618,6 @@ export async function getStatusSummary(
       byAgent,
     },
   };
+  traceStatusPhase("statusSummary:done");
   return includeSensitive ? summary : redactSensitiveStatusSummary(summary);
 }

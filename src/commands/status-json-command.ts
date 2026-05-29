@@ -3,6 +3,7 @@
 
 import { type RuntimeEnv, writeRuntimeJson } from "../runtime.js";
 import { resolveStatusJsonOutput } from "./status-json-runtime.ts";
+import { traceStatusPhase } from "./status.trace.ts";
 
 type StatusJsonCommandOptions = {
   deep?: boolean;
@@ -23,10 +24,13 @@ export async function runStatusJsonCommand(params: {
     runtime: RuntimeEnv,
   ) => Promise<Parameters<typeof resolveStatusJsonOutput>[0]["scan"]>;
 }) {
+  traceStatusPhase("statusJsonCommand:scan:start");
   const scan = await params.scanStatusJsonFast(
     { timeoutMs: params.opts.timeoutMs, all: params.opts.all },
     params.runtime,
   );
+  traceStatusPhase("statusJsonCommand:scan:done");
+  traceStatusPhase("statusJsonCommand:output:start");
   writeRuntimeJson(
     params.runtime,
     await resolveStatusJsonOutput({
@@ -37,4 +41,5 @@ export async function runStatusJsonCommand(params: {
       suppressHealthErrors: params.suppressHealthErrors,
     }),
   );
+  traceStatusPhase("statusJsonCommand:output:done");
 }

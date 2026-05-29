@@ -15,6 +15,7 @@ import {
 } from "./status.scan.bootstrap-shared.js";
 import { loadStatusScanCommandConfig } from "./status.scan.config-shared.js";
 import type { GatewayProbeSnapshot } from "./status.scan.shared.js";
+import { traceStatusPhase } from "./status.trace.ts";
 
 type StatusGatewayProbeTimeoutResolver = (cfg: OpenClawConfig) => number | undefined;
 
@@ -172,9 +173,11 @@ export async function collectStatusScanOverview(params: {
     summarizingChannels?: string;
   };
 }): Promise<StatusScanOverviewResult> {
+  traceStatusPhase(`${params.commandName}:overview:start`);
   if (params.labels?.loadingConfig) {
     params.progress?.setLabel(params.labels.loadingConfig);
   }
+  traceStatusPhase(`${params.commandName}:overview:config:start`);
   const {
     coldStart,
     sourceConfig,
@@ -202,6 +205,7 @@ export async function collectStatusScanOverview(params: {
         ...(params.runtime ? { runtime: params.runtime } : {}),
       }),
   });
+  traceStatusPhase(`${params.commandName}:overview:config:done`);
   params.progress?.tick();
   const hasConfiguredChannels = params.resolveHasConfiguredChannels
     ? await params.resolveHasConfiguredChannels(cfg, sourceConfig)
@@ -216,6 +220,7 @@ export async function collectStatusScanOverview(params: {
     typeof params.gatewayProbeTimeoutMs === "function"
       ? params.gatewayProbeTimeoutMs(cfg)
       : params.gatewayProbeTimeoutMs;
+  traceStatusPhase(`${params.commandName}:overview:bootstrap:start`);
   const bootstrap = await createStatusScanCoreBootstrap<
     Awaited<ReturnType<typeof getAgentLocalStatusesFn>>
   >({
@@ -241,32 +246,43 @@ export async function collectStatusScanOverview(params: {
         getAgentLocalStatuses(bootstrapCfg),
       ),
   });
+  traceStatusPhase(`${params.commandName}:overview:bootstrap:done`);
 
   if (params.labels?.checkingTailscale) {
     params.progress?.setLabel(params.labels.checkingTailscale);
   }
+  traceStatusPhase(`${params.commandName}:overview:tailscale:start`);
   const tailscaleDns = await bootstrap.tailscaleDnsPromise;
+  traceStatusPhase(`${params.commandName}:overview:tailscale:done`);
   params.progress?.tick();
 
   if (params.labels?.checkingForUpdates) {
     params.progress?.setLabel(params.labels.checkingForUpdates);
   }
+  traceStatusPhase(`${params.commandName}:overview:update:start`);
   const update = await bootstrap.updatePromise;
+  traceStatusPhase(`${params.commandName}:overview:update:done`);
   params.progress?.tick();
 
   if (params.labels?.resolvingAgents) {
     params.progress?.setLabel(params.labels.resolvingAgents);
   }
+  traceStatusPhase(`${params.commandName}:overview:agents:start`);
   const agentStatus = await bootstrap.agentStatusPromise;
+  traceStatusPhase(`${params.commandName}:overview:agents:done`);
   params.progress?.tick();
 
   if (params.labels?.probingGateway) {
     params.progress?.setLabel(params.labels.probingGateway);
   }
+  traceStatusPhase(`${params.commandName}:overview:gatewayProbe:start`);
   const gatewaySnapshot = await bootstrap.gatewayProbePromise;
+  traceStatusPhase(`${params.commandName}:overview:gatewayProbe:done`);
   params.progress?.tick();
 
+  traceStatusPhase(`${params.commandName}:overview:tailscaleHttps:start`);
   const tailscaleHttpsUrl = await bootstrap.resolveTailscaleHttpsUrl();
+  traceStatusPhase(`${params.commandName}:overview:tailscaleHttps:done`);
   const includeChannelsData = params.includeChannelsData !== false;
   const includeLiveChannelStatus = params.includeLiveChannelStatus !== false;
   const { channelsStatus, channelIssues, channels } = includeChannelsData
@@ -274,6 +290,7 @@ export async function collectStatusScanOverview(params: {
         if (params.labels?.queryingChannelStatus) {
           params.progress?.setLabel(params.labels.queryingChannelStatus);
         }
+        traceStatusPhase(`${params.commandName}:overview:channelsStatus:start`);
         const channelsStatusLocal = includeLiveChannelStatus
           ? await resolveStatusChannelsStatus({
               cfg,
@@ -283,16 +300,20 @@ export async function collectStatusScanOverview(params: {
               useGatewayCallOverrides: params.useGatewayCallOverridesForChannelsStatus,
             })
           : null;
+        traceStatusPhase(`${params.commandName}:overview:channelsStatus:done`);
         params.progress?.tick();
         // Runtime channel helpers stay lazy because JSON fast paths can skip channel data entirely.
+        traceStatusPhase(`${params.commandName}:overview:channelsRuntime:start`);
         const { collectChannelStatusIssues, buildChannelsTable } =
           await loadStatusScanRuntimeModule().then(({ statusScanRuntime }) => statusScanRuntime);
+        traceStatusPhase(`${params.commandName}:overview:channelsRuntime:done`);
         const channelIssuesLocal = channelsStatusLocal
           ? collectChannelStatusIssues(channelsStatusLocal)
           : [];
         if (params.labels?.summarizingChannels) {
           params.progress?.setLabel(params.labels.summarizingChannels);
         }
+        traceStatusPhase(`${params.commandName}:overview:channelsTable:start`);
         const channelsLocal = await buildChannelsTable(cfg, {
           showSecrets: params.showSecrets,
           sourceConfig,
@@ -302,6 +323,7 @@ export async function collectStatusScanOverview(params: {
             ? { credentialResolutionSkipped: true }
             : {}),
         });
+        traceStatusPhase(`${params.commandName}:overview:channelsTable:done`);
         params.progress?.tick();
         return {
           channelsStatus: channelsStatusLocal,

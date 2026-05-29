@@ -81,6 +81,38 @@ describe("isCliProvider", () => {
     expect(isCliProvider("claude-cli", {} as OpenClawConfig)).toBe(true);
   });
 
+  it("can skip plugin runtime backend discovery for read-only status paths", () => {
+    expect(
+      isCliProvider("claude-cli", {} as OpenClawConfig, {
+        allowPluginRuntime: false,
+      }),
+    ).toBe(false);
+  });
+
+  it("still honors configured cli backends when plugin runtime discovery is disabled", () => {
+    expect(
+      isCliProvider(
+        "example-cli",
+        {
+          agents: {
+            defaults: {
+              cliBackends: {
+                "example-cli": { command: "example" },
+              },
+            },
+          },
+        } as OpenClawConfig,
+        {
+          allowPluginRuntime: false,
+        },
+      ),
+    ).toBe(true);
+  });
+
+  it("accepts the anthropic-cli auth-choice id as a Claude CLI provider alias", () => {
+    expect(isCliProvider("anthropic-cli", {} as OpenClawConfig)).toBe(true);
+  });
+
   it("returns false for provider ids", () => {
     expect(isCliProvider("example-cli", {} as OpenClawConfig)).toBe(false);
   });

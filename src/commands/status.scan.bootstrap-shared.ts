@@ -7,6 +7,7 @@ import { runExec } from "../process/exec.js";
 import { createEmptyTaskAuditSummary } from "../tasks/task-registry.audit.shared.js";
 import { createEmptyTaskRegistrySummary } from "../tasks/task-registry.summary.js";
 import { buildTailscaleHttpsUrl, resolveGatewayProbeSnapshot } from "./status.scan.shared.js";
+import { traceStatusPhase } from "./status.trace.ts";
 
 function buildColdStartUpdateResult(): UpdateCheckResult {
   return {
@@ -86,6 +87,7 @@ type StatusScanCoreBootstrapParams<TAgentStatus> = {
 export async function createStatusScanCoreBootstrap<TAgentStatus>(
   params: StatusScanCoreBootstrapParams<TAgentStatus>,
 ) {
+  traceStatusPhase("statusScanBootstrap:start");
   const tailscaleMode = params.cfg.gateway?.tailscale?.mode ?? "off";
   const skipColdStartNetworkChecks = shouldSkipStatusScanNetworkChecks({
     coldStart: params.coldStart,
@@ -127,6 +129,7 @@ export async function createStatusScanCoreBootstrap<TAgentStatus>(
       localStatusRpcFallback: params.includeLocalStatusRpcFallback !== false,
     },
   });
+  traceStatusPhase("statusScanBootstrap:done");
 
   return {
     tailscaleMode,
