@@ -60,6 +60,53 @@ describe("scanSlackAdmissionGaps", () => {
     expect(report.records[0]).toMatchObject({
       verdict: "missing-admission",
       reason: "activation-without-ledger-record",
+      user: "U1",
+      replayEligible: true,
+    });
+  });
+
+  it("keeps replay outcome rows from masking the original missing admission", () => {
+    const report = scanSlackAdmissionGaps({
+      accountId: "soylei",
+      channel: "C123",
+      botUserIds: ["UOPENCLAW"],
+      messages: [{ channel: "C123", ts: "1.000011", user: "U1", text: "<@UOPENCLAW> status?" }],
+      ledgerRecords: [
+        admission({
+          ts: "1.000011",
+          outcome: "replay-dispatched",
+          reason: "watchdog-replay-dispatched",
+          sessionKey: "agent:main:slack:channel:c123:thread:1.000011",
+        }),
+      ],
+    });
+
+    expect(report.records[0]).toMatchObject({
+      verdict: "missing-admission",
+      reason: "activation-without-ledger-record",
+    });
+  });
+
+  it("prefers accepted admission rows over later replay metadata for the same message", () => {
+    const report = scanSlackAdmissionGaps({
+      accountId: "soylei",
+      channel: "C123",
+      botUserIds: ["UOPENCLAW"],
+      messages: [{ channel: "C123", ts: "1.000012", user: "U1", text: "<@UOPENCLAW> status?" }],
+      ledgerRecords: [
+        admission({ ts: "1.000012", outcome: "accepted", routeAgentId: "main" }),
+        admission({
+          ts: "1.000012",
+          outcome: "replay-dispatched",
+          reason: "watchdog-replay-dispatched",
+        }),
+      ],
+    });
+
+    expect(report.records[0]).toMatchObject({
+      verdict: "admitted",
+      reason: "ledger-accepted",
+      ledgerRecord: { outcome: "accepted" },
     });
   });
 

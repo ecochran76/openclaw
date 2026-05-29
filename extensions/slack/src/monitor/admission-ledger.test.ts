@@ -102,6 +102,27 @@ describe("slack admission ledger", () => {
     });
   });
 
+  it("builds replay outcome records without storing raw message text", () => {
+    const record = buildSlackAdmissionRecord({
+      accountId: "soylei",
+      message: slackMessage({ text: "<@UOPENCLAW> replay this" }),
+      outcome: "replay-dispatched",
+      reason: "watchdog-replay-dispatched",
+      routeAgentId: "main",
+      sessionKey: "agent:main:slack:channel:c123:thread:1779124819.383009",
+      now: new Date("2026-05-29T02:41:00.000Z"),
+    });
+
+    expect(record).toMatchObject({
+      outcome: "replay-dispatched",
+      reason: "watchdog-replay-dispatched",
+      routeAgentId: "main",
+      sessionKey: "agent:main:slack:channel:c123:thread:1779124819.383009",
+    });
+    expect(record.textHash).toMatch(/^[a-f0-9]{64}$/);
+    expect(JSON.stringify(record)).not.toContain("replay this");
+  });
+
   it("reads recent JSONL records for watchdog scans", async () => {
     const stateDir = await makeTempDir();
     const env = { OPENCLAW_STATE_DIR: stateDir };

@@ -18,4 +18,10 @@ export { channelsWhySilentCommand } from "./channels/why-silent.js";
 export type { ChannelsInspectLinkOptions } from "./channels/inspect-link.js";
 export { channelsInspectLinkCommand } from "./channels/inspect-link.js";
 export type { ChannelsSlackWatchdogScanOptions } from "./channels/slack-watchdog-scan.js";
-export { channelsSlackWatchdogScanCommand } from "./channels/slack-watchdog-scan.js";
+export type { ChannelsSlackWatchdogReplayOptions } from "./channels/slack-watchdog-scan.js";
+export type { ChannelsSlackWatchdogStatusOptions } from "./channels/slack-watchdog-scan.js";
+export {
+  channelsSlackWatchdogReplayCommand,
+  channelsSlackWatchdogScanCommand,
+  channelsSlackWatchdogStatusCommand,
+} from "./channels/slack-watchdog-scan.js";

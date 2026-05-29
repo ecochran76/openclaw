@@ -4,7 +4,12 @@ import os from "node:os";
 import path from "node:path";
 import type { SlackMessageEvent } from "../types.js";
 
-export type SlackAdmissionOutcome = "accepted" | "dropped";
+export type SlackAdmissionOutcome =
+  | "accepted"
+  | "dropped"
+  | "replay-attempted"
+  | "replay-dispatched"
+  | "replay-failed";
 
 export type SlackAdmissionRecord = {
   version: 1;

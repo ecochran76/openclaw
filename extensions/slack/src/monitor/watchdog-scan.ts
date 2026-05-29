@@ -20,8 +20,14 @@ export type SlackWatchdogScanRecord = {
   ts?: string;
   threadTs?: string;
   clientMsgId?: string;
+  user?: string;
+  botId?: string;
+  subtype?: string;
   verdict: SlackWatchdogVerdict;
   reason: string;
+  replayEligible?: boolean;
+  replayBlockedReason?: string;
+  suggestedReplayCommand?: string;
   ledgerRecord?: Pick<
     SlackAdmissionRecord,
     "recordedAt" | "outcome" | "reason" | "routeAgentId" | "sessionKey"
@@ -76,14 +82,42 @@ function ledgerKey(record: SlackAdmissionRecord): string {
   return `${channel}\0${ts}\0${clientMsgId}`;
 }
 
+function admissionOutcomePrecedence(record: SlackAdmissionRecord): number {
+  if (record.outcome === "accepted") {
+    return 4;
+  }
+  if (record.outcome === "dropped") {
+    return 3;
+  }
+  if (record.outcome === "replay-dispatched") {
+    return 2;
+  }
+  if (record.outcome === "replay-attempted" || record.outcome === "replay-failed") {
+    return 1;
+  }
+  return 0;
+}
+
+function setLedgerIndexRecord(
+  index: Map<string, SlackAdmissionRecord>,
+  key: string,
+  record: SlackAdmissionRecord,
+) {
+  const existing = index.get(key);
+  if (existing && admissionOutcomePrecedence(existing) > admissionOutcomePrecedence(record)) {
+    return;
+  }
+  index.set(key, record);
+}
+
 function buildLedgerIndex(records: readonly SlackAdmissionRecord[]) {
   const index = new Map<string, SlackAdmissionRecord>();
   for (const record of records) {
     if (!record.channel || !record.ts) {
       continue;
     }
-    index.set(ledgerKey(record), record);
-    index.set(`${record.channel}\0${record.ts}\0`, record);
+    setLedgerIndexRecord(index, ledgerKey(record), record);
+    setLedgerIndexRecord(index, `${record.channel}\0${record.ts}\0`, record);
   }
   return index;
 }
@@ -135,6 +169,15 @@ export function scanSlackAdmissionGaps(params: {
       ...(threadTs ? { threadTs } : {}),
       ...(normalizeOptionalString(message.client_msg_id)
         ? { clientMsgId: normalizeOptionalString(message.client_msg_id) }
+        : {}),
+      ...(normalizeOptionalString(message.user)
+        ? { user: normalizeOptionalString(message.user) }
+        : {}),
+      ...(normalizeOptionalString(message.bot_id)
+        ? { botId: normalizeOptionalString(message.bot_id) }
+        : {}),
+      ...(normalizeOptionalString(message.subtype)
+        ? { subtype: normalizeOptionalString(message.subtype) }
         : {}),
     };
 
@@ -189,6 +232,7 @@ export function scanSlackAdmissionGaps(params: {
       ...base,
       verdict: "missing-admission",
       reason: "activation-without-ledger-record",
+      replayEligible: true,
     });
     counts["missing-admission"] += 1;
   }

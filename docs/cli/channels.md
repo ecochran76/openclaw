@@ -23,6 +23,10 @@ openclaw channels list --all
 openclaw channels status
 openclaw channels why-silent --channel slack --account default --target channel:C123
 openclaw channels inspect-link https://example.slack.com/archives/C123/p1778009972917279 --account default
+openclaw channels watchdog-scan --account default --target channel:C123 --since 30m
+openclaw channels watchdog-scan --account default --permalink https://example.slack.com/archives/C123/p1778009972917279
+openclaw channels watchdog-status --account default
+openclaw channels watchdog-replay --account default --permalink https://example.slack.com/archives/C123/p1778009972917279
 openclaw channels capabilities
 openclaw channels capabilities --channel discord --target channel:123
 openclaw channels capabilities --channel discord --target channel:<voice-channel-id>
@@ -37,6 +41,9 @@ openclaw channels logs --channel all
 - `channels status`: `--channel <name>`, `--probe`, `--timeout <ms>`, `--json`
 - `channels why-silent`: `--channel <name>`, `--account <id>`, `--target <dest>`, `--limit <n>`, `--timeout <ms>`, `--json`
 - `channels inspect-link`: `<slack-permalink>`, `--account <id>`, `--agent <id>`, `--limit <n>`, `--timeout <ms>`, `--json`
+- `channels watchdog-scan`: `--account <id>`, `--target <dest>` or `--permalink <url>`, `--since <duration>`, `--bot-user <id>`, `--alert-target <dest>`, `--reply-missed`, `--dry-run-replies`, `--json`
+- `channels watchdog-status`: `--account <id>`, `--state <path>`, `--json`
+- `channels watchdog-replay`: `--account <id>`, `--target <dest>` plus `--ts <slack-ts>` or `--permalink <url>`, `--thread <ts>`, `--agent <id>`, `--execute`, `--json`
 - `channels capabilities`: `--channel <name>`, `--account <id>` (only with `--channel`), `--target <dest>`, `--timeout <ms>`, `--json`
 - `channels resolve`: `<entries...>`, `--channel <name>`, `--account <id>`, `--kind <auto|user|group>`, `--json`
 - `channels logs`: `--channel <name|all>`, `--lines <n>`, `--json`
@@ -67,6 +74,66 @@ that evidence with gateway account status, scans session stores, and reports
 likely transcript or trajectory sidecars without dumping raw transcripts. Use
 `--agent <id>` to keep the session scan scoped when you already know the owning
 agent.
+
+`channels watchdog-scan` is the Slack stale-socket sidecar check. It reads
+recent Slack history through the channel action path and compares relevant
+human messages with the Slack admission ledger. A message is reported as
+`missing-admission` only when Slack has the message and OpenClaw has no
+accepted or explicitly dropped admission record. Use `--alert-target` to send a
+deduped operator alert, and add `--reply-missed` only when you want OpenClaw to
+post a one-time threaded notice on the missed source message. `--dry-run-replies`
+renders the planned source replies without sending them. `--permalink` derives
+the Slack channel and anchors the scan window around the linked message, which
+is the preferred post-mortem shape when a user reports a specific missed Slack
+message.
+
+`channels watchdog-status` is the read-only state summary for the sidecar. It
+reports the watchdog state path, known message count, operator alert count,
+source-reply count, replay attempts, dispatched replays, failed replays, and
+latest action timestamps. Use `--state` when scans were run with a custom
+`--alert-state`, `--reply-state`, or replay `--state` path.
+
+`channels watchdog-replay` is the guarded recovery path for one missed Slack
+message. It re-reads Slack history and the admission ledger immediately before
+recovery, refuses messages that are no longer `missing-admission`, and defaults
+to dry-run. Pass either `--target` with `--ts` or one Slack `--permalink`. Add
+`--execute` only after reviewing the preflight output. Executed replay runs
+through the ingress agent path with Slack delivery context and records recovery
+state so a repeated `--execute` is refused.
+
+Example systemd user timer for notify-only scanning:
+
+```ini
+# ~/.config/systemd/user/openclaw-slack-watchdog-soylei.service
+[Unit]
+Description=OpenClaw Slack watchdog scan
+
+[Service]
+Type=oneshot
+ExecStart=/usr/bin/env openclaw channels watchdog-scan --account soylei --target channel:C123 --since 30m --bot-user UOPENCLAW --alert-target channel:COPS --json
+```
+
+```ini
+# ~/.config/systemd/user/openclaw-slack-watchdog-soylei.timer
+[Unit]
+Description=Run OpenClaw Slack watchdog scan every 5 minutes
+
+[Timer]
+OnBootSec=2m
+OnUnitActiveSec=5m
+Persistent=true
+
+[Install]
+WantedBy=timers.target
+```
+
+Enable it with:
+
+```bash
+systemctl --user daemon-reload
+systemctl --user enable --now openclaw-slack-watchdog-soylei.timer
+systemctl --user list-timers 'openclaw-slack-watchdog-*'
+```
 
 ## Add / remove accounts
 

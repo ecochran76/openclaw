@@ -119,6 +119,18 @@ export async function registerChannelsCli(
             "Scan recent Slack history for messages missing OpenClaw admission records.",
           ],
           [
+            "openclaw channels watchdog-scan --account soylei --permalink https://example.slack.com/archives/C123/p1779309189369149",
+            "Run a permalink-anchored post-mortem scan around one Slack message.",
+          ],
+          [
+            "openclaw channels watchdog-status --account soylei",
+            "Summarize watchdog alert, source-reply, and recovery state.",
+          ],
+          [
+            "openclaw channels watchdog-replay --account soylei --permalink https://example.slack.com/archives/C123/p1779309189369149",
+            "Preflight a guarded recovery turn for one missed Slack message.",
+          ],
+          [
             "openclaw channels add --channel telegram --token <token>",
             "Add or update a channel account non-interactively.",
           ],
@@ -192,7 +204,8 @@ export async function registerChannelsCli(
     .description("Read-only Slack admission-gap scan for stale socket detection")
     .option("--account <id>", "Slack account id", "default")
     .option("--tenant-label <label>", "Human Slack tenant/workspace label for reports")
-    .requiredOption("--target <dest>", "Slack target (for example channel:C123 or D123)")
+    .option("--target <dest>", "Slack target (for example channel:C123 or D123)")
+    .option("--permalink <url>", "Slack permalink to derive target and anchor the scan window")
     .option("--channel-name <name>", "Human Slack channel name for reports")
     .option("--limit <n>", "Recent Slack messages to read", "50")
     .option("--since <duration>", "History window to scan (for example 30m, 2h)", "30m")
@@ -206,6 +219,11 @@ export async function registerChannelsCli(
     .option("--alert-target <dest>", "Post a deduped alert when missing admissions are found")
     .option("--alert-account <id>", "Slack account id used for watchdog alerts", "default")
     .option("--alert-state <path>", "Override alert dedupe state JSON path")
+    .option("--reply-missed", "Post one deduped thread reply on missed source messages", false)
+    .option("--reply-account <id>", "Slack account id used for missed-message replies")
+    .option("--reply-state <path>", "Override missed-message reply dedupe state JSON path")
+    .option("--dry-run-replies", "Render planned missed-message replies without sending", false)
+    .option("--max-replies <n>", "Maximum missed-message replies to send per scan", "3")
     .option("--ledger-limit <n>", "Recent admission ledger rows to read", "5000")
     .option("--timeout <ms>", "Gateway read timeout in ms", "10000")
     .option("--json", "Output JSON", false)
@@ -214,6 +232,50 @@ export async function registerChannelsCli(
         const { channelsSlackWatchdogScanCommand } =
           await import("../commands/channels/slack-watchdog-scan.js");
         await channelsSlackWatchdogScanCommand(opts, defaultRuntime);
+      });
+    });
+
+  channels
+    .command("watchdog-status")
+    .description("Summarize Slack watchdog alert, reply, and recovery state")
+    .option("--account <id>", "Slack account id", "default")
+    .option("--state <path>", "Override watchdog state JSON path")
+    .option("--json", "Output JSON", false)
+    .action(async (opts) => {
+      await runChannelsCommand(async () => {
+        const { channelsSlackWatchdogStatusCommand } =
+          await import("../commands/channels/slack-watchdog-scan.js");
+        await channelsSlackWatchdogStatusCommand(opts, defaultRuntime);
+      });
+    });
+
+  channels
+    .command("watchdog-replay")
+    .description("Guarded recovery for one Slack message missing an admission record")
+    .option("--account <id>", "Slack account id", "default")
+    .option("--target <dest>", "Slack target (for example channel:C123 or D123)")
+    .option("--permalink <url>", "Slack permalink to derive target and message timestamp")
+    .option("--ts <ts>", "Slack message timestamp to replay")
+    .option("--thread <ts>", "Read the message from one Slack thread timestamp")
+    .option("--since <duration>", "History window to search (for example 30m, 24h)", "24h")
+    .option("--limit <n>", "Recent Slack messages to read while finding --ts", "100")
+    .option("--bot-user <id>", "Slack bot user id for mention-based relevance checks")
+    .option("--direct-message", "Treat target as a DM even if the id does not start with D", false)
+    .option(
+      "--active-thread <ts,csv>",
+      "Comma-separated active thread timestamps to treat as relevant",
+    )
+    .option("--agent <id>", "Agent id to replay through (defaults to route/default agent)")
+    .option("--state <path>", "Override watchdog recovery state JSON path")
+    .option("--ledger-limit <n>", "Recent admission ledger rows to read", "5000")
+    .option("--timeout <ms>", "Gateway/agent timeout in ms", "30000")
+    .option("--execute", "Start the guarded agent turn after all replay checks pass", false)
+    .option("--json", "Output JSON", false)
+    .action(async (opts) => {
+      await runChannelsCommand(async () => {
+        const { channelsSlackWatchdogReplayCommand } =
+          await import("../commands/channels/slack-watchdog-scan.js");
+        await channelsSlackWatchdogReplayCommand(opts, defaultRuntime);
       });
     });
 
