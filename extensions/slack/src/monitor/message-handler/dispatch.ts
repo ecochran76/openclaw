@@ -1689,7 +1689,7 @@ export async function dispatchPreparedSlackMessage(prepared: PreparedSlackMessag
     line?: ChannelProgressDraftLine,
     options?: { toolName?: string },
   ) => {
-    if (!draftStream && !useNativeProgressStreaming) {
+    if ((!draftStream && !useNativeProgressStreaming) || draftPreviewCommitted) {
       return;
     }
     if (options?.toolName !== undefined && !isChannelProgressDraftWorkToolName(options.toolName)) {

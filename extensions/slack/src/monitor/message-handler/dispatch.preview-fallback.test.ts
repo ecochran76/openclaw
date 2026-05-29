@@ -1633,6 +1633,19 @@ describe("dispatchPreparedSlackMessage preview fallback", () => {
       messageId: "171234.567",
       sessionKeyForInternalHooks: "agent:agent-1:slack:C123",
     });
+    const draftUpdateText = draftStream.update.mock.calls
+      .map(([value]) =>
+        typeof value === "string"
+          ? value
+          : typeof value === "object" &&
+              value !== null &&
+              "text" in value &&
+              typeof value.text === "string"
+            ? value.text
+            : "",
+      )
+      .join("\n");
+    expect(draftUpdateText).not.toContain("agent turn completed");
     expect(deliverRepliesMock).not.toHaveBeenCalled();
     expect(draftStream.clear).not.toHaveBeenCalled();
   });
