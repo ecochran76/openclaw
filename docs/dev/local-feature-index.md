@@ -90,6 +90,10 @@ Use `--list` to print the command bundle without running it. Use `--live-patch` 
 - Doc: `docs/dev/local-features/slack-agent-responsiveness.md`
 - Design doc: `docs/dev/slack-turn-visibility-and-steering.md`
 - Stale-socket reconciliation plan: `docs/dev/plans/0007-2026-05-18-slack-stale-socket-watchdog.md`
+- Slack connector overhaul plan: `docs/dev/plans/0008-2026-05-30-slack-connector-overhaul.md`
+- Slack health diagnostics remediation plan: `docs/dev/plans/0009-2026-05-30-slack-health-diagnostics-remediation.md`
+- Slack active reconciliation plan: `docs/dev/plans/0010-2026-05-30-slack-history-reconciliation-receiver.md`
+- Slack Socket Mode hardening plan: `docs/dev/plans/0011-2026-05-30-slack-socket-mode-hardening.md`
 - Scope:
   - long-turn visibility
   - progress signaling
@@ -97,6 +101,8 @@ Use `--list` to print the command bundle without running it. Use `--live-patch` 
   - steering/status tooling
   - delivery attribution
   - stale-socket admission-gap detection and guarded recovery planning
+  - Socket Mode receiver hardening
+  - active Slack history reconciliation
 - Current status:
   - Slice 1 landed on `ec-main` (`498f59a1c`)
   - Slice 2 landed on `ec-main` as a commit series (`05571e149`, `987865f7c`, `5f9754034`, `f8523c896`, `1f104770f`)
@@ -104,6 +110,8 @@ Use `--list` to print the command bundle without running it. Use `--live-patch` 
   - Slice 3 plan documented in `docs/dev/slack-turn-slice-3-steering-and-watchers-plan.md`
   - Pre-live-test polish checklist documented in `docs/dev/slack-turn-live-testing-polish-plan.md`
   - Stale-socket watchdog roadmap documented in `docs/dev/plans/0007-2026-05-18-slack-stale-socket-watchdog.md`
+  - Slack Socket Mode hardening is tracked as roadmap milestone P04 in `ROADMAP.md`
+  - Slack active reconciliation is tracked as roadmap milestone P05 in `ROADMAP.md`
 - Common validation:
   - `pnpm test -- src/auto-reply/reply/dispatch-from-config.test.ts`
   - `pnpm test -- src/auto-reply/reply/commands-turn-status.test.ts`
