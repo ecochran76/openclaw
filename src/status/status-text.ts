@@ -220,13 +220,6 @@ function resolveStatusRuntimeProvider(params: {
   return params.provider;
 }
 
-function resolveStatusAuthProvider(params: {
-  provider: string;
-  effectiveHarness?: string;
-}): string {
-  return resolveStatusRuntimeProvider(params);
-}
-
 function formatAuthFailureReason(reason: AuthProfileFailureReason | undefined): string {
   return reason ? reason.replaceAll("_", " ") : "auth";
 }

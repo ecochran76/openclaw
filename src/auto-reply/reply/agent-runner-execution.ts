@@ -529,16 +529,6 @@ function buildRuntimeAuthRefreshTimeoutFailureMessage(params: {
   return `🔐 Model login refresh timed out for ${profileId || selected}. ${recoveryHint}`;
 }
 
-function isToolResultTurnMismatchError(message: string): boolean {
-  const lower = normalizeLowercaseStringOrEmpty(message);
-  return (
-    lower.includes("toolresult") &&
-    lower.includes("tooluse") &&
-    lower.includes("exceeds the number") &&
-    lower.includes("previous turn")
-  );
-}
-
 function collapseRepeatedFailureDetail(message: string): string {
   const parts = message
     .split(/\s+\|\s+/u)

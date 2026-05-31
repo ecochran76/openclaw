@@ -282,6 +282,8 @@ openclaw models auth sync --profile-id openai:work --from-agent dev-openclaw --t
 ```
 
 This command is profile-scoped: it copies only the selected profile and preserves unrelated profiles, order overrides, and usage metadata in the target stores.
+Existing agents that are still named `dev-slack-export` can keep using that id
+until the local agent/workspace path is migrated.
 
 ## Troubleshooting
 
