@@ -12,6 +12,8 @@ type SlackProviderMonitor = (params: {
   abortSignal: AbortSignal;
   config?: Record<string, unknown>;
   channelRuntime?: ChannelRuntimeSurface;
+  setStatus?: (next: Record<string, unknown>) => void;
+  getStatus?: () => Record<string, unknown>;
 }) => Promise<unknown>;
 
 type SlackTestState = {
@@ -29,6 +31,7 @@ type SlackTestState = {
   resolveSlackUserAllowlistMock: Mock<
     (params: { entries: string[] }) => Promise<Array<{ input: string; resolved: boolean }>>
   >;
+  socketReceivers: unknown[];
 };
 
 const slackTestState: SlackTestState = vi.hoisted(() => ({
@@ -44,6 +47,7 @@ const slackTestState: SlackTestState = vi.hoisted(() => ({
   readAllowFromStoreMock: vi.fn(),
   upsertPairingRequestMock: vi.fn(),
   resolveSlackUserAllowlistMock: vi.fn(),
+  socketReceivers: [],
 }));
 
 export const getSlackTestState = (): SlackTestState => slackTestState;
@@ -138,7 +142,13 @@ async function waitForSlackEvent(name: string) {
 
 export function startSlackMonitor(
   monitorSlackProvider: SlackProviderMonitor,
-  opts?: { botToken?: string; appToken?: string; channelRuntime?: ChannelRuntimeSurface },
+  opts?: {
+    botToken?: string;
+    appToken?: string;
+    channelRuntime?: ChannelRuntimeSurface;
+    setStatus?: (next: Record<string, unknown>) => void;
+    getStatus?: () => Record<string, unknown>;
+  },
 ) {
   const controller = new AbortController();
   const run = monitorSlackProvider({
@@ -147,6 +157,8 @@ export function startSlackMonitor(
     abortSignal: controller.signal,
     config: slackTestState.config,
     channelRuntime: opts?.channelRuntime,
+    setStatus: opts?.setStatus,
+    getStatus: opts?.getStatus,
   });
   return { controller, run };
 }
@@ -224,6 +236,7 @@ export function resetSlackTestState(config: Record<string, unknown> = defaultSla
     .mockImplementation(async ({ entries }) =>
       entries.map((input) => ({ input, resolved: false })),
     );
+  slackTestState.socketReceivers.length = 0;
   const client = getSlackClient();
   client.auth.test.mockReset().mockResolvedValue({ user_id: "bot-user" });
   client.conversations.info.mockReset().mockResolvedValue({
@@ -356,6 +369,10 @@ vi.mock("@slack/bolt", () => {
       on: vi.fn(),
       off: vi.fn(),
     };
+
+    constructor() {
+      slackTestState.socketReceivers.push(this);
+    }
   }
   return {
     App,

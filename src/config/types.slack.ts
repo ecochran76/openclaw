@@ -138,6 +138,8 @@ export type SlackSocketModeConfig = {
   serverPingTimeout?: number;
   /** Enable Slack SDK ping/pong transport logging. Socket Mode only. */
   pingPongLoggingEnabled?: boolean;
+  /** Number of concurrent Socket Mode receiver connections. Default: 1, max: 10. */
+  connectionCount?: number;
 };
 
 export type SlackRelayConfig = {

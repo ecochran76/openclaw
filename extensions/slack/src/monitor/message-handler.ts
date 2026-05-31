@@ -26,6 +26,7 @@ import {
   buildTopLevelSlackConversationKey,
 } from "./message-handler/debounce-key.js";
 import { normalizeSlackAckReactionName, toSlackReactionName } from "./message-handler/reactions.js";
+import type { SlackStatusCounter } from "./provider-support.js";
 import { createSlackThreadTsResolver } from "./thread-resolution.js";
 
 type SlackMessagePipeline = typeof import("./message-handler/pipeline.runtime.js");
@@ -308,8 +309,10 @@ export function createSlackMessageHandler(params: {
   account: ResolvedSlackAccount;
   /** Called on each inbound event to update liveness tracking. */
   trackEvent?: () => void;
+  /** Called for compact status counters used by health/watchdog surfaces. */
+  trackTelemetry?: (counter: SlackStatusCounter) => void;
 }): SlackMessageHandler {
-  const { ctx, account, trackEvent } = params;
+  const { ctx, account, trackEvent, trackTelemetry } = params;
   const { debounceMs, debouncer } = createChannelInboundDebouncer<{
     message: SlackMessageEvent;
     opts: QueuedSlackMessageOptions;
@@ -373,6 +376,12 @@ export function createSlackMessageHandler(params: {
               },
             });
             if (!prepared) {
+              if (
+                !(syntheticMessage as SlackMessageEvent & { __openclawDropTelemetryRecorded?: true })
+                  .__openclawDropTelemetryRecorded
+              ) {
+                trackTelemetry?.("droppedEvents");
+              }
               return;
             }
             if (seenMessageKey) {
@@ -386,6 +395,7 @@ export function createSlackMessageHandler(params: {
               ) {
                 appMentionDispatchedKeys.delete(seenMessageKey);
                 appMentionRetryKeys.delete(seenMessageKey);
+                trackTelemetry?.("droppedEvents");
                 return;
               }
               appMentionRetryKeys.delete(seenMessageKey);
@@ -398,6 +408,7 @@ export function createSlackMessageHandler(params: {
                 prepared.ctxPayload.MessageSidLast = ids[ids.length - 1];
               }
             }
+            trackTelemetry?.("preparedForDispatch");
             try {
               await dispatchPreparedSlackMessage(prepared);
               await recordSlackInboundMessageDeliveries({
@@ -405,6 +416,7 @@ export function createSlackMessageHandler(params: {
                 messages: entries.map((entry) => entry.message),
               });
             } catch (error) {
+              trackTelemetry?.("dispatchFailures");
               if (!(error instanceof SlackRetryableInboundError)) {
                 await recordSlackInboundMessageDeliveries({
                   accountId: ctx.accountId,
@@ -493,6 +505,7 @@ export function createSlackMessageHandler(params: {
     if (opts.source === "message" && message.type !== "message") {
       return;
     }
+    trackTelemetry?.("messageEvents");
     if (
       opts.source === "message" &&
       message.subtype &&
@@ -500,6 +513,7 @@ export function createSlackMessageHandler(params: {
       message.subtype !== "bot_message" &&
       message.subtype !== "thread_broadcast"
     ) {
+      trackTelemetry?.("droppedEvents");
       return;
     }
     const seenMessageKey = buildSeenMessageKey(message.channel, message.ts);
@@ -511,6 +525,7 @@ export function createSlackMessageHandler(params: {
         ts: message.ts,
       }))
     ) {
+      trackTelemetry?.("droppedEvents");
       return;
     }
     const wasSeen = seenMessageKey ? ctx.markMessageSeen(message.channel, message.ts) : false;
@@ -523,6 +538,7 @@ export function createSlackMessageHandler(params: {
       // Allow exactly one app_mention retry if the same ts was previously dropped
       // from the message stream before it reached dispatch.
       if (opts.source !== "app_mention" || !consumeAppMentionRetryKey(seenMessageKey)) {
+        trackTelemetry?.("droppedEvents");
         return;
       }
     }

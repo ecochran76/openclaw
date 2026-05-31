@@ -7,16 +7,21 @@ import { resolveDefaultAgentId } from "../../agents/agent-scope.js";
 import { getRuntimeConfig } from "../../config/config.js";
 import type { OpenClawConfig } from "../../config/types.openclaw.js";
 import { callGateway } from "../../gateway/call.js";
-import { GATEWAY_CLIENT_MODES, GATEWAY_CLIENT_NAMES } from "../../gateway/protocol/client-info.js";
+import { GATEWAY_CLIENT_MODES, GATEWAY_CLIENT_NAMES } from "../../utils/message-channel.js";
 import { collectChannelStatusIssues } from "../../infra/channels-status-issues.js";
 import { formatTimeAgo } from "../../infra/format-time/format-relative.ts";
 import { buildOutboundBaseSessionKey } from "../../infra/outbound/base-session-key.js";
 import { readPersistedInstalledPluginIndexSync } from "../../plugins/installed-plugin-index-store.js";
 import { resolveAgentRoute } from "../../routing/resolve-route.js";
 import { resolveThreadSessionKeys } from "../../routing/session-key.js";
-import { defaultRuntime, type RuntimeEnv, writeRuntimeJson } from "../../runtime.js";
-import { normalizeOptionalString } from "../../shared/string-coerce.js";
-import { theme } from "../../terminal/theme.js";
+import {
+  defaultRuntime,
+  type OutputRuntimeEnv,
+  type RuntimeEnv,
+  writeRuntimeJson,
+} from "../../runtime.js";
+import { normalizeOptionalString } from "@openclaw/normalization-core/string-coerce";
+import { theme } from "../../../packages/terminal-core/src/theme.js";
 
 export type ChannelsSlackWatchdogScanOptions = {
   account?: string;
@@ -193,7 +198,14 @@ type WatchdogHealthDiagnostics = {
   lastInboundAge?: string;
   lastTransportActivityAt?: string;
   lastTransportActivityAge?: string;
+  lastSocketEnvelopeAt?: string;
+  lastSocketEnvelopeAge?: string;
+  lastSlackEventAt?: string;
+  lastSlackEventAge?: string;
+  lastSocketErrorAt?: string;
+  lastSocketErrorAge?: string;
   lastDisconnectAt?: string;
+  slackTelemetry?: Record<string, number>;
   issues?: string[];
   error?: string;
 };
@@ -215,6 +227,11 @@ type WatchdogActionStateEntry = {
   sourceReplyTs?: string;
   replayAttemptedAt?: string;
   replayOutcome?: string;
+  replayAgentReplyPlan?: string[];
+  replayAgentReplyParts?: Record<
+    string,
+    { attemptedAt?: string; sentAt?: string; sourceReplyTs?: string }
+  >;
 };
 
 type WatchdogActionState = Record<string, WatchdogActionStateEntry>;
@@ -250,7 +267,9 @@ type WatchdogReplayFollowUpResult = {
   sent: boolean;
   target: string;
   threadTs?: string;
-  message: string;
+  message?: string;
+  payloadCount?: number;
+  sentCount?: number;
   sourceReplyTs?: string;
   error?: string;
 };
@@ -282,6 +301,7 @@ type WatchdogReplayReport = {
     threadId?: string;
   };
   record?: WatchdogScanRecord;
+  agentReply?: WatchdogReplayFollowUpResult;
   recoveryReply?: WatchdogReplayFollowUpResult;
   statePath: string;
 };
@@ -948,6 +968,36 @@ function normalizeSlackWatchdogStateEntry(value: unknown): WatchdogActionStateEn
   const sourceReplyTs = normalizeOptionalString(value.sourceReplyTs);
   const replayAttemptedAt = normalizeOptionalString(value.replayAttemptedAt);
   const replayOutcome = normalizeOptionalString(value.replayOutcome);
+  const replayAgentReplyPlan = Array.isArray(value.replayAgentReplyPlan)
+    ? value.replayAgentReplyPlan
+        .map((entry) => normalizeOptionalString(entry))
+        .filter((entry): entry is string => Boolean(entry))
+    : undefined;
+  const replayAgentReplyParts = isRecord(value.replayAgentReplyParts)
+    ? Object.fromEntries(
+        Object.entries(value.replayAgentReplyParts).flatMap(([part, partValue]) => {
+          if (!isRecord(partValue)) {
+            return [];
+          }
+          const attemptedAt = normalizeOptionalString(partValue.attemptedAt);
+          const sentAt = normalizeOptionalString(partValue.sentAt);
+          if (!attemptedAt && !sentAt) {
+            return [];
+          }
+          const sourceReplyTs = normalizeOptionalString(partValue.sourceReplyTs);
+          return [
+            [
+              part,
+              {
+                ...(attemptedAt ? { attemptedAt } : {}),
+                ...(sentAt ? { sentAt } : {}),
+                ...(sourceReplyTs ? { sourceReplyTs } : {}),
+              },
+            ],
+          ];
+        }),
+      )
+    : undefined;
   if (operatorAlertedAt) {
     entry.operatorAlertedAt = operatorAlertedAt;
   }
@@ -962,6 +1012,12 @@ function normalizeSlackWatchdogStateEntry(value: unknown): WatchdogActionStateEn
   }
   if (replayOutcome) {
     entry.replayOutcome = replayOutcome;
+  }
+  if (replayAgentReplyPlan?.length) {
+    entry.replayAgentReplyPlan = replayAgentReplyPlan;
+  }
+  if (replayAgentReplyParts && Object.keys(replayAgentReplyParts).length > 0) {
+    entry.replayAgentReplyParts = replayAgentReplyParts;
   }
   return Object.keys(entry).length > 0 ? entry : undefined;
 }
@@ -1048,6 +1104,9 @@ function formatSlackWatchdogHealthLines(health: WatchdogHealthDiagnostics | unde
     health.healthState ? `health=${health.healthState}` : null,
     typeof health.connected === "boolean" ? `connected=${health.connected}` : null,
     typeof health.running === "boolean" ? `running=${health.running}` : null,
+    health.lastSocketEnvelopeAge ? `socketEnvelope=${health.lastSocketEnvelopeAge}` : null,
+    health.lastSlackEventAge ? `slackEvent=${health.lastSlackEventAge}` : null,
+    health.lastSocketErrorAge ? `socketError=${health.lastSocketErrorAge}` : null,
     health.lastTransportActivityAge ? `transport=${health.lastTransportActivityAge}` : null,
     health.lastInboundAge ? `inbound=${health.lastInboundAge}` : null,
     health.lastDisconnectAt ? `last disconnect=${health.lastDisconnectAt}` : null,
@@ -1055,6 +1114,23 @@ function formatSlackWatchdogHealthLines(health: WatchdogHealthDiagnostics | unde
   const lines = [`Nearby channel health: ${facts.length ? facts.join(", ") : "no live facts"}`];
   for (const issue of health.issues?.slice(0, 3) ?? []) {
     lines.push(`- Health warning: ${issue}`);
+  }
+  if (health.slackTelemetry) {
+    const telemetryFacts = [
+      ["raw", health.slackTelemetry.rawSlackEvents],
+      ["messages", health.slackTelemetry.messageEvents],
+      ["dropped", health.slackTelemetry.droppedEvents],
+      ["policyDrops", health.slackTelemetry.droppedPolicyEvents],
+      ["selfBotDrops", health.slackTelemetry.droppedSelfBotEvents],
+      ["prepared", health.slackTelemetry.preparedForDispatch],
+      ["admissions", health.slackTelemetry.admissionsRecorded],
+      ["dispatchFailures", health.slackTelemetry.dispatchFailures],
+    ]
+      .filter((entry): entry is [string, number] => typeof entry[1] === "number")
+      .map(([label, value]) => `${label}=${value}`);
+    if (telemetryFacts.length > 0) {
+      lines.push(`- Slack receiver counters: ${telemetryFacts.join(", ")}`);
+    }
   }
   return lines;
 }
@@ -1221,6 +1297,19 @@ function readBoolean(value: unknown): boolean | undefined {
   return typeof value === "boolean" ? value : undefined;
 }
 
+function readNumberRecord(value: unknown): Record<string, number> | undefined {
+  if (!isRecord(value)) {
+    return undefined;
+  }
+  const out: Record<string, number> = {};
+  for (const [key, raw] of Object.entries(value)) {
+    if (typeof raw === "number" && Number.isFinite(raw)) {
+      out[key] = Math.max(0, Math.trunc(raw));
+    }
+  }
+  return Object.keys(out).length > 0 ? out : undefined;
+}
+
 function formatWatchdogStatusTime(value: number | undefined): string | undefined {
   return value === undefined ? undefined : formatChicagoTime(new Date(value));
 }
@@ -1292,6 +1381,11 @@ async function collectSlackWatchdogHealthDiagnostics(params: {
     }
     const lastInboundAt = readFiniteNumber(account.lastInboundAt);
     const lastTransportActivityAt = readFiniteNumber(account.lastTransportActivityAt);
+    const lastSocketEnvelopeAt = readFiniteNumber(account.lastSocketEnvelopeAt);
+    const lastSlackEventAt = readFiniteNumber(account.lastSlackEventAt);
+    const lastSocketError = isRecord(account.lastSocketError) ? account.lastSocketError : {};
+    const lastSocketErrorAt = readFiniteNumber(lastSocketError.at);
+    const slackTelemetry = readNumberRecord(account.slackTelemetry);
     const lastDisconnect = isRecord(account.lastDisconnect) ? account.lastDisconnect : {};
     const lastDisconnectAt = readFiniteNumber(lastDisconnect.at);
     const issues = collectChannelStatusIssues(payload)
@@ -1322,9 +1416,28 @@ async function collectSlackWatchdogHealthDiagnostics(params: {
             lastTransportActivityAge: formatWatchdogStatusAge(lastTransportActivityAt, params.now),
           }
         : {}),
+      ...(lastSocketEnvelopeAt !== undefined
+        ? {
+            lastSocketEnvelopeAt: formatWatchdogStatusTime(lastSocketEnvelopeAt),
+            lastSocketEnvelopeAge: formatWatchdogStatusAge(lastSocketEnvelopeAt, params.now),
+          }
+        : {}),
+      ...(lastSlackEventAt !== undefined
+        ? {
+            lastSlackEventAt: formatWatchdogStatusTime(lastSlackEventAt),
+            lastSlackEventAge: formatWatchdogStatusAge(lastSlackEventAt, params.now),
+          }
+        : {}),
+      ...(lastSocketErrorAt !== undefined
+        ? {
+            lastSocketErrorAt: formatWatchdogStatusTime(lastSocketErrorAt),
+            lastSocketErrorAge: formatWatchdogStatusAge(lastSocketErrorAt, params.now),
+          }
+        : {}),
       ...(lastDisconnectAt !== undefined
         ? { lastDisconnectAt: formatWatchdogStatusTime(lastDisconnectAt) }
         : {}),
+      ...(slackTelemetry ? { slackTelemetry } : {}),
       ...(issues.length > 0 ? { issues } : {}),
     };
   } catch (err) {
@@ -1487,6 +1600,15 @@ function formatSlackWatchdogReplayReport(report: WatchdogReplayReport): string {
   return lines.join("\n");
 }
 
+function createJsonReplayAgentRuntime(runtime: RuntimeEnv): OutputRuntimeEnv {
+  return {
+    ...runtime,
+    log() {},
+    writeStdout() {},
+    writeJson() {},
+  };
+}
+
 function extractSlackSendTs(payload: unknown): string | undefined {
   if (!isRecord(payload)) {
     return undefined;
@@ -1497,6 +1619,234 @@ function extractSlackSendTs(payload: unknown): string | undefined {
     normalizeOptionalString(nested.ts) ??
     normalizeOptionalString(nested.id)
   );
+}
+
+type SlackReplayAgentReplyPayload = {
+  message?: string;
+  mediaUrl?: string;
+  mediaUrls?: string[];
+  presentation?: unknown;
+  interactive?: unknown;
+};
+
+function normalizeSlackReplayStringArray(value: unknown): string[] {
+  if (!Array.isArray(value)) {
+    return [];
+  }
+  return value
+    .map((entry) => normalizeOptionalString(entry))
+    .filter((entry): entry is string => Boolean(entry));
+}
+
+function extractSlackReplayBlocks(payload: Record<string, unknown>): unknown {
+  const slackData = isRecord(payload.channelData)
+    ? (payload.channelData.slack as unknown)
+    : undefined;
+  if (!isRecord(slackData)) {
+    return undefined;
+  }
+  return slackData.presentationBlocks ?? slackData.blocks;
+}
+
+function readSlackBlockText(block: Record<string, unknown>): string | undefined {
+  const text = block.text;
+  if (typeof text === "string") {
+    return normalizeOptionalString(text);
+  }
+  if (isRecord(text)) {
+    return normalizeOptionalString(text.text);
+  }
+  return undefined;
+}
+
+function convertSlackBlocksToPresentation(blocks: unknown): unknown {
+  if (!Array.isArray(blocks)) {
+    return undefined;
+  }
+  const presentationBlocks = blocks.flatMap((block): Array<Record<string, unknown>> => {
+    if (!isRecord(block)) {
+      return [];
+    }
+    const blockType = normalizeOptionalString(block.type);
+    if (blockType === "divider") {
+      return [{ type: "divider" }];
+    }
+    if (blockType === "context") {
+      const elements = Array.isArray(block.elements) ? block.elements : [];
+      const text = normalizeOptionalString(
+        elements
+          .map((element) => (isRecord(element) ? normalizeOptionalString(element.text) : undefined))
+          .filter((part): part is string => Boolean(part))
+          .join(" "),
+      );
+      return text ? [{ type: "context", text }] : [];
+    }
+    const text = readSlackBlockText(block);
+    return text ? [{ type: "text", text }] : [];
+  });
+  return presentationBlocks.length > 0 ? { blocks: presentationBlocks } : undefined;
+}
+
+function extractSlackReplayAgentReplyPayloads(result: unknown): SlackReplayAgentReplyPayload[] {
+  if (!isRecord(result) || !Array.isArray(result.payloads)) {
+    return [];
+  }
+  return result.payloads
+    .flatMap((payload): SlackReplayAgentReplyPayload[] => {
+      if (!isRecord(payload)) {
+        return [];
+      }
+      const message = normalizeOptionalString(payload.text);
+      const mediaUrl = normalizeOptionalString(payload.mediaUrl);
+      const mediaUrls = Array.from(
+        new Set([
+          ...(mediaUrl ? [mediaUrl] : []),
+          ...normalizeSlackReplayStringArray(payload.mediaUrls),
+        ]),
+      );
+      const presentation =
+        payload.presentation ?? convertSlackBlocksToPresentation(extractSlackReplayBlocks(payload));
+      const interactive = payload.interactive;
+      if (
+        !message &&
+        mediaUrls.length === 0 &&
+        presentation === undefined &&
+        interactive === undefined
+      ) {
+        return [];
+      }
+      return [
+        {
+          ...(message ? { message } : {}),
+          ...(mediaUrl ? { mediaUrl } : {}),
+          ...(mediaUrls.length > 0 ? { mediaUrls } : {}),
+          ...(presentation !== undefined ? { presentation } : {}),
+          ...(interactive !== undefined ? { interactive } : {}),
+        },
+      ];
+    })
+    .filter((payload) =>
+      Boolean(
+        payload.message ||
+        payload.mediaUrl ||
+        payload.mediaUrls?.length ||
+        payload.presentation ||
+        payload.interactive,
+      ),
+    );
+}
+
+function summarizeSlackReplayAgentReplyPayloads(
+  payloads: SlackReplayAgentReplyPayload[],
+): string | undefined {
+  return normalizeOptionalString(
+    payloads
+      .map((payload) => payload.message)
+      .filter((message): message is string => Boolean(message))
+      .join("\n\n"),
+  );
+}
+
+function createSlackReplayAgentReplySends(params: {
+  payloads: SlackReplayAgentReplyPayload[];
+  target: string;
+  accountId: string;
+  threadTs?: string;
+}): Array<Record<string, unknown>> {
+  const sends: Array<Record<string, unknown>> = [];
+  for (const payload of params.payloads) {
+    const mediaUrls = payload.mediaUrls?.length
+      ? payload.mediaUrls
+      : payload.mediaUrl
+        ? [payload.mediaUrl]
+        : [];
+    const safeMediaUrls = mediaUrls.map(normalizeSlackReplayMediaReference);
+    if (safeMediaUrls.length <= 1) {
+      sends.push({
+        to: params.target,
+        accountId: params.accountId,
+        ...(payload.message ? { message: payload.message } : {}),
+        ...(safeMediaUrls[0] ? { media: safeMediaUrls[0] } : {}),
+        ...(payload.presentation !== undefined ? { presentation: payload.presentation } : {}),
+        ...(payload.interactive !== undefined ? { interactive: payload.interactive } : {}),
+        ...(params.threadTs ? { threadId: params.threadTs } : {}),
+      });
+      continue;
+    }
+    for (const mediaUrl of safeMediaUrls) {
+      sends.push({
+        to: params.target,
+        accountId: params.accountId,
+        media: mediaUrl,
+        ...(params.threadTs ? { threadId: params.threadTs } : {}),
+      });
+    }
+    if (
+      payload.message ||
+      payload.presentation !== undefined ||
+      payload.interactive !== undefined
+    ) {
+      sends.push({
+        to: params.target,
+        accountId: params.accountId,
+        ...(payload.message ? { message: payload.message } : {}),
+        ...(payload.presentation !== undefined ? { presentation: payload.presentation } : {}),
+        ...(payload.interactive !== undefined ? { interactive: payload.interactive } : {}),
+        ...(params.threadTs ? { threadId: params.threadTs } : {}),
+      });
+    }
+  }
+  return sends;
+}
+
+function normalizeSlackReplayMediaReference(media: string): string {
+  if (/^https?:\/\//i.test(media) || /^file:\/\//i.test(media) || path.isAbsolute(media)) {
+    return media;
+  }
+  throw new Error(
+    `Watchdog replay cannot safely deliver relative media reference ${JSON.stringify(media)}; rerun through normal delivery or use an absolute/file/HTTP media URL.`,
+  );
+}
+
+function stableStringify(value: unknown): string {
+  if (Array.isArray(value)) {
+    return `[${value.map((entry) => stableStringify(entry)).join(",")}]`;
+  }
+  if (isRecord(value)) {
+    return `{${Object.keys(value)
+      .sort()
+      .map((key) => `${JSON.stringify(key)}:${stableStringify(value[key])}`)
+      .join(",")}}`;
+  }
+  return JSON.stringify(value);
+}
+
+function hashSlackReplaySendParams(params: Record<string, unknown>): string {
+  return createHash("sha256").update(stableStringify(params)).digest("hex");
+}
+
+function assertReplayAgentReplyPlanStable(params: {
+  stateEntry: WatchdogActionStateEntry;
+  sendPlanHashes: string[];
+}) {
+  const existingParts = params.stateEntry.replayAgentReplyParts ?? {};
+  const existingPlan = params.stateEntry.replayAgentReplyPlan;
+  if (!existingPlan) {
+    if (Object.keys(existingParts).length > 0) {
+      throw new Error(
+        "Watchdog replay has partial agent reply state without a saved send plan; refusing to risk duplicate delivery.",
+      );
+    }
+    return;
+  }
+  if (
+    existingPlan.length !== params.sendPlanHashes.length ||
+    existingPlan.some((hash, index) => hash !== params.sendPlanHashes[index])
+  ) {
+    throw new Error(
+      "Watchdog replay agent reply plan changed after partial delivery; refusing to risk mismatched Slack delivery.",
+    );
+  }
 }
 
 async function sendSlackMissedMessageReplies(params: {
@@ -1607,6 +1957,120 @@ async function sendSlackMissedMessageReplies(params: {
     maxReplies: params.maxReplies,
     records: results,
   };
+}
+
+async function sendSlackReplayAgentReply(params: {
+  callGatewayFn: typeof callGateway;
+  record: WatchdogScanRecord;
+  accountId: string;
+  statePath: string;
+  agentId: string;
+  sessionKey: string;
+  timeoutMs: number;
+  now: Date;
+  payloads: SlackReplayAgentReplyPayload[];
+}): Promise<WatchdogReplayFollowUpResult> {
+  const target = `channel:${params.record.channel}`;
+  const threadTs = resolveSlackMissedMessageReplyThreadTs(params.record);
+  const message = summarizeSlackReplayAgentReplyPayloads(params.payloads);
+  const sends = createSlackReplayAgentReplySends({
+    payloads: params.payloads,
+    target,
+    accountId: params.accountId,
+    ...(threadTs ? { threadTs } : {}),
+  });
+  const sendPlanHashes = sends.map((sendParams) => hashSlackReplaySendParams(sendParams));
+  try {
+    const stateKey = slackWatchdogAlertKey(params.record);
+    const state = await readSlackWatchdogActionState(params.statePath);
+    let stateEntry = state[stateKey] ?? {};
+    assertReplayAgentReplyPlanStable({ stateEntry, sendPlanHashes });
+    if (!stateEntry.replayAgentReplyPlan) {
+      stateEntry = { ...stateEntry, replayAgentReplyPlan: sendPlanHashes };
+      state[stateKey] = stateEntry;
+      await writeSlackWatchdogActionState(params.statePath, state);
+    }
+    const replayAgentReplyParts = { ...(stateEntry.replayAgentReplyParts ?? {}) };
+    let sourceReplyTs: string | undefined;
+    for (const [index, sendParams] of sends.entries()) {
+      const partKey = String(index);
+      const existingPart = replayAgentReplyParts[partKey];
+      if (existingPart?.sentAt) {
+        sourceReplyTs = existingPart.sourceReplyTs ?? sourceReplyTs;
+        continue;
+      }
+      if (existingPart?.attemptedAt) {
+        throw new Error(
+          `Watchdog replay agent reply part ${partKey} has ambiguous prior delivery at ${existingPart.attemptedAt}; refusing automatic retry to avoid duplicate Slack delivery.`,
+        );
+      }
+      replayAgentReplyParts[partKey] = { attemptedAt: params.now.toISOString() };
+      stateEntry = {
+        ...stateEntry,
+        replayAgentReplyParts,
+      };
+      state[stateKey] = stateEntry;
+      await writeSlackWatchdogActionState(params.statePath, state);
+      const response = await params.callGatewayFn({
+        method: "message.action",
+        params: {
+          channel: "slack",
+          action: "send",
+          accountId: params.accountId,
+          params: sendParams,
+          agentId: params.agentId,
+          sessionKey: params.sessionKey,
+          toolContext: {
+            currentChannelId: params.record.channel,
+            ...(threadTs ? { currentThreadTs: threadTs } : {}),
+          },
+          idempotencyKey: [
+            "channels-watchdog-replay-agent-reply",
+            params.accountId,
+            params.record.channel,
+            params.record.ts,
+            String(index),
+          ].join(":"),
+        },
+        timeoutMs: params.timeoutMs,
+        clientName: GATEWAY_CLIENT_NAMES.CLI,
+        mode: GATEWAY_CLIENT_MODES.CLI,
+      });
+      sourceReplyTs = extractSlackSendTs(response) ?? sourceReplyTs;
+      replayAgentReplyParts[partKey] = {
+        attemptedAt: params.now.toISOString(),
+        sentAt: params.now.toISOString(),
+        ...(sourceReplyTs ? { sourceReplyTs } : {}),
+      };
+      stateEntry = {
+        ...stateEntry,
+        replayAgentReplyParts,
+      };
+      state[stateKey] = stateEntry;
+      await writeSlackWatchdogActionState(params.statePath, state);
+    }
+    return {
+      attempted: true,
+      sent: true,
+      target,
+      ...(threadTs ? { threadTs } : {}),
+      ...(message ? { message } : {}),
+      payloadCount: params.payloads.length,
+      sentCount: sends.length,
+      ...(sourceReplyTs ? { sourceReplyTs } : {}),
+    };
+  } catch (error) {
+    return {
+      attempted: true,
+      sent: false,
+      target,
+      ...(threadTs ? { threadTs } : {}),
+      ...(message ? { message } : {}),
+      payloadCount: params.payloads.length,
+      sentCount: sends.length,
+      error: error instanceof Error ? error.message : String(error),
+    };
+  }
 }
 
 async function sendSlackReplayCompleteReply(params: {
@@ -2004,7 +2468,7 @@ export async function channelsSlackWatchdogReplayCommand(
     }),
   });
   try {
-    await runAgentFromIngress(
+    const agentResult = await runAgentFromIngress(
       {
         message: normalizeOptionalString(message.text) ?? "",
         transcriptMessage: normalizeOptionalString(message.text) ?? "",
@@ -2019,7 +2483,7 @@ export async function channelsSlackWatchdogReplayCommand(
         replyAccountId: accountId,
         ...(effectiveThreadId ? { threadId: effectiveThreadId } : {}),
         sessionKey,
-        deliver: true,
+        deliver: false,
         allowModelOverride: false,
         senderIsOwner: false,
         runContext: {
@@ -2035,9 +2499,35 @@ export async function channelsSlackWatchdogReplayCommand(
           sourceTool: "channels watchdog-replay",
         },
       },
-      runtime,
+      opts.json ? createJsonReplayAgentRuntime(runtime) : runtime,
     );
+    const agentReplyPayloads = extractSlackReplayAgentReplyPayloads(agentResult);
+    if (agentReplyPayloads.length === 0) {
+      throw new Error("Watchdog replay completed without deliverable agent reply payloads.");
+    }
+    const agentReply = await sendSlackReplayAgentReply({
+      callGatewayFn,
+      record,
+      accountId,
+      statePath,
+      agentId,
+      sessionKey,
+      timeoutMs,
+      now,
+      payloads: agentReplyPayloads,
+    });
+    if (!agentReply.sent) {
+      baseReport.agentReply = agentReply;
+      throw new Error(agentReply.error ?? "Watchdog replay agent reply delivery failed.");
+    }
+    baseReport.agentReply = agentReply;
   } catch (error) {
+    const failedReport: WatchdogReplayReport = {
+      ...baseReport,
+      outcome: "failed",
+      dispatched: false,
+      reason: error instanceof Error ? error.message : String(error),
+    };
     await appendWatchdogReplayAdmissionRecord({
       accountId,
       env: deps.env,
@@ -2057,6 +2547,10 @@ export async function channelsSlackWatchdogReplayCommand(
       now,
       outcome: "failed",
     });
+    if (opts.json) {
+      writeRuntimeJson(runtime, failedReport);
+      return;
+    }
     throw error;
   }
   await appendWatchdogReplayAdmissionRecord({

@@ -952,6 +952,7 @@ export const SlackSocketModeSchema = z
     clientPingTimeout: z.number().int().positive().optional(),
     serverPingTimeout: z.number().int().positive().optional(),
     pingPongLoggingEnabled: z.boolean().optional(),
+    connectionCount: z.number().int().min(1).max(10).optional(),
   })
   .strict();
 

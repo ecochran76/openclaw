@@ -479,6 +479,9 @@ function logSlackInboundDrop(params: {
   detail?: Record<string, unknown>;
 }) {
   const { ctx, account, message, conversation, reason, senderId, detail } = params;
+  (
+    message as SlackMessageEvent & { __openclawDropTelemetryRecorded?: true }
+  ).__openclawDropTelemetryRecorded = true;
   ctx.logger.info(
     {
       accountId: account.accountId,
@@ -495,6 +498,12 @@ function logSlackInboundDrop(params: {
     },
     "slack inbound message dropped",
   );
+  ctx.trackTelemetry?.("admissionsRecorded");
+  ctx.trackTelemetry?.("droppedEvents");
+  const classifiedCounter = classifySlackDropCounter(reason);
+  if (classifiedCounter) {
+    ctx.trackTelemetry?.(classifiedCounter);
+  }
   void recordSlackAdmission({
     accountId: account.accountId,
     message,
@@ -502,6 +511,29 @@ function logSlackInboundDrop(params: {
     reason,
     logger: ctx.logger,
   });
+}
+
+function classifySlackDropCounter(reason: string) {
+  if (
+    reason === "bot-self" ||
+    reason === "bot-message-disabled" ||
+    reason === "bot-room-message-denied" ||
+    reason === "bot-message-missing-mention"
+  ) {
+    return "droppedSelfBotEvents" as const;
+  }
+  if (
+    reason === "channel-not-allowed" ||
+    reason === "channel-user-not-allowed" ||
+    reason === "no-mention" ||
+    reason === "control-command-unauthorized" ||
+    reason === "dm-denied" ||
+    reason === "dm-disabled" ||
+    reason === "dm-unauthorized"
+  ) {
+    return "droppedPolicyEvents" as const;
+  }
+  return undefined;
 }
 
 async function resolveSlackConversationContext(params: {
@@ -1041,6 +1073,14 @@ export async function prepareSlackMessage(params: {
       allowFromLower,
     }))
   ) {
+    logSlackInboundDrop({
+      ctx,
+      account,
+      message,
+      conversation,
+      reason: "bot-room-message-denied",
+      senderId,
+    });
     return null;
   }
 
@@ -1048,6 +1088,14 @@ export async function prepareSlackMessage(params: {
     const botMentioned = isDirectMessage || effectiveWasMentioned || shouldBypassMention;
     if (!botMentioned) {
       logVerbose("slack: drop bot message (allowBots=mentions, missing mention)");
+      logSlackInboundDrop({
+        ctx,
+        account,
+        message,
+        conversation,
+        reason: "bot-message-missing-mention",
+        senderId,
+      });
       return null;
     }
   }
@@ -1534,6 +1582,7 @@ export async function prepareSlackMessage(params: {
 
   const updateLastRouteSessionKey = resolveInboundLastRouteSessionKey({ route, sessionKey });
 
+  ctx.trackTelemetry?.("admissionsRecorded");
   void recordSlackAdmission({
     accountId: account.accountId,
     message,

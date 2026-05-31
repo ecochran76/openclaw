@@ -547,6 +547,7 @@ OpenClaw sets the Slack SDK client pong timeout to 15 seconds by default for Soc
         clientPingTimeout: 20000,
         serverPingTimeout: 30000,
         pingPongLoggingEnabled: false,
+        connectionCount: 1,
       },
     },
   },
@@ -555,12 +556,20 @@ OpenClaw sets the Slack SDK client pong timeout to 15 seconds by default for Soc
 
 Use this only for Socket Mode workspaces that log Slack websocket pong/server-ping timeouts or run on hosts with known event-loop starvation. `clientPingTimeout` is the pong wait after the SDK sends a client ping; `serverPingTimeout` is the wait for Slack server pings. App messages and events remain application state, not transport liveness signals.
 
+Recommended profiles:
+
+- Production receiver: `clientPingTimeout: 15000`, `connectionCount: 2`. This keeps dead-socket detection tight and gives one account two concurrent Socket Mode receivers while OpenClaw's admission ledger suppresses duplicate agent turns.
+- Desktop/dev receiver: `clientPingTimeout: 30000`, `serverPingTimeout: 45000`, `connectionCount: 1`. This tolerates local sleep, debugger pauses, and short event-loop stalls without creating extra receiver noise.
+- Flaky network receiver: `clientPingTimeout: 45000`, `serverPingTimeout: 60000`, `connectionCount: 2`. Pair this with Slack active reconciliation so Web API history catch-up remains the correctness layer when the live stream drops.
+
 Notes:
 
 - `socketMode` is ignored in HTTP Request URL mode.
 - Base `channels.slack.socketMode` settings apply to all Slack accounts unless overridden. Per-account overrides use `channels.slack.accounts.<accountId>.socketMode`; because this is an object override, include every socket tuning field you want for that account.
 - Only `clientPingTimeout` has an OpenClaw default (`15000`). `serverPingTimeout` and `pingPongLoggingEnabled` are passed to the Slack SDK only when configured.
-- Socket Mode restart backoff starts around 2 seconds and caps around 30 seconds. Recoverable start, start-wait, and disconnect failures retry until the channel stops. Permanent account and credential errors such as invalid auth, revoked tokens, or missing scopes fail fast instead of retrying forever.
+- `connectionCount` defaults to `1` and can be raised to at most `10`; use `2` for critical single-gateway accounts before considering higher values.
+- `openclaw channels status --deep --json` reports effective `socketModeSettings` without app tokens, bot tokens, signing secrets, or webhook secrets.
+- Socket Mode restart backoff starts around 2 seconds and caps around 30 seconds. Consecutive recoverable start/start-wait failures stop after 12 attempts; after a successful connection, later recoverable disconnects start a fresh retry cycle. Non-recoverable Slack auth errors such as `invalid_auth`, revoked tokens, or missing scopes fail fast instead of retrying forever.
 
 ## Manifest and scope checklist
 

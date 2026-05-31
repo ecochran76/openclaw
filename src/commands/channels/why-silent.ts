@@ -1,10 +1,14 @@
 import { randomUUID } from "node:crypto";
+import fs from "node:fs/promises";
+import path from "node:path";
+import { fileURLToPath, pathToFileURL } from "node:url";
 import { callGateway } from "../../gateway/call.js";
-import { GATEWAY_CLIENT_MODES, GATEWAY_CLIENT_NAMES } from "../../gateway/protocol/client-info.js";
+import { GATEWAY_CLIENT_MODES, GATEWAY_CLIENT_NAMES } from "../../utils/message-channel.js";
 import { formatTimeAgo } from "../../infra/format-time/format-relative.ts";
+import { readPersistedInstalledPluginIndexSync } from "../../plugins/installed-plugin-index-store.js";
 import { defaultRuntime, type RuntimeEnv, writeRuntimeJson } from "../../runtime.js";
-import { normalizeOptionalString } from "../../shared/string-coerce.js";
-import { theme } from "../../terminal/theme.js";
+import { normalizeOptionalString } from "@openclaw/normalization-core/string-coerce";
+import { theme } from "../../../packages/terminal-core/src/theme.js";
 
 export type ChannelsWhySilentOptions = {
   channel?: string;
@@ -20,6 +24,12 @@ type ChannelAccountLike = Record<string, unknown> & {
   lastStartAt?: number | null;
   lastInboundAt?: number | null;
   lastTransportActivityAt?: number | null;
+  lastSocketConnectedAt?: number | null;
+  lastSocketEnvelopeAt?: number | null;
+  lastSlackEventAt?: number | null;
+  lastSocketError?: string | { at?: number; error?: string } | null;
+  slackTelemetry?: Record<string, number>;
+  healthState?: string | null;
   connected?: boolean;
   running?: boolean;
 };
@@ -30,6 +40,14 @@ type MessageLike = Record<string, unknown> & {
   bot_id?: string;
   subtype?: string;
   text?: string;
+};
+
+type SlackAdmissionRecordLike = {
+  accountId?: string;
+  channel?: string;
+  ts?: string;
+  outcome?: string;
+  reason?: string;
 };
 
 type WhySilentReport = {
@@ -51,6 +69,12 @@ type WhySilentReport = {
     lastStartAt?: number | null;
     lastInboundAt?: number | null;
     lastTransportActivityAt?: number | null;
+    lastSocketConnectedAt?: number | null;
+    lastSocketEnvelopeAt?: number | null;
+    lastSlackEventAt?: number | null;
+    lastSocketErrorAt?: number | null;
+    healthState?: string | null;
+    slackTelemetry?: Record<string, number>;
   };
   verdict:
     | "no-messages"
@@ -58,10 +82,25 @@ type WhySilentReport = {
     | "no-account-status"
     | "message-before-current-lifecycle"
     | "likely-not-ingested"
+    | "receiver-active-admission-gap"
+    | "receiver-dropped-by-policy"
+    | "receiver-dropped-self-bot"
+    | "socket-receiver-problem"
     | "account-inbound-after-message"
     | "inconclusive";
   explanation: string;
 };
+
+type SlackAdmissionApiSurface = {
+  readSlackAdmissionRecords: (params: {
+    accountId: string;
+    env?: NodeJS.ProcessEnv;
+    limit?: number;
+  }) => Promise<SlackAdmissionRecordLike[]>;
+};
+
+const CURRENT_MODULE_PATH = fileURLToPath(import.meta.url);
+const IS_SOURCE_CHECKOUT = CURRENT_MODULE_PATH.includes(`${path.sep}src${path.sep}`);
 
 function parsePositiveInteger(raw: string | undefined, fallback: number): number {
   const parsed = Number.parseInt(raw ?? "", 10);
@@ -80,6 +119,30 @@ function parseSlackTsMs(raw: unknown): number | undefined {
     return undefined;
   }
   return Math.round(parsed * 1000);
+}
+
+function readFiniteNumber(raw: unknown): number | undefined {
+  return typeof raw === "number" && Number.isFinite(raw) ? raw : undefined;
+}
+
+function readTimedErrorAt(raw: unknown): number | undefined {
+  if (!raw || typeof raw !== "object" || Array.isArray(raw)) {
+    return undefined;
+  }
+  return readFiniteNumber((raw as { at?: unknown }).at);
+}
+
+function readNumberRecord(raw: unknown): Record<string, number> | undefined {
+  if (!raw || typeof raw !== "object" || Array.isArray(raw)) {
+    return undefined;
+  }
+  const out: Record<string, number> = {};
+  for (const [key, value] of Object.entries(raw)) {
+    if (typeof value === "number" && Number.isFinite(value)) {
+      out[key] = Math.max(0, Math.trunc(value));
+    }
+  }
+  return Object.keys(out).length > 0 ? out : undefined;
 }
 
 function textPreview(raw: unknown): string | undefined {
@@ -122,16 +185,101 @@ function isInboundCandidate(message: MessageLike): boolean {
   return true;
 }
 
+async function pathExists(filePath: string): Promise<boolean> {
+  try {
+    await fs.access(filePath);
+    return true;
+  } catch {
+    return false;
+  }
+}
+
+async function loadSlackAdmissionApiSurface(
+  env?: NodeJS.ProcessEnv,
+): Promise<SlackAdmissionApiSurface | null> {
+  const index = readPersistedInstalledPluginIndexSync({ ...(env ? { env } : {}) });
+  const plugin = index?.plugins.find((candidate) => candidate.pluginId === "slack");
+  const rootDir = normalizeOptionalString(plugin?.rootDir);
+  if (plugin?.enabled && rootDir) {
+    for (const candidate of [path.join(rootDir, "dist", "api.js"), path.join(rootDir, "api.js")]) {
+      if (await pathExists(candidate)) {
+        return (await import(pathToFileURL(candidate).href)) as SlackAdmissionApiSurface;
+      }
+    }
+  }
+  if (IS_SOURCE_CHECKOUT) {
+    return (await import("../../../extensions/slack/api.js")) as SlackAdmissionApiSurface;
+  }
+  return null;
+}
+
+async function readSlackAdmissionRecordsForWhySilent(params: {
+  accountId: string;
+  env?: NodeJS.ProcessEnv;
+}): Promise<SlackAdmissionRecordLike[]> {
+  const api = await loadSlackAdmissionApiSurface(params.env);
+  return api?.readSlackAdmissionRecords
+    ? await api.readSlackAdmissionRecords({
+        accountId: params.accountId,
+        ...(params.env ? { env: params.env } : {}),
+        limit: 5000,
+      })
+    : [];
+}
+
+function parseSlackChannelTarget(target: string): string | undefined {
+  const trimmed = target.trim();
+  return trimmed.startsWith("channel:") ? trimmed.slice("channel:".length).trim() : trimmed;
+}
+
+function findSlackAdmissionRecord(params: {
+  records: readonly SlackAdmissionRecordLike[];
+  accountId: string;
+  target: string;
+  messageTs?: string;
+}): SlackAdmissionRecordLike | undefined {
+  const channel = parseSlackChannelTarget(params.target);
+  return params.records.find(
+    (record) =>
+      record.accountId === params.accountId &&
+      record.channel === channel &&
+      record.ts === params.messageTs,
+  );
+}
+
+function isPolicyDropReason(reason: string | undefined): boolean {
+  return (
+    reason === "channel-not-allowed" ||
+    reason === "channel-user-not-allowed" ||
+    reason === "no-mention" ||
+    reason === "control-command-unauthorized" ||
+    reason === "dm-denied" ||
+    reason === "dm-disabled" ||
+    reason === "dm-unauthorized"
+  );
+}
+
+function isSelfBotDropReason(reason: string | undefined): boolean {
+  return (
+    reason === "bot-self" ||
+    reason === "bot-message-disabled" ||
+    reason === "bot-room-message-denied" ||
+    reason === "bot-message-missing-mention"
+  );
+}
+
 export function buildChannelsWhySilentReport(params: {
   channel: string;
   accountId: string;
   target: string;
   account?: ChannelAccountLike;
   messages: MessageLike[];
+  admissionRecords?: readonly SlackAdmissionRecordLike[];
   now?: number;
 }): WhySilentReport {
   const now = params.now ?? Date.now();
   const newest = params.messages.find(isInboundCandidate);
+  const newestAny = params.messages[0];
   const newestAt = parseSlackTsMs(newest?.ts);
   const newestMessage = newest
     ? {
@@ -145,13 +293,42 @@ export function buildChannelsWhySilentReport(params: {
     : undefined;
 
   const account = params.account;
+  const lastStartAt = readFiniteNumber(account?.lastStartAt);
+  const lastInboundAt = readFiniteNumber(account?.lastInboundAt);
+  const lastSocketConnectedAt = readFiniteNumber(account?.lastSocketConnectedAt);
+  const lastSocketEnvelopeAt = readFiniteNumber(account?.lastSocketEnvelopeAt);
+  const lastSlackEventAt = readFiniteNumber(account?.lastSlackEventAt);
+  const lastSocketErrorAt = readTimedErrorAt(account?.lastSocketError);
+  const latestReceiverAt = Math.max(lastSocketEnvelopeAt ?? 0, lastSlackEventAt ?? 0) || undefined;
+  const socketErrorIsCurrent =
+    lastSocketErrorAt !== undefined &&
+    lastSocketErrorAt >= Math.max(lastStartAt ?? 0, lastSocketConnectedAt ?? 0);
+  const healthState =
+    typeof account?.healthState === "string" && account.healthState.trim()
+      ? account.healthState
+      : undefined;
   const accountSummary = {
     running: account?.running,
     connected: account?.connected,
-    lastStartAt: account?.lastStartAt,
-    lastInboundAt: account?.lastInboundAt,
+    lastStartAt,
+    lastInboundAt,
     lastTransportActivityAt: account?.lastTransportActivityAt,
+    lastSocketConnectedAt,
+    lastSocketEnvelopeAt,
+    lastSlackEventAt,
+    lastSocketErrorAt,
+    healthState,
+    slackTelemetry: readNumberRecord(account?.slackTelemetry),
   };
+  const admissionRecord =
+    params.channel === "slack"
+      ? findSlackAdmissionRecord({
+          records: params.admissionRecords ?? [],
+          accountId: params.accountId,
+          target: params.target,
+          messageTs: newest?.ts ?? newestAny?.ts,
+        })
+      : undefined;
 
   if (params.messages.length === 0) {
     return {
@@ -165,6 +342,17 @@ export function buildChannelsWhySilentReport(params: {
   }
 
   if (!newest) {
+    if (admissionRecord?.outcome === "dropped" && isSelfBotDropReason(admissionRecord.reason)) {
+      return {
+        channel: params.channel,
+        accountId: params.accountId,
+        target: params.target,
+        account: accountSummary,
+        verdict: "receiver-dropped-self-bot",
+        explanation:
+          "OpenClaw recorded a candidate-specific Slack admission ledger drop for a self/bot message.",
+      };
+    }
     return {
       channel: params.channel,
       accountId: params.accountId,
@@ -172,6 +360,45 @@ export function buildChannelsWhySilentReport(params: {
       account: accountSummary,
       verdict: "no-inbound-candidate",
       explanation: "Recent channel history contains no non-bot inbound candidate messages.",
+    };
+  }
+
+  if (admissionRecord?.outcome === "dropped") {
+    if (isPolicyDropReason(admissionRecord.reason)) {
+      return {
+        channel: params.channel,
+        accountId: params.accountId,
+        target: params.target,
+        newestMessage,
+        account: accountSummary,
+        verdict: "receiver-dropped-by-policy",
+        explanation:
+          "OpenClaw recorded a candidate-specific Slack admission ledger drop by policy.",
+      };
+    }
+    if (isSelfBotDropReason(admissionRecord.reason)) {
+      return {
+        channel: params.channel,
+        accountId: params.accountId,
+        target: params.target,
+        newestMessage,
+        account: accountSummary,
+        verdict: "receiver-dropped-self-bot",
+        explanation:
+          "OpenClaw recorded a candidate-specific Slack admission ledger drop for a self/bot message.",
+      };
+    }
+  }
+  if (admissionRecord?.outcome === "accepted") {
+    return {
+      channel: params.channel,
+      accountId: params.accountId,
+      target: params.target,
+      newestMessage,
+      account: accountSummary,
+      verdict: "account-inbound-after-message",
+      explanation:
+        "OpenClaw has candidate-specific Slack admission ledger proof for the newest message. If no reply appeared, inspect dispatch, turn, or reply delivery next.",
     };
   }
 
@@ -187,14 +414,25 @@ export function buildChannelsWhySilentReport(params: {
     };
   }
 
-  const lastInboundAt =
-    typeof account.lastInboundAt === "number" && Number.isFinite(account.lastInboundAt)
-      ? account.lastInboundAt
-      : undefined;
-  const lastStartAt =
-    typeof account.lastStartAt === "number" && Number.isFinite(account.lastStartAt)
-      ? account.lastStartAt
-      : undefined;
+  if (
+    params.channel === "slack" &&
+    (account.connected === false ||
+      socketErrorIsCurrent ||
+      healthState === "reconnecting" ||
+      healthState === "disconnecting" ||
+      healthState === "socket-unhealthy")
+  ) {
+    return {
+      channel: params.channel,
+      accountId: params.accountId,
+      target: params.target,
+      newestMessage,
+      account: accountSummary,
+      verdict: "socket-receiver-problem",
+      explanation:
+        "Slack receiver lifecycle evidence indicates a current Slack/network receiver problem.",
+    };
+  }
 
   if (newestAt && lastStartAt && newestAt < lastStartAt) {
     return {
@@ -210,6 +448,18 @@ export function buildChannelsWhySilentReport(params: {
   }
 
   if (newestAt && (!lastInboundAt || newestAt > lastInboundAt + 1000)) {
+    if (params.channel === "slack" && latestReceiverAt && latestReceiverAt >= newestAt - 1000) {
+      return {
+        channel: params.channel,
+        accountId: params.accountId,
+        target: params.target,
+        newestMessage,
+        account: accountSummary,
+        verdict: "receiver-active-admission-gap",
+        explanation:
+          "Slack receiver activity is at or after the newest message, but OpenClaw has no account-level inbound/admission proof for it.",
+      };
+    }
     return {
       channel: params.channel,
       accountId: params.accountId,
@@ -268,7 +518,33 @@ export function formatChannelsWhySilentReport(report: WhySilentReport): string[]
   );
   lines.push(`Last start: ${formatTimestamp(report.account.lastStartAt)}`);
   lines.push(`Last inbound: ${formatTimestamp(report.account.lastInboundAt)}`);
-  lines.push(`Last transport: ${formatTimestamp(report.account.lastTransportActivityAt)}`);
+  if (report.channel === "slack") {
+    lines.push(`Last socket envelope: ${formatTimestamp(report.account.lastSocketEnvelopeAt)}`);
+    lines.push(`Last Slack event: ${formatTimestamp(report.account.lastSlackEventAt)}`);
+    lines.push(`Last socket error: ${formatTimestamp(report.account.lastSocketErrorAt)}`);
+    if (report.account.healthState) {
+      lines.push(`Health state: ${report.account.healthState}`);
+    }
+    const telemetry = report.account.slackTelemetry;
+    if (telemetry) {
+      const facts = [
+        ["raw", telemetry.rawSlackEvents],
+        ["messages", telemetry.messageEvents],
+        ["dropped", telemetry.droppedEvents],
+        ["policyDrops", telemetry.droppedPolicyEvents],
+        ["selfBotDrops", telemetry.droppedSelfBotEvents],
+        ["admissions", telemetry.admissionsRecorded],
+        ["dispatchFailures", telemetry.dispatchFailures],
+      ]
+        .filter((entry): entry is [string, number] => typeof entry[1] === "number")
+        .map(([label, value]) => `${label}=${value}`);
+      if (facts.length > 0) {
+        lines.push(`Slack counters: ${facts.join(", ")}`);
+      }
+    }
+  } else {
+    lines.push(`Last transport: ${formatTimestamp(report.account.lastTransportActivityAt)}`);
+  }
   if (report.newestMessage) {
     lines.push(`Newest message: ${report.newestMessage.ts ?? "unknown"}`);
     if (report.newestMessage.at) {
@@ -331,12 +607,15 @@ export async function channelsWhySilentCommand(
   const account = getAccountsForChannel(statusPayload, channel).find(
     (candidate) => candidate.accountId === accountId,
   );
+  const admissionRecords =
+    channel === "slack" ? await readSlackAdmissionRecordsForWhySilent({ accountId }) : [];
   const report = buildChannelsWhySilentReport({
     channel,
     accountId,
     target,
     account,
     messages: extractReadMessages(actionPayload),
+    admissionRecords,
   });
 
   if (opts.json) {

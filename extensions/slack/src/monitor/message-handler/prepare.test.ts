@@ -1970,6 +1970,49 @@ Second paragraph should still reach the agent after Slack's preview cutoff.`;
     );
   });
 
+  it("records policy drops as admission and drop telemetry", async () => {
+    const trackTelemetry = vi.fn();
+    const ctx = createInboundSlackCtx({
+      cfg: {
+        channels: {
+          slack: {
+            enabled: true,
+            groupPolicy: "open",
+          },
+        },
+      } as OpenClawConfig,
+      defaultRequireMention: false,
+      channelsConfig: {
+        C123: {
+          users: ["U_OTHER"],
+          requireMention: false,
+        },
+      },
+    });
+    ctx.trackTelemetry = trackTelemetry;
+    ctx.resolveChannelName = async () => ({ name: "general", type: "channel" });
+
+    const prepared = await prepareSlackMessage({
+      ctx,
+      account: defaultAccount,
+      message: createSlackMessage({
+        channel: "C123",
+        channel_type: "channel",
+        user: "U1",
+        text: "hello",
+        ts: "200.000",
+      }),
+      opts: { source: "message" },
+    });
+
+    expect(prepared).toBeNull();
+    expect(trackTelemetry.mock.calls.map(([counter]) => counter)).toEqual([
+      "admissionsRecorded",
+      "droppedEvents",
+      "droppedPolicyEvents",
+    ]);
+  });
+
   it("does not apply the owner allowlist to open-room thread context", async () => {
     const { prepared, replies } = await prepareThreadContextAllowlistCase({
       channel: "C124",

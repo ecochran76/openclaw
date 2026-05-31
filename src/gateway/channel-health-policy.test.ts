@@ -146,6 +146,86 @@ describe("evaluateChannelHealth", () => {
     expect(evaluation).toEqual({ healthy: true, reason: "healthy" });
   });
 
+  it("keeps quiet Slack socket-mode accounts healthy without transport tracking", () => {
+    const evaluation = evaluateHealth(
+      {
+        running: true,
+        connected: true,
+        enabled: true,
+        configured: true,
+        lastStartAt: 0,
+        lastTransportActivityAt: null,
+        healthState: "healthy",
+      },
+      { now: 100_000, channelId: "slack" },
+    );
+    expect(evaluation).toEqual({ healthy: true, reason: "healthy" });
+  });
+
+  it("uses current socket errors as unhealthy receiver evidence", () => {
+    const evaluation = evaluateHealth(
+      {
+        running: true,
+        connected: true,
+        enabled: true,
+        configured: true,
+        lastStartAt: 50_000,
+        lastSocketConnectedAt: 60_000,
+        lastSocketError: { at: 90_000, error: "socket failed" },
+      },
+      { now: 100_000, channelId: "slack" },
+    );
+    expect(evaluation).toEqual({ healthy: false, reason: "socket-unhealthy" });
+  });
+
+  it("ignores socket errors superseded by a later successful connect", () => {
+    const evaluation = evaluateHealth(
+      {
+        running: true,
+        connected: true,
+        enabled: true,
+        configured: true,
+        lastStartAt: 50_000,
+        lastSocketError: { at: 60_000, error: "socket failed" },
+        lastSocketConnectedAt: 90_000,
+      },
+      { now: 100_000, channelId: "slack" },
+    );
+    expect(evaluation).toEqual({ healthy: true, reason: "healthy" });
+  });
+
+  it("uses recent raw receiver activity as proof against stale inherited transport", () => {
+    const evaluation = evaluateHealth(
+      {
+        running: true,
+        connected: true,
+        enabled: true,
+        configured: true,
+        lastStartAt: 50_000,
+        lastTransportActivityAt: 10_000,
+        lastSocketEnvelopeAt: 95_000,
+      },
+      { now: 100_000, channelId: "slack" },
+    );
+    expect(evaluation).toEqual({ healthy: true, reason: "healthy" });
+  });
+
+  it("treats current reconnecting state as an unhealthy socket lifecycle", () => {
+    const evaluation = evaluateHealth(
+      {
+        running: true,
+        connected: true,
+        enabled: true,
+        configured: true,
+        lastStartAt: 50_000,
+        lastSocketReconnectAt: 90_000,
+        healthState: "reconnecting",
+      },
+      { now: 100_000, channelId: "slack" },
+    );
+    expect(evaluation).toEqual({ healthy: false, reason: "socket-unhealthy" });
+  });
+
   it("keeps quiet telegram webhooks healthy when they do not publish transport tracking", () => {
     const evaluation = evaluateHealth(
       connectedAccount({
@@ -177,11 +257,100 @@ describe("evaluateChannelHealth", () => {
     expect(evaluation).toEqual({ healthy: true, reason: "healthy" });
   });
 
-  it("flags inherited transport timestamps after the lifecycle exceeds the stale threshold", () => {
+  it("does not flag inherited Slack Socket Mode transport timestamps after the stale threshold", () => {
     const evaluation = evaluateHealth(inheritedTransportAccount(), {
       now: 140_000,
       channelId: "slack",
     });
+
+    expect(evaluation).toEqual({ healthy: true, reason: "healthy" });
+  });
+
+  it("does not classify Slack Socket Mode by inherited generic transport timestamps", () => {
+    const evaluation = evaluateChannelHealth(
+      {
+        running: true,
+        connected: true,
+        enabled: true,
+        configured: true,
+        lastStartAt: 50_000,
+        lastTransportActivityAt: 10_000,
+      },
+      {
+        channelId: "slack",
+        now: 140_000,
+        channelConnectGraceMs: 10_000,
+        staleEventThresholdMs: 30_000,
+      },
+    );
+    expect(evaluation).toEqual({ healthy: true, reason: "healthy" });
+  });
+
+  it("treats inactive Slack Socket Mode active-state as unhealthy despite stale connected flag", () => {
+    const evaluation = evaluateChannelHealth(
+      {
+        running: true,
+        connected: true,
+        mode: "socket",
+        lastStartAt: 100_000 - 300_000,
+        socketActiveState: "inactive",
+        socketActiveStateAvailable: true,
+      },
+      {
+        channelId: "slack",
+        now: 100_000,
+        channelConnectGraceMs: 10_000,
+        staleEventThresholdMs: 30_000,
+      },
+    );
+
+    expect(evaluation).toEqual({ healthy: false, reason: "socket-unhealthy" });
+  });
+
+  it("keeps multi-connection Slack healthy when another socket remains active", () => {
+    const evaluation = evaluateChannelHealth(
+      {
+        running: true,
+        connected: true,
+        mode: "socket",
+        healthState: "healthy",
+        lastStartAt: 50_000,
+        lastSocketConnectedAt: 60_000,
+        lastSocketDisconnectedAt: 90_000,
+        socketActiveState: "active",
+        socketActiveStateAvailable: true,
+        socketConnectionCount: 2,
+      },
+      {
+        channelId: "slack",
+        now: 100_000,
+        channelConnectGraceMs: 10_000,
+        staleEventThresholdMs: 30_000,
+      },
+    );
+
+    expect(evaluation).toEqual({ healthy: true, reason: "healthy" });
+  });
+
+  it("preserves stale transport checks for explicit Slack HTTP mode", () => {
+    const evaluation = evaluateChannelHealth(
+      {
+        running: true,
+        connected: true,
+        enabled: true,
+        configured: true,
+        mode: "http",
+        lastStartAt: 50_000,
+        lastTransportActivityAt: 10_000,
+      },
+      {
+        channelId: "slack",
+        now: 140_000,
+        channelConnectGraceMs: 10_000,
+        staleEventThresholdMs: 30_000,
+      },
+    );
+
     expect(evaluation).toEqual({ healthy: false, reason: "stale-socket" });
   });
 });
@@ -206,5 +375,18 @@ describe("resolveChannelRestartReason", () => {
       { healthy: false, reason: "disconnected" },
     );
     expect(reason).toBe("disconnected");
+  });
+
+  it("maps socket lifecycle failures to socket-unhealthy", () => {
+    const reason = resolveChannelRestartReason(
+      {
+        running: true,
+        connected: true,
+        enabled: true,
+        configured: true,
+      },
+      { healthy: false, reason: "socket-unhealthy" },
+    );
+    expect(reason).toBe("socket-unhealthy");
   });
 });

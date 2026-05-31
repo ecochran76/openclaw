@@ -1,10 +1,11 @@
 // Slack tests cover provider.interop plugin behavior.
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
 import {
   createSlackBoltApp,
   createSlackSocketModeLogger,
   resolveSlackBoltInterop,
   shouldSkipOpenClawSlackSelfEvent,
+  triggerSlackSocketDiagnosticDisconnect,
 } from "./provider-support.js";
 
 describe("resolveSlackBoltInterop", () => {
@@ -237,6 +238,60 @@ describe("createSlackBoltApp", () => {
     ]);
   });
 
+  it("reconnects immediately for expected Slack refresh disconnects in the native SDK path", async () => {
+    const debug = vi.fn();
+    class FakeSocketModeClient {
+      emitted: unknown[][] = [];
+      clientPingTimeoutMS = 30_000;
+      numOfConsecutiveReconnectionFailures = 3;
+      logger = { debug };
+      shuttingDown = false;
+
+      delayReconnectAttempt(callback: (this: FakeSocketModeClient) => Promise<unknown>) {
+        return Promise.resolve(callback.call(this));
+      }
+
+      emit(event: string, ...args: unknown[]) {
+        this.emitted.push([event, ...args]);
+      }
+    }
+    class FakeObservedSocketModeReceiver {
+      args: Record<string, unknown>;
+      client = new FakeSocketModeClient();
+
+      constructor(args: Record<string, unknown>) {
+        this.args = args;
+      }
+    }
+    const { receiver } = createSlackBoltApp({
+      interop: {
+        App: FakeApp as never,
+        HTTPReceiver: FakeHTTPReceiver as never,
+        SocketModeReceiver: FakeObservedSocketModeReceiver as never,
+      },
+      slackMode: "socket",
+      botToken: "xoxb-test",
+      appToken: "xapp-test",
+      slackWebhookPath: "/slack/events",
+      clientOptions: {},
+    });
+    const client = (receiver as unknown as FakeObservedSocketModeReceiver).client;
+
+    expect(
+      triggerSlackSocketDiagnosticDisconnect({
+        receiver,
+        reason: "refresh_requested",
+      }),
+    ).toBe(true);
+    await expect(client.delayReconnectAttempt(async () => "ok")).resolves.toBe("ok");
+
+    expect(client.numOfConsecutiveReconnectionFailures).toBe(0);
+    expect(debug).toHaveBeenCalledWith(
+      "Before trying to reconnect, this client will wait for 0 milliseconds",
+    );
+    expect(client.emitted.map(([event]) => event)).toEqual(["ws_message", "reconnecting"]);
+  });
+
   it("passes Socket Mode ping/pong options through Slack's public receiver API", () => {
     const clientOptions = { teamId: "T1" };
     const { receiver } = createSlackBoltApp({
@@ -401,5 +456,38 @@ describe("createSlackBoltApp", () => {
         message: { subtype: "bot_message", bot_id: "B_BOT" },
       }),
     ).toBe(true);
+  });
+
+  it("reports middleware-dropped self events", async () => {
+    const onSelfEventDropped = vi.fn();
+    const { app } = createSlackBoltApp({
+      interop: {
+        App: FakeApp as never,
+        HTTPReceiver: FakeHTTPReceiver as never,
+        SocketModeReceiver: FakeSocketModeReceiver as never,
+      },
+      slackMode: "socket",
+      botToken: "xoxb-test",
+      appToken: "xapp-test",
+      slackWebhookPath: "/slack/events",
+      clientOptions: {},
+      onSelfEventDropped,
+    });
+
+    const middleware = (app as unknown as FakeApp).middleware[0] as (args: {
+      context: { botUserId: string };
+      event: { type: string; user: string };
+      next: () => Promise<void>;
+    }) => Promise<void>;
+    const next = vi.fn(async () => {});
+
+    await middleware({
+      context: { botUserId: "U_BOT" },
+      event: { type: "reaction_added", user: "U_BOT" },
+      next,
+    });
+
+    expect(onSelfEventDropped).toHaveBeenCalledTimes(1);
+    expect(next).not.toHaveBeenCalled();
   });
 });

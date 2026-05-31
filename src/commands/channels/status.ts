@@ -79,6 +79,62 @@ function formatEventLoopBits(value: unknown): string | null {
 }
 
 /** Render gateway channel status payloads into terminal-friendly lines. */
+function readFiniteNumber(value: unknown): number | null {
+  return typeof value === "number" && Number.isFinite(value) ? value : null;
+}
+
+function readNumberRecord(value: unknown): Record<string, number> | null {
+  if (!value || typeof value !== "object" || Array.isArray(value)) {
+    return null;
+  }
+  const out: Record<string, number> = {};
+  for (const [key, raw] of Object.entries(value)) {
+    if (typeof raw === "number" && Number.isFinite(raw)) {
+      out[key] = Math.max(0, Math.trunc(raw));
+    }
+  }
+  return Object.keys(out).length > 0 ? out : null;
+}
+
+function appendAgeBit(bits: string[], label: string, value: unknown) {
+  const at = readFiniteNumber(value);
+  if (at != null) {
+    bits.push(`${label}:${formatTimeAgo(Date.now() - at)}`);
+  }
+}
+
+function appendSlackReceiverBits(bits: string[], account: Record<string, unknown>) {
+  appendAgeBit(bits, "socket-envelope", account.lastSocketEnvelopeAt);
+  appendAgeBit(bits, "slack-event", account.lastSlackEventAt);
+  const socketError = account.lastSocketError;
+  if (socketError && typeof socketError === "object" && !Array.isArray(socketError)) {
+    const at = readFiniteNumber((socketError as { at?: unknown }).at);
+    if (at != null) {
+      bits.push(`socket-error:${formatTimeAgo(Date.now() - at)}`);
+    }
+  } else if (typeof socketError === "string" && socketError.trim()) {
+    bits.push("socket-error");
+  }
+  const telemetry = readNumberRecord(account.slackTelemetry);
+  if (!telemetry) {
+    return;
+  }
+  const facts = [
+    ["raw", telemetry.rawSlackEvents],
+    ["messages", telemetry.messageEvents],
+    ["dropped", telemetry.droppedEvents],
+    ["policyDrops", telemetry.droppedPolicyEvents],
+    ["selfBotDrops", telemetry.droppedSelfBotEvents],
+    ["admissions", telemetry.admissionsRecorded],
+    ["dispatchFailures", telemetry.dispatchFailures],
+  ]
+    .filter((entry): entry is [string, number] => typeof entry[1] === "number")
+    .map(([label, value]) => `${label}=${value}`);
+  if (facts.length > 0) {
+    bits.push(`slack:${facts.join(",")}`);
+  }
+}
+
 export function formatGatewayChannelsStatusLines(payload: Record<string, unknown>): string[] {
   const lines: string[] = [];
   lines.push(theme.success("Gateway reachable."));
@@ -100,27 +156,11 @@ export function formatGatewayChannelsStatusLines(payload: Record<string, unknown
       if (typeof account.connected === "boolean") {
         bits.push(account.connected ? "connected" : "disconnected");
       }
-      const inboundAt =
-        typeof account.lastInboundAt === "number" && Number.isFinite(account.lastInboundAt)
-          ? account.lastInboundAt
-          : null;
-      const outboundAt =
-        typeof account.lastOutboundAt === "number" && Number.isFinite(account.lastOutboundAt)
-          ? account.lastOutboundAt
-          : null;
-      const transportAt =
-        typeof account.lastTransportActivityAt === "number" &&
-        Number.isFinite(account.lastTransportActivityAt)
-          ? account.lastTransportActivityAt
-          : null;
-      if (inboundAt) {
-        bits.push(`in:${formatTimeAgo(Date.now() - inboundAt)}`);
-      }
-      if (outboundAt) {
-        bits.push(`out:${formatTimeAgo(Date.now() - outboundAt)}`);
-      }
-      if (transportAt) {
-        bits.push(`transport:${formatTimeAgo(Date.now() - transportAt)}`);
+      appendAgeBit(bits, "in", account.lastInboundAt);
+      appendAgeBit(bits, "out", account.lastOutboundAt);
+      appendAgeBit(bits, "transport", account.lastTransportActivityAt);
+      if (provider === "slack") {
+        appendSlackReceiverBits(bits, account);
       }
       appendModeBit(bits, account);
       const botUsername = (() => {

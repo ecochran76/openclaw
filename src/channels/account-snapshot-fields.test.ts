@@ -45,6 +45,36 @@ describe("projectSafeChannelAccountSnapshotFields", () => {
       lastMessageAt: null,
       lastEventAt: 345,
       lastTransportActivityAt: 456,
+      lastSocketConnectedAt: 567,
+      lastSocketDisconnectedAt: 678,
+      lastSocketReconnectAt: 789,
+      lastSocketEnvelopeAt: 890,
+      lastSlackEventAt: 901,
+      socketActiveState: "active",
+      socketActiveStateAvailable: true,
+      socketConnectionCount: 2,
+      socketModeSettings: {
+        clientPingTimeout: 15_000,
+        connectionCount: 2,
+        serverPingTimeout: 30_000,
+        pingPongLoggingEnabled: false,
+        token: "ignored",
+      },
+      socketConnections: {
+        primary: { connected: true },
+      },
+      lastSocketDisconnectReason: {
+        at: 902,
+        reason: "refresh_requested",
+        kind: "refresh",
+        expectedRefresh: true,
+      },
+      lastSocketError: { at: 912, error: "socket failed" },
+      slackTelemetry: {
+        rawSlackEvents: 2,
+        dispatchFailures: 1,
+        ignored: "secret",
+      },
       channelAccessToken: "line-token",
       channelSecret: "line-secret", // pragma: allowlist secret
       probe: { ok: true, token: "probe-secret" },
@@ -58,6 +88,34 @@ describe("projectSafeChannelAccountSnapshotFields", () => {
       lastMessageAt: null,
       lastEventAt: 345,
       lastTransportActivityAt: 456,
+      lastSocketConnectedAt: 567,
+      lastSocketDisconnectedAt: 678,
+      lastSocketReconnectAt: 789,
+      lastSocketEnvelopeAt: 890,
+      lastSlackEventAt: 901,
+      socketActiveState: "active",
+      socketActiveStateAvailable: true,
+      socketConnectionCount: 2,
+      socketModeSettings: {
+        clientPingTimeout: 15_000,
+        connectionCount: 2,
+        serverPingTimeout: 30_000,
+        pingPongLoggingEnabled: false,
+      },
+      socketConnections: {
+        primary: { connected: true },
+      },
+      lastSocketDisconnectReason: {
+        at: 902,
+        reason: "refresh_requested",
+        kind: "refresh",
+        expectedRefresh: true,
+      },
+      lastSocketError: { at: 912, error: "socket failed" },
+      slackTelemetry: {
+        rawSlackEvents: 2,
+        dispatchFailures: 1,
+      },
     });
   });
 });

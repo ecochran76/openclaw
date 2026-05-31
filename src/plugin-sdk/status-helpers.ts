@@ -26,6 +26,22 @@ type RuntimeLifecycleSnapshot = {
   restartPending?: boolean | null;
   reconnectAttempts?: number | null;
   lastConnectedAt?: number | null;
+  lastSocketConnectedAt?: number | null;
+  lastSocketDisconnectedAt?: number | null;
+  lastSocketReconnectAt?: number | null;
+  lastSocketEnvelopeAt?: number | null;
+  lastSlackEventAt?: number | null;
+  socketActiveState?: "active" | "inactive" | "unknown" | null;
+  socketActiveStateAvailable?: boolean | null;
+  socketConnectionCount?: number | null;
+  socketModeSettings?: ChannelAccountSnapshot["socketModeSettings"] | null;
+  socketConnections?: Record<string, Record<string, unknown>> | null;
+  lastSocketDisconnectReason?: {
+    at: number;
+    reason?: string;
+    kind?: string;
+    expectedRefresh?: boolean;
+  } | null;
   lastDisconnect?:
     | string
     | {
@@ -35,8 +51,16 @@ type RuntimeLifecycleSnapshot = {
         loggedOut?: boolean;
       }
     | null;
+  lastSocketError?:
+    | string
+    | {
+        at: number;
+        error?: string;
+      }
+    | null;
   lastEventAt?: number | null;
   lastTransportActivityAt?: number | null;
+  slackTelemetry?: Record<string, number> | null;
   healthState?: string | null;
   lastStartAt?: number | null;
   lastStopAt?: number | null;
@@ -314,10 +338,49 @@ export function buildRuntimeAccountStatusSnapshot<TExtra extends StatusSnapshotE
     ...(typeof runtime?.lastConnectedAt === "number"
       ? { lastConnectedAt: runtime.lastConnectedAt }
       : {}),
+    ...(typeof runtime?.lastSocketConnectedAt === "number"
+      ? { lastSocketConnectedAt: runtime.lastSocketConnectedAt }
+      : {}),
+    ...(typeof runtime?.lastSocketDisconnectedAt === "number"
+      ? { lastSocketDisconnectedAt: runtime.lastSocketDisconnectedAt }
+      : {}),
+    ...(typeof runtime?.lastSocketReconnectAt === "number"
+      ? { lastSocketReconnectAt: runtime.lastSocketReconnectAt }
+      : {}),
+    ...(typeof runtime?.lastSocketEnvelopeAt === "number"
+      ? { lastSocketEnvelopeAt: runtime.lastSocketEnvelopeAt }
+      : {}),
+    ...(typeof runtime?.lastSlackEventAt === "number"
+      ? { lastSlackEventAt: runtime.lastSlackEventAt }
+      : {}),
+    ...(runtime?.socketActiveState === "active" ||
+    runtime?.socketActiveState === "inactive" ||
+    runtime?.socketActiveState === "unknown"
+      ? { socketActiveState: runtime.socketActiveState }
+      : {}),
+    ...(typeof runtime?.socketActiveStateAvailable === "boolean"
+      ? { socketActiveStateAvailable: runtime.socketActiveStateAvailable }
+      : {}),
+    ...(typeof runtime?.socketConnectionCount === "number"
+      ? { socketConnectionCount: runtime.socketConnectionCount }
+      : {}),
+    ...(runtime?.socketModeSettings && typeof runtime.socketModeSettings === "object"
+      ? { socketModeSettings: runtime.socketModeSettings }
+      : {}),
+    ...(runtime?.socketConnections && typeof runtime.socketConnections === "object"
+      ? { socketConnections: runtime.socketConnections }
+      : {}),
+    ...(runtime?.lastSocketDisconnectReason
+      ? { lastSocketDisconnectReason: runtime.lastSocketDisconnectReason }
+      : {}),
     ...(runtime?.lastDisconnect ? { lastDisconnect: runtime.lastDisconnect } : {}),
+    ...(runtime?.lastSocketError ? { lastSocketError: runtime.lastSocketError } : {}),
     ...(typeof runtime?.lastEventAt === "number" ? { lastEventAt: runtime.lastEventAt } : {}),
     ...(typeof runtime?.lastTransportActivityAt === "number"
       ? { lastTransportActivityAt: runtime.lastTransportActivityAt }
+      : {}),
+    ...(runtime?.slackTelemetry && typeof runtime.slackTelemetry === "object"
+      ? { slackTelemetry: runtime.slackTelemetry }
       : {}),
     ...(typeof runtime?.healthState === "string" ? { healthState: runtime.healthState } : {}),
     ...(extra ?? ({} as TExtra)),

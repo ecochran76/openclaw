@@ -70,6 +70,17 @@ function collectGenericRuntimeStatusIssues(
       });
       continue;
     }
+    if (health.reason === "socket-unhealthy") {
+      issues.push({
+        channel,
+        accountId,
+        kind: "runtime",
+        message:
+          "Channel reports a current socket lifecycle error; receiver delivery may be broken.",
+        fix: "restart the channel or gateway if it does not recover",
+      });
+      continue;
+    }
     if (health.reason === "stuck") {
       issues.push({
         channel,

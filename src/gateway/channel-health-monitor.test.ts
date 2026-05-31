@@ -600,13 +600,19 @@ describe("channel-health-monitor", () => {
 
     it("restarts a channel with no transport activity past the stale threshold", async () => {
       const now = Date.now();
-      const manager = createSlackSnapshotManager(
-        runningConnectedSlackAccount({
-          lastStartAt: now - STALE_THRESHOLD - 60_000,
-          lastTransportActivityAt: now - STALE_THRESHOLD - 30_000,
-        }),
-      );
-      await expectRestartedChannel(manager, "slack");
+      const manager = createSnapshotManager({
+        discord: {
+          default: {
+            running: true,
+            connected: true,
+            enabled: true,
+            configured: true,
+            lastStartAt: now - STALE_THRESHOLD - 60_000,
+            lastTransportActivityAt: now - STALE_THRESHOLD - 30_000,
+          },
+        },
+      });
+      await expectRestartedChannel(manager, "discord");
     });
 
     it("skips channels with recent transport activity", async () => {
@@ -633,13 +639,19 @@ describe("channel-health-monitor", () => {
 
     it("restarts a channel with no transport activity since connect past the stale threshold", async () => {
       const now = Date.now();
-      const manager = createSlackSnapshotManager(
-        runningConnectedSlackAccount({
-          lastStartAt: now - STALE_THRESHOLD - 60_000,
-          lastTransportActivityAt: now - STALE_THRESHOLD - 60_000,
-        }),
-      );
-      await expectRestartedChannel(manager, "slack");
+      const manager = createSnapshotManager({
+        discord: {
+          default: {
+            running: true,
+            connected: true,
+            enabled: true,
+            configured: true,
+            lastStartAt: now - STALE_THRESHOLD - 60_000,
+            lastTransportActivityAt: now - STALE_THRESHOLD - 60_000,
+          },
+        },
+      });
+      await expectRestartedChannel(manager, "discord");
     });
 
     it("skips connected channels that do not report transport liveness", async () => {
@@ -659,24 +671,54 @@ describe("channel-health-monitor", () => {
       await expectNoRestart(manager);
     });
 
-    it("respects custom staleEventThresholdMs", async () => {
-      const customThreshold = 10 * 60_000;
+    it("restarts Slack accounts with current socket errors even while connected", async () => {
       const now = Date.now();
       const manager = createSlackSnapshotManager(
         runningConnectedSlackAccount({
-          lastStartAt: now - customThreshold - 60_000,
-          lastTransportActivityAt: now - customThreshold - 30_000,
+          lastStartAt: now - STALE_THRESHOLD - 60_000,
+          lastSocketConnectedAt: now - STALE_THRESHOLD - 30_000,
+          lastSocketError: { at: now - 5_000, error: "socket failed" },
         }),
       );
+      await expectRestartedChannel(manager, "slack");
+    });
+
+    it("skips Slack accounts with recent raw receiver activity despite stale transport", async () => {
+      const now = Date.now();
+      const manager = createSlackSnapshotManager(
+        runningConnectedSlackAccount({
+          lastStartAt: now - STALE_THRESHOLD - 60_000,
+          lastTransportActivityAt: now - STALE_THRESHOLD - 30_000,
+          lastSocketEnvelopeAt: now - 5_000,
+        }),
+      );
+      await expectNoRestart(manager);
+    });
+
+    it("respects custom staleEventThresholdMs", async () => {
+      const customThreshold = 10 * 60_000;
+      const now = Date.now();
+      const manager = createSnapshotManager({
+        discord: {
+          default: {
+            running: true,
+            connected: true,
+            enabled: true,
+            configured: true,
+            lastStartAt: now - customThreshold - 60_000,
+            lastTransportActivityAt: now - customThreshold - 30_000,
+          },
+        },
+      });
       const monitor = await startAndRunCheck(manager, {
         staleEventThresholdMs: customThreshold,
       });
       expect(manager.stopChannel).toHaveBeenCalledWith(
-        "slack",
+        "discord",
         "default",
         expect.objectContaining({ manual: false, forceRetireOnTimeout: true }),
       );
-      expect(manager.startChannel).toHaveBeenCalledWith("slack", "default");
+      expect(manager.startChannel).toHaveBeenCalledWith("discord", "default");
       monitor.stop();
     });
   });

@@ -79,6 +79,8 @@ function createContext(overrides?: {
     channelsConfigKeys: Object.keys(channelsConfig),
     defaultRequireMention: overrides?.defaultRequireMention ?? true,
     logger: {},
+    resolveChannelName: async (channelId: string) => ({ name: channelId, type: "channel" }),
+    resolveUserName: async (userId: string) => ({ name: userId }),
     isChannelAllowed: () => overrides?.isChannelAllowed?.() ?? true,
     markMessageSeen: (channel: string | undefined, ts: string | undefined) =>
       overrides?.markMessageSeen?.(channel, ts) ?? false,
@@ -97,12 +99,14 @@ function createHandlerWithTracker(overrides?: {
   typingReaction?: string;
 }) {
   const trackEvent = vi.fn();
+  const trackTelemetry = vi.fn();
   const handler = createSlackMessageHandler({
     ctx: createContext(overrides),
     account: { accountId: "default" } as Parameters<typeof createSlackMessageHandler>[0]["account"],
     trackEvent,
+    trackTelemetry,
   });
-  return { handler, trackEvent };
+  return { handler, trackEvent, trackTelemetry };
 }
 
 async function handleDirectMessage(
@@ -155,21 +159,28 @@ describe("createSlackMessageHandler", () => {
   });
 
   it("does not track duplicate messages that are already seen", async () => {
-    const { handler, trackEvent } = createHandlerWithTracker({ markMessageSeen: () => true });
+    const { handler, trackEvent, trackTelemetry } = createHandlerWithTracker({
+      markMessageSeen: () => true,
+    });
 
     await handleDirectMessage(handler);
 
     expect(trackEvent).not.toHaveBeenCalled();
+    expect(trackTelemetry.mock.calls.map(([counter]) => counter)).toEqual([
+      "messageEvents",
+      "droppedEvents",
+    ]);
     expect(resolveThreadTsMock).not.toHaveBeenCalled();
     expect(enqueueMock).not.toHaveBeenCalled();
   });
 
   it("tracks accepted non-duplicate messages", async () => {
-    const { handler, trackEvent } = createHandlerWithTracker();
+    const { handler, trackEvent, trackTelemetry } = createHandlerWithTracker();
 
     await handleDirectMessage(handler);
 
     expect(trackEvent).toHaveBeenCalledTimes(1);
+    expect(trackTelemetry).toHaveBeenCalledWith("messageEvents");
     expect(resolveThreadTsMock).toHaveBeenCalledTimes(1);
     expect(enqueueMock).toHaveBeenCalledTimes(1);
   });
@@ -351,7 +362,7 @@ describe("createSlackMessageHandler", () => {
   });
 
   it("drops message subtypes that do not carry user message text", async () => {
-    const { handler, trackEvent } = createHandlerWithTracker();
+    const { handler, trackEvent, trackTelemetry } = createHandlerWithTracker();
 
     await handler(
       {
@@ -366,6 +377,10 @@ describe("createSlackMessageHandler", () => {
     );
 
     expect(trackEvent).not.toHaveBeenCalled();
+    expect(trackTelemetry.mock.calls.map(([counter]) => counter)).toEqual([
+      "messageEvents",
+      "droppedEvents",
+    ]);
     expect(resolveThreadTsMock).not.toHaveBeenCalled();
     expect(enqueueMock).not.toHaveBeenCalled();
   });

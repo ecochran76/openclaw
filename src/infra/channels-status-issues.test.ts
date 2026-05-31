@@ -143,6 +143,38 @@ describe("collectChannelStatusIssues", () => {
     });
   });
 
+  it("adds runtime warnings for current socket lifecycle errors", () => {
+    const now = Date.now();
+    vi.useFakeTimers();
+    vi.setSystemTime(now);
+    mocks.listChannelPlugins.mockReturnValue([createPlugin("slack")]);
+
+    const issues = collectChannelStatusIssues({
+      channelAccounts: {
+        slack: [
+          {
+            accountId: "soylei",
+            enabled: true,
+            configured: true,
+            running: true,
+            connected: true,
+            lastStartAt: now - 120_000,
+            lastSocketConnectedAt: now - 90_000,
+            lastSocketError: { at: now - 10_000, error: "socket failed" },
+          },
+        ],
+      },
+    });
+
+    expect(issues).toContainEqual({
+      channel: "slack",
+      accountId: "soylei",
+      kind: "runtime",
+      message: "Channel reports a current socket lifecycle error; receiver delivery may be broken.",
+      fix: "restart the channel or gateway if it does not recover",
+    });
+  });
+
   it("keeps plugin-specific status issues while adding generic runtime issues", () => {
     const now = Date.now();
     vi.useFakeTimers();

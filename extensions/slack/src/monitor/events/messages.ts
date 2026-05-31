@@ -21,6 +21,7 @@ import {
   startPrePipelineTypingReaction,
   type SlackMessageHandler,
 } from "../message-handler.js";
+import type { SlackStatusCounter } from "../provider-support.js";
 import type { SlackMessageChangedEvent } from "../types.js";
 import { resolveSlackMessageSubtypeHandler } from "./message-subtype-handlers.js";
 import { authorizeAndResolveSlackSystemEventContext } from "./system-event-context.js";
@@ -161,8 +162,9 @@ export function registerSlackMessageEvents(params: {
   ctx: SlackMonitorContext;
   account: ResolvedSlackAccount;
   handleSlackMessage: SlackMessageHandler;
+  trackTelemetry?: (counter: SlackStatusCounter) => void;
 }) {
-  const { ctx, account, handleSlackMessage } = params;
+  const { ctx, account, handleSlackMessage, trackTelemetry } = params;
 
   const handleIncomingMessageEvent = async ({ event, body }: { event: unknown; body: unknown }) => {
     try {
@@ -190,6 +192,8 @@ export function registerSlackMessageEvents(params: {
           ctx,
         })
       ) {
+        trackTelemetry?.("droppedSelfBotEvents");
+        trackTelemetry?.("droppedEvents");
         return;
       }
 
@@ -244,6 +248,7 @@ export function registerSlackMessageEvents(params: {
       // This prevents duplicate processing when both message and app_mention fire for DMs
       const channelType = normalizeSlackChannelType(mention.channel_type, mention.channel);
       if (channelType === "im" || channelType === "mpim") {
+        trackTelemetry?.("droppedEvents");
         return;
       }
 

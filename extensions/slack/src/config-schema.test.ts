@@ -100,11 +100,13 @@ describe("slack config schema", () => {
         clientPingTimeout: 15_000,
         serverPingTimeout: 45_000,
         pingPongLoggingEnabled: true,
+        connectionCount: 2,
       },
       accounts: {
         ops: {
           socketMode: {
             clientPingTimeout: 20_000,
+            connectionCount: 10,
           },
         },
       },
@@ -149,6 +151,14 @@ describe("slack config schema", () => {
         },
       },
       "socketMode.clientPingTimeout",
+    );
+    expectSlackConfigIssue(
+      {
+        socketMode: {
+          connectionCount: 11,
+        },
+      },
+      "socketMode.connectionCount",
     );
   });
 

@@ -72,14 +72,17 @@ const defaultAccount: ResolvedSlackAccount = {
 function createHandlers(eventName: RegisteredEventName, overrides?: SlackSystemEventTestOverrides) {
   const harness = createSlackSystemEventTestHarness(overrides);
   const handleSlackMessage = vi.fn(async () => {});
+  const trackTelemetry = vi.fn();
   registerSlackMessageEvents({
     ctx: harness.ctx,
     account: defaultAccount,
     handleSlackMessage,
+    trackTelemetry,
   });
   return {
     handler: harness.getHandler(eventName) as MessageHandler | null,
     handleSlackMessage,
+    trackTelemetry,
   };
 }
 
@@ -191,12 +194,15 @@ async function invokeRegisteredHandler(input: {
   event: Record<string, unknown>;
   body?: unknown;
 }) {
-  const { handler, handleSlackMessage } = createHandlers(input.eventName, input.overrides);
+  const { handler, handleSlackMessage, trackTelemetry } = createHandlers(
+    input.eventName,
+    input.overrides,
+  );
   await requireMessageHandler(handler)({
     event: input.event,
     body: input.body ?? {},
   });
-  return { handleSlackMessage };
+  return { handleSlackMessage, trackTelemetry };
 }
 
 async function runMessageCase(input: MessageCase = {}): Promise<void> {
@@ -322,7 +328,7 @@ describe("registerSlackMessageEvents", () => {
   });
 
   it("drops self-authored message_changed events without assistant sender metadata", async () => {
-    const { handleSlackMessage } = await invokeRegisteredHandler({
+    const { handleSlackMessage, trackTelemetry } = await invokeRegisteredHandler({
       eventName: "message",
       overrides: { dmPolicy: "open" },
       event: {
@@ -336,6 +342,10 @@ describe("registerSlackMessageEvents", () => {
     });
 
     expect(handleSlackMessage).not.toHaveBeenCalled();
+    expect(trackTelemetry.mock.calls.map(([counter]) => counter)).toEqual([
+      "droppedSelfBotEvents",
+      "droppedEvents",
+    ]);
     expect(messageQueueMock).not.toHaveBeenCalled();
   });
 

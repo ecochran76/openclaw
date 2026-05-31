@@ -28,6 +28,7 @@ import { resolveSlackChannelConfig } from "./channel-config.js";
 import { normalizeSlackChannelType } from "./channel-type.js";
 import { resolveSessionKey } from "./config.runtime.js";
 import { isSlackChannelAllowedByPolicy } from "./policy.js";
+import type { SlackStatusCounter } from "./provider-support.js";
 
 export { normalizeSlackChannelType, resolveSlackChatType } from "./channel-type.js";
 
@@ -132,6 +133,7 @@ export type SlackMonitorContext = {
   typingReaction: string;
   mediaMaxBytes: number;
   removeAckAfterReply: boolean;
+  trackTelemetry?: (counter: SlackStatusCounter) => void;
 
   logger: ReturnType<typeof getChildLogger>;
   markMessageSeen: (channelId: string | undefined, ts?: string) => boolean;
@@ -217,6 +219,7 @@ export function createSlackMonitorContext(params: {
   typingReaction: string;
   mediaMaxBytes: number;
   removeAckAfterReply: boolean;
+  trackTelemetry?: SlackMonitorContext["trackTelemetry"];
 }): SlackMonitorContext {
   const channelHistories = new Map<string, HistoryEntry[]>();
   const logger = getChildLogger({ module: "slack-auto-reply" });
@@ -586,10 +589,14 @@ export function createSlackMonitorContext(params: {
       logVerbose(
         `slack: drop event with api_app_id=${incomingApiAppId} (expected ${params.apiAppId})`,
       );
+      params.trackTelemetry?.("droppedAppMismatches");
+      params.trackTelemetry?.("droppedEvents");
       return true;
     }
     if (params.teamId && incomingTeamId && incomingTeamId !== params.teamId) {
       logVerbose(`slack: drop event with team_id=${incomingTeamId} (expected ${params.teamId})`);
+      params.trackTelemetry?.("droppedTeamMismatches");
+      params.trackTelemetry?.("droppedEvents");
       return true;
     }
     return false;
@@ -633,6 +640,7 @@ export function createSlackMonitorContext(params: {
     typingReaction: params.typingReaction,
     mediaMaxBytes: params.mediaMaxBytes,
     removeAckAfterReply: params.removeAckAfterReply,
+    trackTelemetry: params.trackTelemetry,
     logger,
     markMessageSeen,
     releaseSeenMessage,

@@ -199,6 +199,35 @@ export type ChannelAccountSnapshot = {
   restartPending?: boolean;
   reconnectAttempts?: number;
   lastConnectedAt?: number | null;
+  lastSocketConnectedAt?: number | null;
+  lastSocketDisconnectedAt?: number | null;
+  lastSocketReconnectAt?: number | null;
+  lastSocketEnvelopeAt?: number | null;
+  lastSlackEventAt?: number | null;
+  socketActiveState?: "active" | "inactive" | "unknown";
+  socketActiveStateAvailable?: boolean;
+  socketConnectionCount?: number;
+  socketModeSettings?: {
+    clientPingTimeout: number;
+    connectionCount: number;
+    serverPingTimeout?: number;
+    pingPongLoggingEnabled?: boolean;
+  };
+  socketConnections?: Record<string, Record<string, unknown>>;
+  lastSocketDisconnectReason?: {
+    at: number;
+    reason?: string;
+    kind?: string;
+    expectedRefresh?: boolean;
+  } | null;
+  lastSocketError?:
+    | string
+    | {
+        at: number;
+        error?: string;
+      }
+    | null;
+  slackTelemetry?: Record<string, number>;
   lastDisconnect?:
     | string
     | {

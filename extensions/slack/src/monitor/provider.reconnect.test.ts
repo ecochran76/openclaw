@@ -1,7 +1,9 @@
 // Slack tests cover provider.reconnect plugin behavior.
 import { afterEach, describe, expect, it, vi } from "vitest";
 import {
+  classifySlackSocketDisconnectReason,
   gracefulStopSlackApp,
+  installSlackSocketModeStatusObserver,
   publishSlackConnectedStatus,
   publishSlackDisconnectedStatus,
   startSlackSocketAndWaitForDisconnect,
@@ -63,10 +65,257 @@ describe("slack socket reconnect helpers", () => {
     const status = statusCallAt(setStatus, 0);
     expect(status?.connected).toBe(true);
     expect(status?.lastConnectedAt).toBe(1_711_406_400_000);
-    expect(status?.lastTransportActivityAt).toBe(1_711_406_400_000);
+    expect(status?.lastTransportActivityAt).toBeNull();
+    expect(status?.lastSocketError).toBeNull();
+    expect(status?.lastSocketDisconnectedAt).toBeNull();
+    expect(status?.lastSocketReconnectAt).toBeNull();
     expect(status?.healthState).toBe("healthy");
     expect(status?.lastError).toBeNull();
     expect(status).not.toHaveProperty("lastEventAt");
+  });
+
+  it("publishes socket lifecycle fields from Slack SDK lifecycle events", () => {
+    const client = new FakeEmitter();
+    const setStatus = vi.fn();
+    vi.spyOn(Date, "now")
+      .mockReturnValueOnce(1_711_406_410_000)
+      .mockReturnValueOnce(1_711_406_411_000)
+      .mockReturnValueOnce(1_711_406_412_000)
+      .mockReturnValueOnce(1_711_406_413_000)
+      .mockReturnValueOnce(1_711_406_414_000);
+
+    installSlackSocketModeStatusObserver({ client }, setStatus, undefined, {
+      activeProbeIntervalMs: 0,
+    });
+    setStatus.mockClear();
+    client.emit("connected");
+    client.emit("reconnecting");
+    client.emit("disconnecting");
+    client.emit("disconnected");
+    client.emit("error", new Error("socket failed"));
+
+    expect(setStatus.mock.calls.map(([patch]) => patch)).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          connected: true,
+          socketActiveState: "inactive",
+          socketActiveStateAvailable: true,
+          socketConnectionCount: 1,
+        }),
+        {
+          lastSocketConnectedAt: 1_711_406_410_000,
+          lastSocketError: null,
+          lastSocketDisconnectedAt: null,
+          lastSocketReconnectAt: null,
+          lastError: null,
+        },
+        expect.objectContaining({
+          socketActiveState: "inactive",
+          socketActiveStateAvailable: true,
+          socketConnectionCount: 1,
+        }),
+        {
+          lastSocketReconnectAt: 1_711_406_411_000,
+        },
+        expect.objectContaining({
+          connected: false,
+          socketActiveState: "inactive",
+          socketActiveStateAvailable: true,
+          socketConnectionCount: 1,
+        }),
+        {
+          lastSocketDisconnectedAt: 1_711_406_412_000,
+        },
+        expect.objectContaining({
+          connected: false,
+          socketActiveState: "inactive",
+          socketActiveStateAvailable: true,
+          socketConnectionCount: 1,
+        }),
+        {
+          lastSocketDisconnectedAt: 1_711_406_413_000,
+        },
+        {
+          lastSocketError: {
+            at: 1_711_406_414_000,
+            error: "socket failed",
+          },
+          lastError: "socket failed",
+        },
+      ]),
+    );
+  });
+
+  it("keeps aggregate account status healthy when one of multiple sockets disconnects", () => {
+    const primary = new FakeEmitter() as FakeEmitter & {
+      websocket?: { isActive: () => boolean };
+    };
+    const secondary = new FakeEmitter() as FakeEmitter & {
+      websocket?: { isActive: () => boolean };
+    };
+    primary.websocket = { isActive: () => true };
+    secondary.websocket = { isActive: () => false };
+    const status: Record<string, unknown> = {};
+    const setStatus = vi.fn((patch: Record<string, unknown>) => Object.assign(status, patch));
+    const getStatus = () => status;
+    vi.spyOn(Date, "now")
+      .mockReturnValueOnce(1_711_406_410_000)
+      .mockReturnValueOnce(1_711_406_411_000)
+      .mockReturnValueOnce(1_711_406_412_000);
+
+    installSlackSocketModeStatusObserver({ client: primary }, setStatus, getStatus, {
+      connectionId: "primary",
+      activeProbeIntervalMs: 0,
+    });
+    installSlackSocketModeStatusObserver({ client: secondary }, setStatus, getStatus, {
+      connectionId: "socket-2",
+      activeProbeIntervalMs: 0,
+    });
+
+    primary.emit("connected");
+    secondary.emit("connected");
+    secondary.emit("disconnected");
+
+    expect(status.connected).toBe(true);
+    expect(status.healthState).toBe("healthy");
+    expect(status.socketActiveState).toBe("active");
+    expect(status.socketConnectionCount).toBe(2);
+    expect(status.socketConnections).toMatchObject({
+      primary: {
+        connected: true,
+        socketActiveState: "active",
+        healthState: "healthy",
+      },
+      "socket-2": {
+        connected: false,
+        socketActiveState: "inactive",
+        healthState: "disconnected",
+        lastSocketDisconnectedAt: 1_711_406_412_000,
+      },
+    });
+  });
+
+  it("reports active websocket state from the Slack SDK websocket", () => {
+    const client = new FakeEmitter() as FakeEmitter & {
+      websocket?: { isActive: () => boolean };
+    };
+    const setStatus = vi.fn();
+    const getStatus = () => {
+      const last = setStatus.mock.calls.at(-1)?.[0];
+      return last && typeof last === "object" ? (last as Record<string, unknown>) : {};
+    };
+
+    client.websocket = { isActive: () => true };
+    installSlackSocketModeStatusObserver({ client }, setStatus, getStatus, {
+      activeProbeIntervalMs: 0,
+    });
+
+    expect(setStatus).toHaveBeenLastCalledWith(
+      expect.objectContaining({
+        connected: true,
+        socketActiveState: "active",
+        socketActiveStateAvailable: true,
+      }),
+    );
+  });
+
+  it("publishes raw receiver liveness without app-level inbound activity", () => {
+    const client = new FakeEmitter();
+    const setStatus = vi.fn();
+    vi.spyOn(Date, "now")
+      .mockReturnValueOnce(1_711_406_420_000)
+      .mockReturnValueOnce(1_711_406_421_000);
+
+    installSlackSocketModeStatusObserver({ client }, setStatus, undefined, {
+      activeProbeIntervalMs: 0,
+    });
+    setStatus.mockClear();
+    client.emit("ws_message", Buffer.from("{}"), false);
+    client.emit("slack_event", { type: "events_api" });
+
+    expect(setStatus.mock.calls.map(([patch]) => patch)).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          socketActiveState: "inactive",
+          socketActiveStateAvailable: true,
+          socketConnectionCount: 1,
+        }),
+        {
+          slackTelemetry: {
+            rawSocketEnvelopes: 1,
+          },
+          lastSocketEnvelopeAt: 1_711_406_420_000,
+        },
+        expect.objectContaining({
+          socketActiveState: "inactive",
+          socketActiveStateAvailable: true,
+          socketConnectionCount: 1,
+        }),
+        {
+          slackTelemetry: {
+            rawSlackEvents: 1,
+          },
+          lastSlackEventAt: 1_711_406_421_000,
+        },
+      ]),
+    );
+    expect(setStatus.mock.calls).not.toContainEqual([
+      expect.objectContaining({ lastInboundAt: expect.any(Number) }),
+    ]);
+  });
+
+  it("classifies Slack Socket Mode refresh disconnects", () => {
+    expect(classifySlackSocketDisconnectReason("warning")).toEqual({
+      reason: "warning",
+      kind: "refresh",
+      expectedRefresh: true,
+    });
+    expect(classifySlackSocketDisconnectReason("refresh_requested")).toEqual({
+      reason: "refresh_requested",
+      kind: "refresh",
+      expectedRefresh: true,
+    });
+    expect(classifySlackSocketDisconnectReason("link_disabled")).toEqual({
+      reason: "link_disabled",
+      kind: "link-disabled",
+      expectedRefresh: false,
+    });
+  });
+
+  it("records Slack disconnect envelopes before the SDK closes the socket", () => {
+    const client = new FakeEmitter();
+    const setStatus = vi.fn();
+    vi.spyOn(Date, "now").mockReturnValue(1_711_406_422_000);
+
+    installSlackSocketModeStatusObserver({ client }, setStatus, undefined, {
+      activeProbeIntervalMs: 0,
+    });
+    setStatus.mockClear();
+    client.emit(
+      "ws_message",
+      Buffer.from(JSON.stringify({ type: "disconnect", reason: "refresh_requested" })),
+      false,
+    );
+
+    expect(setStatus.mock.calls.map(([patch]) => patch)).toEqual(
+      expect.arrayContaining([
+        {
+          lastSocketDisconnectReason: {
+            at: 1_711_406_422_000,
+            reason: "refresh_requested",
+            kind: "refresh",
+            expectedRefresh: true,
+          },
+          healthState: "reconnecting",
+        },
+        {
+          slackTelemetry: {
+            rawSocketEnvelopes: 1,
+          },
+          lastSocketEnvelopeAt: 1_711_406_422_000,
+        },
+      ]),
+    );
   });
 
   it("marks socket mode disconnected when an error closes the socket", () => {

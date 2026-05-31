@@ -10,6 +10,7 @@ import { registerSlackMessageEvents } from "./events/messages.js";
 import { registerSlackPinEvents } from "./events/pins.js";
 import { registerSlackReactionEvents } from "./events/reactions.js";
 import type { SlackMessageHandler } from "./message-handler.js";
+import type { SlackStatusCounter } from "./provider-support.js";
 
 export function registerSlackMonitorEvents(params: {
   ctx: SlackMonitorContext;
@@ -17,11 +18,14 @@ export function registerSlackMonitorEvents(params: {
   handleSlackMessage: SlackMessageHandler;
   /** Called on each inbound event to update liveness tracking. */
   trackEvent?: () => void;
+  /** Called for compact Slack receiver/admission counters. */
+  trackTelemetry?: (counter: SlackStatusCounter) => void;
 }) {
   registerSlackMessageEvents({
     ctx: params.ctx,
     account: params.account,
     handleSlackMessage: params.handleSlackMessage,
+    trackTelemetry: params.trackTelemetry,
   });
   registerSlackReactionEvents({ ctx: params.ctx, trackEvent: params.trackEvent });
   registerSlackMemberEvents({ ctx: params.ctx, trackEvent: params.trackEvent });

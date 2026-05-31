@@ -69,6 +69,48 @@ describe("slack allowlist log formatting", () => {
 });
 
 describe("slack startup user allowlist resolution", () => {
+  it("starts configured concurrent Socket Mode receivers and reports connection status", async () => {
+    resetSlackTestState({
+      channels: {
+        slack: {
+          enabled: true,
+          socketMode: {
+            connectionCount: 2,
+            clientPingTimeout: 20_000,
+            serverPingTimeout: 45_000,
+            pingPongLoggingEnabled: true,
+          },
+          dm: { enabled: true, policy: "open", allowFrom: ["*"] },
+          groupPolicy: "open",
+        },
+      },
+    });
+    const status: Record<string, unknown> = {};
+    const monitor = startSlackMonitor(monitorSlackProvider, {
+      setStatus: (patch) => Object.assign(status, patch),
+      getStatus: () => status,
+    });
+    try {
+      await getSlackHandlerOrThrow("message");
+      await flush();
+
+      expect(slackTestState.socketReceivers).toHaveLength(2);
+      expect(status.socketConnectionCount).toBe(2);
+      expect(status.socketModeSettings).toEqual({
+        clientPingTimeout: 20_000,
+        connectionCount: 2,
+        serverPingTimeout: 45_000,
+        pingPongLoggingEnabled: true,
+      });
+      expect(Object.keys(status.socketConnections as Record<string, unknown>).sort()).toEqual([
+        "primary",
+        "socket-2",
+      ]);
+    } finally {
+      await stopSlackMonitor(monitor);
+    }
+  });
+
   it("registers the native approval runtime for plugin-only Slack approvals", async () => {
     resetSlackTestState({
       channels: {

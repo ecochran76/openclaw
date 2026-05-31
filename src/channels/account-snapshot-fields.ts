@@ -39,6 +39,120 @@ function readNullableNumber(
   return readNumber(record, key);
 }
 
+function readTimedError(
+  record: Record<string, unknown>,
+  key: string,
+): string | { at: number; error?: string } | null | undefined {
+  const value = record[key];
+  if (value === null || typeof value === "string") {
+    return value;
+  }
+  if (!isRecord(value)) {
+    return undefined;
+  }
+  const at = readNumber(value, "at");
+  if (at === undefined) {
+    return undefined;
+  }
+  const error = normalizeOptionalString(value.error);
+  return error ? { at, error } : { at };
+}
+
+function readNumberRecord(
+  record: Record<string, unknown>,
+  key: string,
+): Record<string, number> | undefined {
+  const value = record[key];
+  if (!isRecord(value)) {
+    return undefined;
+  }
+  const out: Record<string, number> = {};
+  for (const [entryKey, raw] of Object.entries(value)) {
+    if (typeof raw === "number" && Number.isFinite(raw)) {
+      out[entryKey] = Math.max(0, Math.trunc(raw));
+    }
+  }
+  return Object.keys(out).length > 0 ? out : undefined;
+}
+
+function readStringUnion<T extends readonly string[]>(
+  record: Record<string, unknown>,
+  key: string,
+  allowed: T,
+): T[number] | undefined {
+  const value = record[key];
+  return typeof value === "string" && (allowed as readonly string[]).includes(value)
+    ? value
+    : undefined;
+}
+
+function readObjectRecord(
+  record: Record<string, unknown>,
+  key: string,
+): Record<string, Record<string, unknown>> | undefined {
+  const value = record[key];
+  if (!isRecord(value)) {
+    return undefined;
+  }
+  const out: Record<string, Record<string, unknown>> = {};
+  for (const [entryKey, raw] of Object.entries(value)) {
+    if (isRecord(raw)) {
+      out[entryKey] = { ...raw };
+    }
+  }
+  return Object.keys(out).length > 0 ? out : undefined;
+}
+
+function readSocketDisconnectReason(
+  record: Record<string, unknown>,
+): { at: number; reason?: string; kind?: string; expectedRefresh?: boolean } | null | undefined {
+  const value = record.lastSocketDisconnectReason;
+  if (value === null) {
+    return null;
+  }
+  if (!isRecord(value)) {
+    return undefined;
+  }
+  const at = readNumber(value, "at");
+  if (at === undefined) {
+    return undefined;
+  }
+  return {
+    at,
+    ...(normalizeOptionalString(value.reason)
+      ? { reason: normalizeOptionalString(value.reason) }
+      : {}),
+    ...(normalizeOptionalString(value.kind) ? { kind: normalizeOptionalString(value.kind) } : {}),
+    ...(readBoolean(value, "expectedRefresh") !== undefined
+      ? { expectedRefresh: readBoolean(value, "expectedRefresh") }
+      : {}),
+  };
+}
+
+function readSocketModeSettings(
+  record: Record<string, unknown>,
+): ChannelAccountSnapshot["socketModeSettings"] | undefined {
+  const value = record.socketModeSettings;
+  if (!isRecord(value)) {
+    return undefined;
+  }
+  const clientPingTimeout = readNumber(value, "clientPingTimeout");
+  const connectionCount = readNumber(value, "connectionCount");
+  if (clientPingTimeout === undefined || connectionCount === undefined) {
+    return undefined;
+  }
+  return {
+    clientPingTimeout,
+    connectionCount,
+    ...(readNumber(value, "serverPingTimeout") !== undefined
+      ? { serverPingTimeout: readNumber(value, "serverPingTimeout") }
+      : {}),
+    ...(readBoolean(value, "pingPongLoggingEnabled") !== undefined
+      ? { pingPongLoggingEnabled: readBoolean(value, "pingPongLoggingEnabled") }
+      : {}),
+  };
+}
+
 function readStringArray(record: Record<string, unknown>, key: string): string[] | undefined {
   const value = record[key];
   if (!Array.isArray(value)) {
@@ -219,6 +333,51 @@ export function projectSafeChannelAccountSnapshotFields(
       : {}),
     ...(readNullableNumber(record, "lastConnectedAt") !== undefined
       ? { lastConnectedAt: readNullableNumber(record, "lastConnectedAt") }
+      : {}),
+    ...(readNullableNumber(record, "lastSocketConnectedAt") !== undefined
+      ? { lastSocketConnectedAt: readNullableNumber(record, "lastSocketConnectedAt") }
+      : {}),
+    ...(readNullableNumber(record, "lastSocketDisconnectedAt") !== undefined
+      ? { lastSocketDisconnectedAt: readNullableNumber(record, "lastSocketDisconnectedAt") }
+      : {}),
+    ...(readNullableNumber(record, "lastSocketReconnectAt") !== undefined
+      ? { lastSocketReconnectAt: readNullableNumber(record, "lastSocketReconnectAt") }
+      : {}),
+    ...(readNullableNumber(record, "lastSocketEnvelopeAt") !== undefined
+      ? { lastSocketEnvelopeAt: readNullableNumber(record, "lastSocketEnvelopeAt") }
+      : {}),
+    ...(readNullableNumber(record, "lastSlackEventAt") !== undefined
+      ? { lastSlackEventAt: readNullableNumber(record, "lastSlackEventAt") }
+      : {}),
+    ...(readStringUnion(record, "socketActiveState", ["active", "inactive", "unknown"] as const)
+      ? {
+          socketActiveState: readStringUnion(record, "socketActiveState", [
+            "active",
+            "inactive",
+            "unknown",
+          ] as const),
+        }
+      : {}),
+    ...(readBoolean(record, "socketActiveStateAvailable") !== undefined
+      ? { socketActiveStateAvailable: readBoolean(record, "socketActiveStateAvailable") }
+      : {}),
+    ...(readNumber(record, "socketConnectionCount") !== undefined
+      ? { socketConnectionCount: readNumber(record, "socketConnectionCount") }
+      : {}),
+    ...(readSocketModeSettings(record) !== undefined
+      ? { socketModeSettings: readSocketModeSettings(record) }
+      : {}),
+    ...(readObjectRecord(record, "socketConnections") !== undefined
+      ? { socketConnections: readObjectRecord(record, "socketConnections") }
+      : {}),
+    ...(readSocketDisconnectReason(record) !== undefined
+      ? { lastSocketDisconnectReason: readSocketDisconnectReason(record) }
+      : {}),
+    ...(readTimedError(record, "lastSocketError") !== undefined
+      ? { lastSocketError: readTimedError(record, "lastSocketError") }
+      : {}),
+    ...(readNumberRecord(record, "slackTelemetry") !== undefined
+      ? { slackTelemetry: readNumberRecord(record, "slackTelemetry") }
       : {}),
     ...(readNumber(record, "lastInboundAt") !== undefined
       ? { lastInboundAt: readNumber(record, "lastInboundAt") }

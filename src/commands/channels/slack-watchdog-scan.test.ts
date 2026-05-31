@@ -576,6 +576,20 @@ describe("channelsSlackWatchdogScanCommand", () => {
               healthState: "healthy",
               lastInboundAt: Date.parse("2026-05-21T01:28:00.000Z"),
               lastTransportActivityAt: Date.parse("2026-05-21T01:29:00.000Z"),
+              lastSocketConnectedAt: Date.parse("2026-05-21T01:25:00.000Z"),
+              lastSocketEnvelopeAt: Date.parse("2026-05-21T01:29:30.000Z"),
+              lastSlackEventAt: Date.parse("2026-05-21T01:29:40.000Z"),
+              lastSocketError: { at: Date.parse("2026-05-21T01:20:00.000Z"), error: "old" },
+              slackTelemetry: {
+                rawSlackEvents: 12,
+                messageEvents: 5,
+                droppedEvents: 2,
+                droppedPolicyEvents: 1,
+                droppedSelfBotEvents: 8,
+                preparedForDispatch: 3,
+                admissionsRecorded: 4,
+                dispatchFailures: 1,
+              },
             },
           ],
         },
@@ -636,19 +650,39 @@ describe("channelsSlackWatchdogScanCommand", () => {
     expect(alertMessage).toContain("Where: soylei <#C0B0AK14B7X> (C0B0AK14B7X)");
     expect(alertMessage).toContain("What checked: Slack history vs OpenClaw admission ledger");
     expect(alertMessage).toContain(
-      "Nearby channel health: health=healthy, connected=true, running=true, transport=1m ago, inbound=2m ago",
+      "Nearby channel health: health=healthy, connected=true, running=true, socketEnvelope=1m ago, slackEvent=just now, socketError=10m ago, transport=1m ago, inbound=2m ago",
+    );
+    expect(alertMessage).toContain(
+      "Slack receiver counters: raw=12, messages=5, dropped=2, policyDrops=1, selfBotDrops=8, prepared=3, admissions=4, dispatchFailures=1",
     );
     expect(alertMessage).toContain("Reason: Slack has the message, but OpenClaw has no admission");
     expect(alertMessage).toContain("Next action:");
     const report = JSON.parse(runtime.logs[0] ?? "{}") as {
-      health?: { available?: boolean; healthState?: string; lastTransportActivityAge?: string };
+      health?: {
+        available?: boolean;
+        healthState?: string;
+        lastSocketEnvelopeAge?: string;
+        lastSlackEventAge?: string;
+        lastSocketErrorAge?: string;
+        lastTransportActivityAge?: string;
+        slackTelemetry?: Record<string, number>;
+      };
       alert?: { sent?: number; skippedKnown?: number };
     };
     expect(report.health).toEqual(
       expect.objectContaining({
         available: true,
         healthState: "healthy",
+        lastSocketEnvelopeAge: "1m ago",
+        lastSlackEventAge: "just now",
+        lastSocketErrorAge: "10m ago",
         lastTransportActivityAge: "1m ago",
+        slackTelemetry: expect.objectContaining({
+          rawSlackEvents: 12,
+          droppedPolicyEvents: 1,
+          droppedSelfBotEvents: 8,
+          dispatchFailures: 1,
+        }),
       }),
     );
     expect(report.alert?.sent).toBe(1);
@@ -1039,7 +1073,10 @@ describe("channelsSlackWatchdogScanCommand", () => {
 
   it("preflights a guarded replay without starting an agent turn", async () => {
     const runtime = createRuntime();
-    const agentCommandFromIngress = vi.fn(async () => undefined);
+    const agentCommandFromIngress = vi.fn(async () => ({
+      payloads: [{ text: "Recovered answer." }],
+      meta: {},
+    }));
     const callGateway = vi.fn(async () => ({
       payload: {
         messages: [
@@ -1111,7 +1148,15 @@ describe("channelsSlackWatchdogScanCommand", () => {
   it("dispatches a guarded replay through ingress and dedupes dispatched recovery", async () => {
     const stateDir = await makeTempState();
     const runtime = createRuntime();
-    const agentCommandFromIngress = vi.fn(async () => undefined);
+    const agentCommandFromIngress = vi.fn(
+      async (_args: unknown, agentRuntime: { log: (message: string) => void }) => {
+        agentRuntime.log("Recovered answer.");
+        return {
+          payloads: [{ text: "Recovered answer." }],
+          meta: {},
+        };
+      },
+    );
     const callGateway = vi.fn(async () => ({
       payload: {
         messages: [
@@ -1168,13 +1213,37 @@ describe("channelsSlackWatchdogScanCommand", () => {
         to: "channel:C0B0AK14B7X",
         threadId: "1780021947.219859",
         sessionKey: "agent:main:slack:channel:c0b0ak14b7x:thread:1780021947.219859",
+        deliver: false,
         allowModelOverride: false,
         senderIsOwner: false,
       }),
-      runtime,
+      expect.objectContaining({
+        log: expect.any(Function),
+        writeStdout: expect.any(Function),
+        writeJson: expect.any(Function),
+      }),
     );
     expect(callGateway).toHaveBeenNthCalledWith(
       2,
+      expect.objectContaining({
+        method: "message.action",
+        params: expect.objectContaining({
+          channel: "slack",
+          action: "send",
+          accountId: "soylei",
+          params: expect.objectContaining({
+            to: "channel:C0B0AK14B7X",
+            accountId: "soylei",
+            threadId: "1780021947.219859",
+            message: "Recovered answer.",
+          }),
+          idempotencyKey:
+            "channels-watchdog-replay-agent-reply:soylei:C0B0AK14B7X:1780021947.219859:0",
+        }),
+      }),
+    );
+    expect(callGateway).toHaveBeenNthCalledWith(
+      3,
       expect.objectContaining({
         method: "message.action",
         params: expect.objectContaining({
@@ -1193,10 +1262,20 @@ describe("channelsSlackWatchdogScanCommand", () => {
     const report = JSON.parse(runtime.logs[0] ?? "{}") as {
       outcome?: string;
       dispatched?: boolean;
+      agentReply?: { sent?: boolean; threadTs?: string };
       recoveryReply?: { sent?: boolean; threadTs?: string };
     };
+    expect(runtime.logs).toHaveLength(1);
     expect(report.outcome).toBe("dispatched");
     expect(report.dispatched).toBe(true);
+    expect(report.agentReply).toEqual(
+      expect.objectContaining({
+        sent: true,
+        threadTs: "1780021947.219859",
+        payloadCount: 1,
+        sentCount: 1,
+      }),
+    );
     expect(report.recoveryReply).toEqual(
       expect.objectContaining({
         sent: true,
@@ -1242,5 +1321,243 @@ describe("channelsSlackWatchdogScanCommand", () => {
     expect(agentCommandFromIngress).toHaveBeenCalledTimes(1);
     const secondReport = JSON.parse(secondRuntime.logs[0] ?? "{}") as { outcome?: string };
     expect(secondReport.outcome).toBe("blocked-already-replayed");
+  });
+
+  it("replays structured Slack payloads with stable per-part idempotency keys", async () => {
+    const stateDir = await makeTempState();
+    const runtime = createRuntime();
+    const agentCommandFromIngress = vi.fn(async () => ({
+      payloads: [
+        {
+          mediaUrls: ["https://example.com/one.png", "https://example.com/two.png"],
+          channelData: { slack: { blocks: [{ type: "divider" }] } },
+        },
+      ],
+      meta: {},
+    }));
+    const callGateway = vi.fn(async () => ({
+      payload: {
+        messages: [
+          {
+            channel: "C0B0AK14B7X",
+            ts: "1780021947.219859",
+            user: "U012ETLV6NQ",
+            text: "<@U0B0BS18D70> recover structured reply",
+          },
+        ],
+      },
+    }));
+
+    await channelsSlackWatchdogReplayCommand(
+      {
+        account: "soylei",
+        target: "channel:C0B0AK14B7X",
+        ts: "1780021947.219859",
+        botUser: "U0B0BS18D70",
+        execute: true,
+        json: true,
+      },
+      runtime,
+      {
+        cfg: {
+          channels: {
+            slack: {
+              accounts: {
+                soylei: {
+                  channels: {
+                    C0B0AK14B7X: {
+                      requireMention: true,
+                      users: ["U012ETLV6NQ"],
+                    },
+                  },
+                },
+              },
+            },
+          },
+        } as never,
+        env: { OPENCLAW_STATE_DIR: stateDir },
+        now: new Date("2026-05-29T02:41:00.000Z"),
+        callGateway,
+        agentCommandFromIngress,
+      },
+    );
+
+    expect(callGateway).toHaveBeenNthCalledWith(
+      2,
+      expect.objectContaining({
+        method: "message.action",
+        params: expect.objectContaining({
+          params: expect.objectContaining({
+            media: "https://example.com/one.png",
+            threadId: "1780021947.219859",
+          }),
+          idempotencyKey:
+            "channels-watchdog-replay-agent-reply:soylei:C0B0AK14B7X:1780021947.219859:0",
+        }),
+      }),
+    );
+    expect(callGateway).toHaveBeenNthCalledWith(
+      3,
+      expect.objectContaining({
+        method: "message.action",
+        params: expect.objectContaining({
+          params: expect.objectContaining({
+            media: "https://example.com/two.png",
+            threadId: "1780021947.219859",
+          }),
+          idempotencyKey:
+            "channels-watchdog-replay-agent-reply:soylei:C0B0AK14B7X:1780021947.219859:1",
+        }),
+      }),
+    );
+    expect(callGateway).toHaveBeenNthCalledWith(
+      4,
+      expect.objectContaining({
+        method: "message.action",
+        params: expect.objectContaining({
+          params: expect.objectContaining({
+            presentation: { blocks: [{ type: "divider" }] },
+            threadId: "1780021947.219859",
+          }),
+          idempotencyKey:
+            "channels-watchdog-replay-agent-reply:soylei:C0B0AK14B7X:1780021947.219859:2",
+        }),
+      }),
+    );
+    const report = JSON.parse(runtime.logs[0] ?? "{}") as {
+      outcome?: string;
+      agentReply?: { sent?: boolean; payloadCount?: number; sentCount?: number };
+    };
+    expect(report.outcome).toBe("dispatched");
+    expect(report.agentReply).toEqual(
+      expect.objectContaining({
+        sent: true,
+        payloadCount: 1,
+        sentCount: 3,
+      }),
+    );
+  });
+
+  it("records replay parts durably and returns JSON failure reports", async () => {
+    const stateDir = await makeTempState();
+    const runtime = createRuntime();
+    const agentCommandFromIngress = vi.fn(async () => ({
+      payloads: [
+        {
+          mediaUrls: ["https://example.com/one.png", "https://example.com/two.png"],
+        },
+      ],
+      meta: {},
+    }));
+    const historyPayload = {
+      payload: {
+        messages: [
+          {
+            channel: "C0B0AK14B7X",
+            ts: "1780021947.219859",
+            user: "U012ETLV6NQ",
+            text: "<@U0B0BS18D70> recover partial reply",
+          },
+        ],
+      },
+    };
+    const callGateway = vi
+      .fn()
+      .mockResolvedValueOnce(historyPayload)
+      .mockResolvedValueOnce({ payload: { messageId: "reply-part-0" } })
+      .mockRejectedValueOnce(new Error("second part failed"));
+    const cfg = {
+      channels: {
+        slack: {
+          accounts: {
+            soylei: {
+              channels: {
+                C0B0AK14B7X: {
+                  requireMention: true,
+                  users: ["U012ETLV6NQ"],
+                },
+              },
+            },
+          },
+        },
+      },
+    } as never;
+
+    await channelsSlackWatchdogReplayCommand(
+      {
+        account: "soylei",
+        target: "channel:C0B0AK14B7X",
+        ts: "1780021947.219859",
+        botUser: "U0B0BS18D70",
+        execute: true,
+        json: true,
+      },
+      runtime,
+      {
+        cfg,
+        env: { OPENCLAW_STATE_DIR: stateDir },
+        now: new Date("2026-05-29T02:41:00.000Z"),
+        callGateway,
+        agentCommandFromIngress,
+      },
+    );
+
+    const failedReport = JSON.parse(runtime.logs[0] ?? "{}") as {
+      outcome?: string;
+      reason?: string;
+      agentReply?: { sent?: boolean; error?: string };
+    };
+    expect(failedReport.outcome).toBe("failed");
+    expect(failedReport.reason).toBe("second part failed");
+    expect(failedReport.agentReply).toEqual(
+      expect.objectContaining({ sent: false, error: "second part failed" }),
+    );
+    const statePath = path.join(stateDir, "slack", "watchdog-alerts", "soylei.json");
+    const state = JSON.parse(await fs.readFile(statePath, "utf8")) as Record<
+      string,
+      { replayAgentReplyParts?: Record<string, { attemptedAt?: string; sentAt?: string }> }
+    >;
+    expect(Object.values(state)[0]?.replayAgentReplyParts).toEqual(
+      expect.objectContaining({
+        "0": expect.objectContaining({
+          attemptedAt: "2026-05-29T02:41:00.000Z",
+          sentAt: "2026-05-29T02:41:00.000Z",
+        }),
+        "1": expect.objectContaining({ attemptedAt: "2026-05-29T02:41:00.000Z" }),
+      }),
+    );
+
+    const retryRuntime = createRuntime();
+    const retryGateway = vi
+      .fn()
+      .mockResolvedValueOnce(historyPayload)
+      .mockResolvedValueOnce({ payload: { messageId: "reply-part-1" } })
+      .mockResolvedValueOnce({ payload: { messageId: "recovery-complete" } });
+    await channelsSlackWatchdogReplayCommand(
+      {
+        account: "soylei",
+        target: "channel:C0B0AK14B7X",
+        ts: "1780021947.219859",
+        botUser: "U0B0BS18D70",
+        execute: true,
+        json: true,
+      },
+      retryRuntime,
+      {
+        cfg,
+        env: { OPENCLAW_STATE_DIR: stateDir },
+        now: new Date("2026-05-29T02:42:00.000Z"),
+        callGateway: retryGateway,
+        agentCommandFromIngress,
+      },
+    );
+
+    expect(retryGateway).toHaveBeenCalledTimes(1);
+    const retryReport = JSON.parse(retryRuntime.logs[0] ?? "{}") as {
+      outcome?: string;
+      reason?: string;
+    };
+    expect(retryReport.outcome).toBe("failed");
+    expect(retryReport.reason).toContain("ambiguous prior delivery");
   });
 });

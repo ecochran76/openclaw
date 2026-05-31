@@ -98,6 +98,10 @@ export const slackChannelConfigUiHints = {
     label: "Slack Relay Gateway ID",
     help: "Destination id that openclaw-slack-router uses when routing user-group mentions to this gateway.",
   },
+  "socketMode.connectionCount": {
+    label: "Slack Socket Mode Connections",
+    help: "Concurrent Socket Mode receiver connections for the account. Keep at 1 by default; raise up to 10 only when hardening live receiver reliability with duplicate admission protections enabled.",
+  },
   botToken: {
     label: "Slack Bot Token",
     help: "Slack bot token used for standard chat actions in the configured workspace. Keep this credential scoped and rotate if workspace app permissions change.",
