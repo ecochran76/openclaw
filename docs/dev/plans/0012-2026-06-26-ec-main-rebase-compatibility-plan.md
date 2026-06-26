@@ -32,6 +32,27 @@ Feature families to preserve:
 - voice / telephony / local STT
 - outbound relay and bound-channel protections
 
+## Fragile Areas That Need Extra Attention
+
+Historically, two areas have broken after `ec-main` rebases more often than
+other local feature families:
+
+- Slack reliability: Socket Mode receive/ack behavior, tracked-turn routing,
+  relay attribution, watchdog diagnostics, duplicate suppression, and now
+  history reconciliation all sit across plugin, channel-status, and gateway
+  seams. Treat Slack conflicts as runtime reliability conflicts, not just type
+  or test conflicts.
+- Codex auth: provider-formatted OAuth tokens, shared-client refresh behavior,
+  profile selection, no-external-profile diagnostics, and model/status commands
+  have repeatedly looked healthy in static config while failing at runtime.
+  Treat Codex/OpenAI auth conflicts as live credential-flow conflicts, not just
+  schema conflicts.
+
+The rebase should preserve these behaviors by adapting them to upstream's
+current ownership boundaries. Do not take an upstream or downstream side
+mechanically in these files. For both areas, require source review, focused
+tests, and live or near-live operator proof before considering the rebase done.
+
 ## Non-goals
 
 - Do not remove local behavior just to reduce conflict count.
@@ -61,7 +82,18 @@ Preferred shape:
   plugins when upstream has moved that ownership there;
 - preserve local profile selection, quota/usage visibility, and no-external-
   profile status behavior as helpers layered onto upstream profile contracts;
+- preserve provider-formatted OAuth token normalization and shared-client
+  refresh semantics before asking for `/reauth` again;
+- verify that Codex model/status commands read the same auth/profile source the
+  runtime agent path will use;
 - avoid reviving deleted provider-core bridges unless no plugin seam exists.
+
+Extra checks:
+
+- inspect the current Codex/OpenAI plugin auth path before resolving conflicts;
+- prove both API-key and OAuth/profile paths still surface actionable status;
+- if `/reauth` appears successful but runtime turns fail, debug the auth wrapper
+  and shared-client path before treating it as an operator credential issue.
 
 ### Agent Runner And Tool Surface
 
@@ -98,8 +130,21 @@ Preferred shape:
   separate reply path;
 - bypass live-event debounce only for explicit history replay, and preserve the
   upstream Socket Mode lifecycle and ack model;
+- preserve live duplicate suppression, history-replay dedupe reservations,
+  ledger admission idempotency, and tracked-turn attribution together;
+- keep name-based channel targeting narrow so reconciliation does not scan
+  unrelated rooms in large workspaces;
 - surface reconciliation state through sanitized account status fields, not by
   exposing ledger files or Slack-private state directly.
+
+Extra checks:
+
+- inspect receive, send, watchdog, tracked-turn, and reconciliation paths as one
+  reliability surface;
+- prove old thread roots, pending reply cursors, replay-dispatched messages,
+  and live retry dedupe still behave correctly after conflict repair;
+- preserve Slack runtime behavior through the external plugin/live patch path
+  when the rebase changes deployed Slack code.
 
 ### Channel Status, Gateway Protocol, And Config
 
@@ -157,10 +202,11 @@ Preferred shape:
 
 1. Create or confirm a clean `ec-main` checkpoint before starting the rebase.
 2. Rebase onto fresh `origin/main`.
-3. Resolve profiles/auth/Codex provider conflicts first.
+3. Resolve profiles/auth/Codex provider conflicts first, including shared-client
+   OAuth behavior and model/status command diagnostics.
 4. Resolve agent runner rename and session/A2A tool conflicts next.
 5. Resolve Slack receiver, send, and reconciliation conflicts as one coherent
-   plugin-local slice.
+   plugin-local reliability slice.
 6. Resolve channel status, gateway protocol, config schemas, and generated
    artifacts.
 7. Resolve automation/outbound and voice/media conflicts.
@@ -186,11 +232,22 @@ Additional Slack reconciliation proof if the Slack conflicts are non-trivial:
 - `node scripts/run-vitest.mjs extensions/slack/src/monitor/reconciliation.test.ts extensions/slack/src/monitor/provider.allowlist.test.ts extensions/slack/src/monitor/message-handler.test.ts src/commands/channels/why-silent.test.ts src/commands/channels/slack-watchdog-scan.test.ts src/channels/account-snapshot-fields.test.ts src/plugin-sdk/status-helpers.test.ts`
 - `pnpm config:channels:check`
 
+Additional Codex auth proof if Codex/OpenAI auth conflicts are non-trivial:
+
+- focused tests for Codex/OpenAI auth profile loading, OAuth/shared-client
+  refresh, model/status commands, and no-external-profile diagnostics;
+- an operator-path smoke that confirms the runtime Codex agent path and CLI
+  diagnostics agree on the active profile/auth source;
+- if live credentials cannot be exercised, document the missing live proof and
+  preserve a concrete reproduction command for the next operator.
+
 ## Definition Of Done
 
 - `ec-main` rebases onto fresh `origin/main` with local features preserved.
 - Rebase repairs follow current upstream ownership and naming rather than
   restoring stale local structures.
+- Slack receive/send/reconciliation/watchdog behavior and Codex auth/profile
+  behavior have explicit focused proof or a documented live-proof blocker.
 - Generated artifacts match their source schemas.
 - Focused family gates pass; broad check/build pass or any unrelated upstream
   failure is documented with scoped proof.
