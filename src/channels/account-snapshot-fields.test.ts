@@ -75,6 +75,20 @@ describe("projectSafeChannelAccountSnapshotFields", () => {
         dispatchFailures: 1,
         ignored: "secret",
       },
+      reconciliationStatus: {
+        enabled: true,
+        lastScanAt: 999,
+        missingCandidates: 1,
+        statePath: "/Users/example/.openclaw/slack/reconciliation/work.json",
+        recentCandidates: [
+          {
+            channel: "C123",
+            ts: "1.000000",
+            status: "missing-admission",
+            reason: "eligible-missing-admission",
+          },
+        ],
+      },
       channelAccessToken: "line-token",
       channelSecret: "line-secret", // pragma: allowlist secret
       probe: { ok: true, token: "probe-secret" },
@@ -115,6 +129,19 @@ describe("projectSafeChannelAccountSnapshotFields", () => {
       slackTelemetry: {
         rawSlackEvents: 2,
         dispatchFailures: 1,
+      },
+      reconciliationStatus: {
+        enabled: true,
+        lastScanAt: 999,
+        missingCandidates: 1,
+        recentCandidates: [
+          {
+            channel: "C123",
+            ts: "1.000000",
+            status: "missing-admission",
+            reason: "eligible-missing-admission",
+          },
+        ],
       },
     });
   });

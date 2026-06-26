@@ -2,7 +2,7 @@ import { describe, expect, it } from "vitest";
 import { buildChannelsWhySilentReport, formatChannelsWhySilentReport } from "./why-silent.js";
 
 describe("buildChannelsWhySilentReport", () => {
-  it("flags a Slack message newer than account inbound activity as likely not ingested", () => {
+  it("flags a Slack message newer than account inbound activity when reconciliation has not checked", () => {
     const report = buildChannelsWhySilentReport({
       channel: "slack",
       accountId: "soylei",
@@ -30,8 +30,8 @@ describe("buildChannelsWhySilentReport", () => {
       ],
     });
 
-    expect(report.verdict).toBe("likely-not-ingested");
-    expect(report.explanation).toContain("newer message");
+    expect(report.verdict).toBe("reconciliation-not-checked");
+    expect(report.explanation).toContain("reconciliation has not checked");
     expect(report.newestMessage).toMatchObject({
       ts: "1700000006.500000",
       at: 1_700_000_006_500,
@@ -40,7 +40,7 @@ describe("buildChannelsWhySilentReport", () => {
     });
   });
 
-  it("reports a receiver-active admission gap when raw Slack receiver activity is current", () => {
+  it("reports a receiver-active admission gap when reconciliation has checked and raw Slack receiver activity is current", () => {
     const report = buildChannelsWhySilentReport({
       channel: "slack",
       accountId: "soylei",
@@ -60,6 +60,13 @@ describe("buildChannelsWhySilentReport", () => {
           droppedEvents: 2,
           admissionsRecorded: 3,
         },
+        reconciliationStatus: {
+          enabled: true,
+          lastScanAt: 1_700_000_007_000,
+          missingCandidates: 0,
+          recoveredCandidates: 0,
+          failedCandidates: 0,
+        },
       },
       messages: [
         {
@@ -77,7 +84,52 @@ describe("buildChannelsWhySilentReport", () => {
     expect(text).toContain("Last socket envelope: 2023-11-14T22:13:26.900Z");
     expect(text).toContain("Last Slack event: 2023-11-14T22:13:26.900Z");
     expect(lines).toContain("Slack counters: raw=10, messages=4, dropped=2, admissions=3");
+    expect(text).toContain("Slack reconciliation: lastScan=2023-11-14T22:13:27.000Z");
     expect(text).not.toContain("Last transport:");
+  });
+
+  it("uses recent reconciliation candidate status before generic receiver state", () => {
+    const report = buildChannelsWhySilentReport({
+      channel: "slack",
+      accountId: "soylei",
+      target: "channel:C123",
+      now: 1_700_000_010_000,
+      account: {
+        accountId: "soylei",
+        running: true,
+        connected: true,
+        lastStartAt: 1_699_999_000_000,
+        lastInboundAt: 1_700_000_000_000,
+        lastSocketEnvelopeAt: 1_700_000_006_900,
+        lastSlackEventAt: 1_700_000_006_900,
+        reconciliationStatus: {
+          enabled: true,
+          lastScanAt: 1_700_000_007_000,
+          missingCandidates: 1,
+          recoveredCandidates: 0,
+          failedCandidates: 0,
+          recentCandidates: [
+            {
+              channel: "C123",
+              ts: "1700000006.500000",
+              status: "missing-admission",
+              reason: "eligible-missing-admission",
+              lastSeenAt: "2023-11-14T22:13:27.000Z",
+            },
+          ],
+        },
+      },
+      messages: [
+        {
+          ts: "1700000006.500000",
+          user: "U123",
+          text: "hello",
+        },
+      ],
+    });
+
+    expect(report.verdict).toBe("reconciliation-found-missing");
+    expect(report.explanation).toContain("Auto recovery is not enabled");
   });
 
   it("reports current Slack socket lifecycle errors as receiver problems", () => {
@@ -153,6 +205,13 @@ describe("buildChannelsWhySilentReport", () => {
           droppedPolicyEvents: 1,
           admissionsRecorded: 1,
         },
+        reconciliationStatus: {
+          enabled: true,
+          lastScanAt: 1_700_000_007_000,
+          missingCandidates: 0,
+          recoveredCandidates: 0,
+          failedCandidates: 0,
+        },
       },
       messages: [
         {
@@ -200,6 +259,13 @@ describe("buildChannelsWhySilentReport", () => {
           droppedPolicyEvents: 1,
           admissionsRecorded: 1,
         },
+        reconciliationStatus: {
+          enabled: true,
+          lastScanAt: 1_700_000_007_000,
+          missingCandidates: 0,
+          recoveredCandidates: 0,
+          failedCandidates: 0,
+        },
       },
       messages: [
         {
@@ -227,6 +293,13 @@ describe("buildChannelsWhySilentReport", () => {
         lastInboundAt: 1_700_000_000_000,
         lastSocketEnvelopeAt: 1_700_000_006_900,
         lastSlackEventAt: 1_700_000_006_900,
+        reconciliationStatus: {
+          enabled: true,
+          lastScanAt: 1_700_000_007_000,
+          missingCandidates: 0,
+          recoveredCandidates: 0,
+          failedCandidates: 0,
+        },
       },
       messages: [
         {
@@ -331,6 +404,13 @@ describe("buildChannelsWhySilentReport", () => {
         lastInboundAt: 1_700_000_000_000,
         lastSocketEnvelopeAt: 1_700_000_006_900,
         lastSlackEventAt: 1_700_000_006_900,
+        reconciliationStatus: {
+          enabled: true,
+          lastScanAt: 1_700_000_007_000,
+          missingCandidates: 0,
+          recoveredCandidates: 0,
+          failedCandidates: 0,
+        },
       },
       messages: [
         {

@@ -4,11 +4,13 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 const enqueueMock = vi.fn(async (_entry: unknown) => {});
 const flushKeyMock = vi.fn(async (_key: string) => {});
 const onFlushCallbacks: Array<(entries: Array<Record<string, unknown>>) => Promise<void>> = [];
-const prepareSlackMessageMock = vi.fn(async () => ({ ctxPayload: {} }));
-const dispatchPreparedSlackMessageMock = vi.fn(async () => {});
 const resolveThreadTsMock = vi.fn(async ({ message }: { message: Record<string, unknown> }) => ({
   ...message,
 }));
+const prepareSlackMessageMock = vi.hoisted(() =>
+  vi.fn(async (params: Record<string, unknown>) => params),
+);
+const dispatchPreparedSlackMessageMock = vi.hoisted(() => vi.fn(async (_prepared: unknown) => {}));
 const reactSlackMessageMock = vi.hoisted(() => vi.fn(async () => {}));
 const { createSlackMessageHandler } = await import("./message-handler.js");
 
@@ -45,8 +47,8 @@ vi.mock("./thread-resolution.js", () => ({
 }));
 
 vi.mock("./message-handler/pipeline.runtime.js", () => ({
-  prepareSlackMessage: prepareSlackMessageMock,
-  dispatchPreparedSlackMessage: dispatchPreparedSlackMessageMock,
+  prepareSlackMessage: (params: Record<string, unknown>) => prepareSlackMessageMock(params),
+  dispatchPreparedSlackMessage: (prepared: unknown) => dispatchPreparedSlackMessageMock(prepared),
 }));
 
 vi.mock("./inbound-delivery-state.js", () => ({
@@ -131,6 +133,8 @@ describe("createSlackMessageHandler", () => {
     prepareSlackMessageMock.mockClear();
     dispatchPreparedSlackMessageMock.mockClear();
     resolveThreadTsMock.mockClear();
+    prepareSlackMessageMock.mockClear();
+    dispatchPreparedSlackMessageMock.mockClear();
     reactSlackMessageMock.mockClear();
   });
 
@@ -183,6 +187,37 @@ describe("createSlackMessageHandler", () => {
     expect(trackTelemetry).toHaveBeenCalledWith("messageEvents");
     expect(resolveThreadTsMock).toHaveBeenCalledTimes(1);
     expect(enqueueMock).toHaveBeenCalledTimes(1);
+  });
+
+  it("bypasses the live seen cache for history reconciliation replay", async () => {
+    const markMessageSeen = vi.fn(() => true);
+    const { handler, trackEvent, trackTelemetry } = createHandlerWithTracker({
+      markMessageSeen,
+    });
+
+    await handler(
+      {
+        type: "message",
+        channel: "C111",
+        channel_type: "channel",
+        user: "U111",
+        ts: "1709009999.000200",
+        text: "<@UOPENCLAW> recovered",
+      } as never,
+      { source: "history_reconcile", wasMentioned: true },
+    );
+
+    expect(trackEvent).toHaveBeenCalledTimes(1);
+    expect(trackTelemetry).toHaveBeenCalledWith("messageEvents");
+    expect(resolveThreadTsMock).toHaveBeenCalledTimes(1);
+    expect(prepareSlackMessageMock).toHaveBeenCalledTimes(1);
+    expect(dispatchPreparedSlackMessageMock).toHaveBeenCalledTimes(1);
+    expect(markMessageSeen).toHaveBeenCalledTimes(1);
+    expect(markMessageSeen).toHaveBeenCalledWith("C111", "1709009999.000200");
+    expect(dispatchPreparedSlackMessageMock.mock.invocationCallOrder[0]).toBeLessThan(
+      markMessageSeen.mock.invocationCallOrder[0],
+    );
+    expect(enqueueMock).not.toHaveBeenCalled();
   });
 
   it("starts an app mention ack before thread resolution and pipeline work", async () => {

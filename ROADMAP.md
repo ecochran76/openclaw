@@ -22,6 +22,14 @@ State: OPEN
 
 Current State: `docs/dev/plans/0003-2026-04-26-openclaw-agent-skill-catalog-batch-2.md` tracks the second skill batch for automation maintenance, Slack runtime debugging, agent bootstrap diagnostics, and plugin survivability decisions.
 
+## Slack Reliability Sequence
+
+P04 and P05 are ordered milestones. Socket Mode hardening comes first because
+the live receiver should use Slack's lifecycle, ack, refresh, and redundancy
+contracts correctly. Active reconciliation follows as the durable correctness
+path that compares OpenClaw admission state with Slack history and recovers
+missed messages when configured.
+
 ## P04 | Slack Socket Mode Hardening
 
 State: COMPLETE
@@ -32,8 +40,8 @@ The next Slack reliability slice is P05 active reconciliation.
 
 ## P05 | Slack Active Reconciliation
 
-State: OPEN
+State: COMPLETE
 
-Current State: `docs/dev/plans/0010-2026-05-30-slack-history-reconciliation-receiver.md` tracks the durable Slack history reconciliation milestone. This is the second receiver path that catches missed mentions/messages after Socket Mode hardening, using checkpointed `conversations.history` / `conversations.replies`, candidate classification, idempotent replay, scheduling, status, and live proof.
+Current State: `docs/dev/plans/0010-2026-05-30-slack-history-reconciliation-receiver.md` completed the durable Slack history reconciliation milestone. OpenClaw now has a Slack history correctness path alongside Socket Mode: dry-run/replay reconciliation, status, watchdog/why-silent operator surfaces, focused tests, and live SoyLei recovery proof are present as of 2026-05-31.
 
-The next implementation slice is dry-run reconciliation state, fetch, and candidate classification.
+SoyLei is live-patched with reconciliation enabled and `autoRecover: true`.

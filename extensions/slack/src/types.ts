@@ -37,6 +37,7 @@ export type SlackMessageEvent = {
   username?: string;
   text?: string;
   ts?: string;
+  client_msg_id?: string;
   thread_ts?: string;
   event_ts?: string;
   parent_user_id?: string;

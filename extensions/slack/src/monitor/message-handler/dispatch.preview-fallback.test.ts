@@ -27,6 +27,7 @@ const stopSlackStreamMock = vi.fn(async (_params?: unknown) => ({}) as { message
 const emitSlackMessageSentHooksMock = vi.fn(() => {});
 const reactSlackMessageMock = vi.fn(async () => {});
 const removeSlackReactionMock = vi.fn(async () => {});
+const deleteSlackMessageMock = vi.fn(async () => {});
 class TestSlackStreamNotDeliveredError extends Error {
   readonly pendingText: string;
   readonly slackCode: string;
@@ -124,6 +125,7 @@ type TestReplyPayload = {
   text?: string;
   isError?: boolean;
   isReasoning?: boolean;
+  isStatusNotice?: boolean;
   mediaUrl?: string;
   mediaUrls?: string[];
   audioAsVoice?: boolean;
@@ -816,6 +818,7 @@ vi.mock("openclaw/plugin-sdk/string-coerce-runtime", () => ({
 }));
 
 vi.mock("../../actions.js", () => ({
+  deleteSlackMessage: deleteSlackMessageMock,
   reactSlackMessage: reactSlackMessageMock,
   removeSlackReaction: removeSlackReactionMock,
 }));
@@ -1237,6 +1240,7 @@ describe("dispatchPreparedSlackMessage preview fallback", () => {
     stopSlackStreamMock.mockReset();
     reactSlackMessageMock.mockReset();
     removeSlackReactionMock.mockReset();
+    deleteSlackMessageMock.mockReset();
     for (const value of Object.values(statusReactionControllerMock)) {
       value.mockClear();
     }
@@ -1319,6 +1323,46 @@ describe("dispatchPreparedSlackMessage preview fallback", () => {
 
     expect(deliverRepliesMock).toHaveBeenCalledTimes(1);
     expectDeliverReplyCall(0, FINAL_REPLY_TEXT, { replyThreadTs: THREAD_TS });
+  });
+
+  it("deletes transient progress messages after a successful final Slack reply", async () => {
+    mockedDispatchSequence = [
+      { kind: "tool", payload: { text: ":warning: command failed" } },
+      { kind: "block", payload: { text: "working: still waiting for agent progress" } },
+      { kind: "final", payload: { text: FINAL_REPLY_TEXT } },
+    ];
+    deliverRepliesMock.mockImplementation(async (params: { replies?: TestReplyPayload[] }) => {
+      const text = params.replies?.[0]?.text ?? "";
+      const messageId =
+        text === FINAL_REPLY_TEXT
+          ? "171234.final"
+          : text.startsWith("working:")
+            ? "171234.block"
+            : "171234.tool";
+      return [{ channelId: "C123", messageId }];
+    });
+
+    await dispatchPreparedSlackMessage(createPreparedSlackMessage());
+
+    expect(deliverRepliesMock).toHaveBeenCalledTimes(3);
+    expect(deleteSlackMessageMock).toHaveBeenCalledTimes(2);
+    expect(deleteSlackMessageMock).toHaveBeenNthCalledWith(
+      1,
+      "C123",
+      "171234.tool",
+      expect.objectContaining({ accountId: "default" }),
+    );
+    expect(deleteSlackMessageMock).toHaveBeenNthCalledWith(
+      2,
+      "C123",
+      "171234.block",
+      expect.objectContaining({ accountId: "default" }),
+    );
+    expect(deleteSlackMessageMock).not.toHaveBeenCalledWith(
+      "C123",
+      "171234.final",
+      expect.anything(),
+    );
   });
 
   it("passes accepted Slack bot messages through the shared bot loop guard", async () => {

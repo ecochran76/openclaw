@@ -41,6 +41,7 @@ export type {
   SlackAccountConfig,
   SlackChannelConfig,
   SlackReactionNotificationMode,
+  SlackReconciliationConfig,
   SlackSlashCommandConfig,
   TelegramAccountConfig,
   TelegramActionConfig,

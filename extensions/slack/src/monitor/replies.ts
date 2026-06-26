@@ -20,7 +20,8 @@ import { markdownToSlackMrkdwnChunks } from "../format.js";
 import { SLACK_TEXT_LIMIT } from "../limits.js";
 import { emitSlackMessageSentHooks } from "../message-sent-hook.js";
 import { resolveSlackReplyBlocks } from "../reply-blocks.js";
-import { sendMessageSlack, type SlackSendIdentity, type SlackSendResult } from "./send.runtime.js";
+import type { SlackSendResult } from "../send.js";
+import { sendMessageSlack, type SlackSendIdentity } from "./send.runtime.js";
 
 export function readSlackReplyBlocks(payload: ReplyPayload) {
   return resolveSlackReplyBlocks(payload);
@@ -71,8 +72,8 @@ export async function deliverReplies(params: {
    * before reporting the terminal outcome.
    */
   deferMessageSentHooks?: true;
-}) {
-  let latestResult: SlackSendResult | undefined;
+}): Promise<SlackSendResult[]> {
+  const results: SlackSendResult[] = [];
   for (const payload of params.replies) {
     if (payload.isReasoning === true) {
       continue;
@@ -147,7 +148,7 @@ export async function deliverReplies(params: {
         throw error;
       }
       emitSent(trimmed, result);
-      latestResult = result;
+      results.push(result);
       params.runtime.log?.(`delivered reply to ${params.target}`);
       continue;
     }
@@ -179,6 +180,7 @@ export async function deliverReplies(params: {
             ...(params.identity ? { identity: params.identity } : {}),
             ...(params.metadata ? { metadata: params.metadata } : {}),
           });
+          results.push(lastResult);
         },
         sendMedia: async ({ mediaUrl, caption }) => {
           lastResult = await sendMessageSlack(params.target, caption ?? "", {
@@ -190,6 +192,7 @@ export async function deliverReplies(params: {
             ...(params.identity ? { identity: params.identity } : {}),
             ...(params.metadata ? { metadata: params.metadata } : {}),
           });
+          results.push(lastResult);
         },
       });
     } catch (error) {
@@ -200,11 +203,10 @@ export async function deliverReplies(params: {
       // Slack file uploads return file IDs, not the posted message `ts` expected
       // by message_sent consumers.
       emitSent(hookContent, reply.hasMedia ? undefined : lastResult);
-      latestResult = lastResult;
       params.runtime.log?.(`delivered reply to ${params.target}`);
     }
   }
-  return latestResult;
+  return results;
 }
 
 export type SlackRespondFn = (payload: {

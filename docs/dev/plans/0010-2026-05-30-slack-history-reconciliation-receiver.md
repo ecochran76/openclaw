@@ -1,5 +1,6 @@
-State: OPEN
+State: COMPLETE
 Created: 2026-05-30
+Last Updated: 2026-05-31
 
 # Slack History Reconciliation Receiver
 
@@ -9,6 +10,9 @@ Plans `0008` and `0009` improved Slack Socket Mode telemetry, health wording,
 and missed-message diagnosis. They did not close the reliability gap: OpenClaw
 can still be connected and healthy while Slack contains an explicit mention that
 never reaches the admission pipeline.
+
+Source implementation for Phases 1-6 is present and live SoyLei proof completed
+as of 2026-05-31.
 
 The SoyLei miss at `C0B0AK14B7X` / `1780182187.975599` proves the gap:
 
@@ -206,3 +210,95 @@ Acceptance:
 - Focused Slack receiver, admission, watchdog, and status tests pass.
 - Live SoyLei proof shows no duplicate replies and successful recovery of a
   deliberately withheld/missing admission fixture.
+
+## Implementation Evidence
+
+2026-05-31 source implementation:
+
+- Added Slack-owned reconciliation state and scanner in
+  `extensions/slack/src/monitor/reconciliation.ts` and
+  `extensions/slack/src/monitor/reconciliation-state.ts`.
+- Wired reconciliation startup/shutdown through
+  `extensions/slack/src/monitor/provider.ts`, deferred until bot identity is
+  hydrated, with retry only when reconciliation is enabled.
+- Extended the Slack handler/admission path to accept
+  `source: "history_reconcile"` and bypass live-event debounce while preserving
+  normal prepare/dispatch/delivery proof.
+- Added config schema/types/UI metadata for `channels.slack.reconciliation` and
+  account-level field-by-field overrides.
+- Added sanitized `reconciliationStatus` to status snapshots, gateway protocol,
+  `why-silent`, and `slack-watchdog-scan`.
+- Preserved live-admission parity for DM policy, channel user allowlists,
+  bot/self drops, bot-room authorization, implicit thread replies, thread
+  broadcasts, Slack user-group mentions, known older thread roots, discovery
+  failures, bounded backlog drain, and scheduler failure containment.
+
+2026-05-31 validation:
+
+- `pnpm tsgo:extensions --pretty false`
+- `pnpm tsgo:core --pretty false`
+- `node scripts/run-vitest.mjs extensions/slack/src/accounts.test.ts extensions/slack/src/monitor/provider.allowlist.test.ts extensions/slack/src/monitor/reconciliation.test.ts extensions/slack/src/monitor/message-handler.test.ts extensions/slack/src/monitor/message-handler/subteam-mentions.test.ts extensions/slack/src/config-schema.test.ts src/commands/channels/why-silent.test.ts src/commands/channels/slack-watchdog-scan.test.ts src/channels/account-snapshot-fields.test.ts src/plugin-sdk/status-helpers.test.ts`
+  - 10 test files, 144 tests passed.
+- `pnpm config:channels:check`
+- `git diff --check`
+- `.agents/skills/autoreview/scripts/autoreview --mode local`
+  - clean: no accepted/actionable findings reported.
+
+2026-05-31 live SoyLei proof:
+
+- Patched live OpenClaw and the Slack plugin with
+  `scripts/patch-live-openclaw.sh --expect-branch ec-main --require-expected-branch --patch-external-plugin slack`.
+  The script built tarballs, reinstalled the user-scoped runtime and Slack
+  plugin, refreshed the plugin registry, repaired/restarted the gateway, and
+  ended with gateway RPC healthy. The build emitted only the existing Vite
+  chunk-size warning; patch smoke tests passed.
+- Enabled SoyLei reconciliation in dry-run first with `autoRecover: false`,
+  `intervalMs: 60000`, `lookbackMs: 600000`,
+  `maxMessagesPerCycle: 200`, and `maxThreadRootsPerCycle: 50`.
+  `openclaw channels status --deep --json` reported
+  `reconciliationStatus.enabled: true`, a recent `lastScanAt`, and zero
+  candidates after scanning the configured SoyLei channel set.
+- Rechecked the original unanswered permalink with
+  `openclaw channels watchdog-scan --account soylei --permalink https://soyleiinnovations.slack.com/archives/C0B0AK14B7X/p1780182187975599`.
+  It remains a historical miss: `missing-admission=1` for
+  `1780182187.975599`, reason `activation-without-ledger-record`. That message
+  is outside the current reconciliation lookback, so it is incident evidence,
+  not a current health failure.
+- Simulated a missed event by stopping the gateway, posting an explicit SoyLei
+  mention while the receiver was offline, then restarting the gateway. The first
+  probe was correctly recorded as `dropped` with reason
+  `bot-message-disabled` because Slack marked the API-authored message with
+  `bot_id` while SoyLei production policy had `allowBots: false`.
+- Temporarily set SoyLei `allowBots: "mentions"` and `lookbackMs: 30000` for a
+  controlled recovery proof, stopped the gateway, posted
+  `1780249696.940159` while offline, and restarted the gateway. Reconciliation
+  state recorded `status: "replayed"` and
+  `reason: "history-reconcile-dispatched"`.
+- Operator proof for the recovered probe:
+  `openclaw channels watchdog-scan --account soylei --permalink https://soyleiinnovations.slack.com/archives/C0B0AK14B7X/p1780249696940159`
+  scanned the 30-minute window with `admitted=1` and `missing-admission=0`.
+  Gateway logs show the replay entered the normal Slack turn path and completed
+  in 27 seconds.
+- Restored SoyLei production policy after the controlled proof:
+  `allowBots: false`, reconciliation `lookbackMs: 600000`, and
+  `autoRecover: true`. `openclaw gateway status --deep --require-rpc` remained
+  healthy, and config reads confirmed the restored values.
+- Added final live coverage for the named probe classes in the `website`
+  channel (`C06L8DVBWQP`), which has `requireMention: true`:
+  - top-level parent `1780250237.379219` had no Lei mention and was recorded as
+    `admission-ledger:dropped`; watchdog reported `explicitly-ignored=1` and
+    `missing-admission=0`;
+  - threaded explicit mention `1780250242.131789` was recorded as
+    `admission-ledger:accepted`, entered the normal Slack turn path, and
+    received a thread reply at `1780250244.651209`;
+  - reconciliation later observed the bot reply as `bot-self`.
+    Final SoyLei status remained healthy with two Socket Mode connections,
+    reconciliation `autoRecover: true`, and zero missing/failed candidates.
+
+Known residuals:
+
+- The user-scoped gateway service still reports the pre-existing PATH warning.
+- The live log still reports `Slack persistent inbound delivery state failed`
+  because `openKeyedStore` is unavailable to this external plugin release.
+  Reconciliation still proved replay safety through the existing admission
+  ledger and watchdog surfaces.

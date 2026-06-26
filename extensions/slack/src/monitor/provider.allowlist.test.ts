@@ -4,6 +4,7 @@ import type { ChannelRuntimeSurface } from "openclaw/plugin-sdk/channel-contract
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import {
   flush,
+  getSlackClient,
   getSlackHandlerOrThrow,
   getSlackTestState,
   resetSlackTestState,
@@ -106,6 +107,36 @@ describe("slack startup user allowlist resolution", () => {
         "primary",
         "socket-2",
       ]);
+    } finally {
+      await stopSlackMonitor(monitor);
+    }
+  });
+
+  it("defers history reconciliation when auth metadata is unavailable", async () => {
+    resetSlackTestState({
+      channels: {
+        slack: {
+          enabled: true,
+          channels: {
+            C123: { enabled: true, requireMention: true },
+          },
+          reconciliation: {
+            enabled: true,
+            intervalMs: 60_000,
+          },
+        },
+      },
+    });
+    const client = getSlackClient();
+    client.auth.test.mockRejectedValue(new Error("auth unavailable"));
+
+    const monitor = startSlackMonitor(monitorSlackProvider);
+    try {
+      await getSlackHandlerOrThrow("message");
+      await flush();
+      await flush();
+
+      expect(client.conversations.history).not.toHaveBeenCalled();
     } finally {
       await stopSlackMonitor(monitor);
     }

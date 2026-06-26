@@ -590,6 +590,12 @@ describe("channelsSlackWatchdogScanCommand", () => {
                 admissionsRecorded: 4,
                 dispatchFailures: 1,
               },
+              reconciliationStatus: {
+                lastScanAt: Date.parse("2026-05-21T01:29:45.000Z"),
+                missingCandidates: 1,
+                recoveredCandidates: 0,
+                failedCandidates: 0,
+              },
             },
           ],
         },
@@ -655,6 +661,9 @@ describe("channelsSlackWatchdogScanCommand", () => {
     expect(alertMessage).toContain(
       "Slack receiver counters: raw=12, messages=5, dropped=2, policyDrops=1, selfBotDrops=8, prepared=3, admissions=4, dispatchFailures=1",
     );
+    expect(alertMessage).toContain(
+      "Slack reconciliation: lastScan=May 20, 2026, 8:29:45 PM CDT, missing=1, recovered=0, failed=0",
+    );
     expect(alertMessage).toContain("Reason: Slack has the message, but OpenClaw has no admission");
     expect(alertMessage).toContain("Next action:");
     const report = JSON.parse(runtime.logs[0] ?? "{}") as {
@@ -666,6 +675,7 @@ describe("channelsSlackWatchdogScanCommand", () => {
         lastSocketErrorAge?: string;
         lastTransportActivityAge?: string;
         slackTelemetry?: Record<string, number>;
+        reconciliation?: { missingCandidates?: number };
       };
       alert?: { sent?: number; skippedKnown?: number };
     };
@@ -682,6 +692,9 @@ describe("channelsSlackWatchdogScanCommand", () => {
           droppedPolicyEvents: 1,
           droppedSelfBotEvents: 8,
           dispatchFailures: 1,
+        }),
+        reconciliation: expect.objectContaining({
+          missingCandidates: 1,
         }),
       }),
     );

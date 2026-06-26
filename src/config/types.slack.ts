@@ -151,6 +151,21 @@ export type SlackRelayConfig = {
   gatewayId?: string;
 };
 
+export type SlackReconciliationConfig = {
+  /** Enable Slack Web API history reconciliation for this account. Default: false. */
+  enabled?: boolean;
+  /** Poll interval in milliseconds. Default: 60000. */
+  intervalMs?: number;
+  /** Overlap/lookback window in milliseconds. Default: 600000. */
+  lookbackMs?: number;
+  /** Maximum channel/root messages to inspect per cycle. Default: 200. */
+  maxMessagesPerCycle?: number;
+  /** Maximum thread roots to inspect per cycle. Default: 50. */
+  maxThreadRootsPerCycle?: number;
+  /** If true, replay eligible missing messages through the Slack inbound path. Default: false. */
+  autoRecover?: boolean;
+};
+
 export type SlackAccountConfig = {
   /** Optional display name for this account (used in CLI/UI lists). */
   name?: string;
@@ -160,6 +175,8 @@ export type SlackAccountConfig = {
   socketMode?: SlackSocketModeConfig;
   /** Relay-delivered Slack event source. Used when mode is "relay". */
   relay?: SlackRelayConfig;
+  /** Slack Web API history reconciliation. Opt-in correctness backstop. */
+  reconciliation?: SlackReconciliationConfig;
   /** Slack signing secret (required for HTTP mode). */
   signingSecret?: SecretInput;
   /** Slack Events API webhook path (default: /slack/events). */

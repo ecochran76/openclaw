@@ -393,7 +393,7 @@ async function resolveSlackExplicitMentionState(params: {
   messageText: string;
   mentionedUserIds: readonly string[];
   hasSubteamMention: boolean;
-  source: "message" | "app_mention";
+  source: "message" | "app_mention" | "history_reconcile";
 }): Promise<SlackExplicitMentionState> {
   const normalizedBotUserId = normalizeSlackId(params.ctx.botUserId);
   const explicitlyMentionedBotUser = Boolean(
@@ -742,7 +742,7 @@ export async function prepareSlackMessage(params: {
   account: ResolvedSlackAccount;
   message: SlackMessageEvent;
   opts: {
-    source: "message" | "app_mention";
+    source: "message" | "app_mention" | "history_reconcile";
     wasMentioned?: boolean;
     relayIdentity?: SlackSendIdentity;
   };

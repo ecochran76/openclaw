@@ -964,12 +964,24 @@ export const SlackRelaySchema = z
   })
   .strict();
 
+export const SlackReconciliationSchema = z
+  .object({
+    enabled: z.boolean().optional(),
+    intervalMs: z.number().int().positive().optional(),
+    lookbackMs: z.number().int().positive().optional(),
+    maxMessagesPerCycle: z.number().int().positive().optional(),
+    maxThreadRootsPerCycle: z.number().int().positive().optional(),
+    autoRecover: z.boolean().optional(),
+  })
+  .strict();
+
 export const SlackAccountSchema = z
   .object({
     name: z.string().optional(),
     mode: z.enum(["socket", "http", "relay"]).optional(),
     socketMode: SlackSocketModeSchema.optional(),
     relay: SlackRelaySchema.optional(),
+    reconciliation: SlackReconciliationSchema.optional(),
     signingSecret: SecretInputSchema.optional().register(sensitive),
     webhookPath: z.string().optional(),
     capabilities: SlackCapabilitiesSchema.optional(),

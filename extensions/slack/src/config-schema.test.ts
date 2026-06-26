@@ -162,6 +162,38 @@ describe("slack config schema", () => {
     );
   });
 
+  it("accepts account-level Slack history reconciliation controls", () => {
+    expectSlackConfigValid({
+      accounts: {
+        ops: {
+          reconciliation: {
+            enabled: true,
+            intervalMs: 60_000,
+            lookbackMs: 600_000,
+            maxMessagesPerCycle: 200,
+            maxThreadRootsPerCycle: 50,
+            autoRecover: false,
+          },
+        },
+      },
+    });
+  });
+
+  it("rejects invalid Slack history reconciliation controls", () => {
+    expectSlackConfigIssue(
+      {
+        accounts: {
+          ops: {
+            reconciliation: {
+              intervalMs: 0,
+            },
+          },
+        },
+      },
+      "accounts.ops.reconciliation.intervalMs",
+    );
+  });
+
   it("accepts account-level user token config", () => {
     expectSlackConfigValid({
       accounts: {

@@ -356,6 +356,11 @@ describe("buildRuntimeAccountStatusSnapshot", () => {
             rawSlackEvents: 2,
             admissionsRecorded: 1,
           },
+          reconciliationStatus: {
+            enabled: true,
+            lastScanAt: 999,
+            missingCandidates: 1,
+          },
           healthState: "healthy",
           running: true,
         },
@@ -396,6 +401,11 @@ describe("buildRuntimeAccountStatusSnapshot", () => {
         slackTelemetry: {
           rawSlackEvents: 2,
           admissionsRecorded: 1,
+        },
+        reconciliationStatus: {
+          enabled: true,
+          lastScanAt: 999,
+          missingCandidates: 1,
         },
         healthState: "healthy",
         probe: undefined,

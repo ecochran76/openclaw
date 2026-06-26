@@ -29,6 +29,7 @@ type ChannelAccountLike = Record<string, unknown> & {
   lastSlackEventAt?: number | null;
   lastSocketError?: string | { at?: number; error?: string } | null;
   slackTelemetry?: Record<string, number>;
+  reconciliationStatus?: Record<string, unknown>;
   healthState?: string | null;
   connected?: boolean;
   running?: boolean;
@@ -75,6 +76,7 @@ type WhySilentReport = {
     lastSocketErrorAt?: number | null;
     healthState?: string | null;
     slackTelemetry?: Record<string, number>;
+    reconciliationStatus?: Record<string, unknown>;
   };
   verdict:
     | "no-messages"
@@ -85,6 +87,10 @@ type WhySilentReport = {
     | "receiver-active-admission-gap"
     | "receiver-dropped-by-policy"
     | "receiver-dropped-self-bot"
+    | "reconciliation-found-recovered"
+    | "reconciliation-found-failed"
+    | "reconciliation-found-missing"
+    | "reconciliation-not-checked"
     | "socket-receiver-problem"
     | "account-inbound-after-message"
     | "inconclusive";
@@ -143,6 +149,35 @@ function readNumberRecord(raw: unknown): Record<string, number> | undefined {
     }
   }
   return Object.keys(out).length > 0 ? out : undefined;
+}
+
+function readReconciliationCandidate(params: {
+  status: unknown;
+  target: string;
+  messageTs?: string;
+}): { status?: string; reason?: string; lastSeenAt?: string } | undefined {
+  if (!params.messageTs || !params.status || typeof params.status !== "object") {
+    return undefined;
+  }
+  const targetChannel = parseSlackChannelTarget(params.target);
+  const candidates = (params.status as Record<string, unknown>).recentCandidates;
+  if (!Array.isArray(candidates)) {
+    return undefined;
+  }
+  for (const candidate of candidates) {
+    if (!candidate || typeof candidate !== "object" || Array.isArray(candidate)) {
+      continue;
+    }
+    const record = candidate as Record<string, unknown>;
+    if (record.channel === targetChannel && record.ts === params.messageTs) {
+      return {
+        ...(typeof record.status === "string" ? { status: record.status } : {}),
+        ...(typeof record.reason === "string" ? { reason: record.reason } : {}),
+        ...(typeof record.lastSeenAt === "string" ? { lastSeenAt: record.lastSeenAt } : {}),
+      };
+    }
+  }
+  return undefined;
 }
 
 function textPreview(raw: unknown): string | undefined {
@@ -319,6 +354,12 @@ export function buildChannelsWhySilentReport(params: {
     lastSocketErrorAt,
     healthState,
     slackTelemetry: readNumberRecord(account?.slackTelemetry),
+    reconciliationStatus:
+      account?.reconciliationStatus &&
+      typeof account.reconciliationStatus === "object" &&
+      !Array.isArray(account.reconciliationStatus)
+        ? account.reconciliationStatus
+        : undefined,
   };
   const admissionRecord =
     params.channel === "slack"
@@ -402,6 +443,50 @@ export function buildChannelsWhySilentReport(params: {
     };
   }
 
+  const reconciliationCandidate =
+    params.channel === "slack"
+      ? readReconciliationCandidate({
+          status: accountSummary.reconciliationStatus,
+          target: params.target,
+          messageTs: newest?.ts ?? newestAny?.ts,
+        })
+      : undefined;
+  if (reconciliationCandidate?.status === "replayed") {
+    return {
+      channel: params.channel,
+      accountId: params.accountId,
+      target: params.target,
+      newestMessage,
+      account: accountSummary,
+      verdict: "reconciliation-found-recovered",
+      explanation:
+        "Slack history reconciliation found this message missing from admission state and replayed it through the normal inbound path.",
+    };
+  }
+  if (reconciliationCandidate?.status === "failed") {
+    return {
+      channel: params.channel,
+      accountId: params.accountId,
+      target: params.target,
+      newestMessage,
+      account: accountSummary,
+      verdict: "reconciliation-found-failed",
+      explanation: `Slack history reconciliation found this message but recovery failed (${reconciliationCandidate.reason ?? "unknown"}).`,
+    };
+  }
+  if (reconciliationCandidate?.status === "missing-admission") {
+    return {
+      channel: params.channel,
+      accountId: params.accountId,
+      target: params.target,
+      newestMessage,
+      account: accountSummary,
+      verdict: "reconciliation-found-missing",
+      explanation:
+        "Slack history reconciliation found this message missing from admission state. Auto recovery is not enabled for this account.",
+    };
+  }
+
   if (!account) {
     return {
       channel: params.channel,
@@ -448,6 +533,22 @@ export function buildChannelsWhySilentReport(params: {
   }
 
   if (newestAt && (!lastInboundAt || newestAt > lastInboundAt + 1000)) {
+    if (
+      params.channel === "slack" &&
+      (!accountSummary.reconciliationStatus ||
+        typeof accountSummary.reconciliationStatus.lastScanAt !== "number")
+    ) {
+      return {
+        channel: params.channel,
+        accountId: params.accountId,
+        target: params.target,
+        newestMessage,
+        account: accountSummary,
+        verdict: "reconciliation-not-checked",
+        explanation:
+          "Slack history contains a newer message than OpenClaw's last inbound timestamp, and active history reconciliation has not checked this account.",
+      };
+    }
     if (params.channel === "slack" && latestReceiverAt && latestReceiverAt >= newestAt - 1000) {
       return {
         channel: params.channel,
@@ -541,6 +642,37 @@ export function formatChannelsWhySilentReport(report: WhySilentReport): string[]
       if (facts.length > 0) {
         lines.push(`Slack counters: ${facts.join(", ")}`);
       }
+    }
+    const reconciliationStatus = report.account.reconciliationStatus;
+    if (reconciliationStatus) {
+      const lastScanAt =
+        typeof reconciliationStatus.lastScanAt === "number"
+          ? formatTimestamp(reconciliationStatus.lastScanAt)
+          : "n/a";
+      const missing =
+        typeof reconciliationStatus.missingCandidates === "number"
+          ? reconciliationStatus.missingCandidates
+          : "unknown";
+      const recovered =
+        typeof reconciliationStatus.recoveredCandidates === "number"
+          ? reconciliationStatus.recoveredCandidates
+          : "unknown";
+      const failed =
+        typeof reconciliationStatus.failedCandidates === "number"
+          ? reconciliationStatus.failedCandidates
+          : "unknown";
+      lines.push(
+        `Slack reconciliation: lastScan=${lastScanAt} missing=${missing} recovered=${recovered} failed=${failed}`,
+      );
+      const lastApiError = reconciliationStatus.lastApiError;
+      if (lastApiError && typeof lastApiError === "object" && !Array.isArray(lastApiError)) {
+        const code = (lastApiError as { code?: unknown }).code;
+        if (typeof code === "string" && code.trim()) {
+          lines.push(`Slack reconciliation API error: ${code.trim()}`);
+        }
+      }
+    } else {
+      lines.push("Slack reconciliation: not checked");
     }
   } else {
     lines.push(`Last transport: ${formatTimestamp(report.account.lastTransportActivityAt)}`);

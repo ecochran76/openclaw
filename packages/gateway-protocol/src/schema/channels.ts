@@ -742,6 +742,7 @@ export const ChannelAccountSnapshotSchema = Type.Object(
     lastSocketDisconnectReason: Type.Optional(Type.Unknown()),
     lastSocketError: Type.Optional(Type.Unknown()),
     slackTelemetry: Type.Optional(Type.Record(Type.String(), Type.Integer({ minimum: 0 }))),
+    reconciliationStatus: Type.Optional(Type.Record(Type.String(), Type.Unknown())),
     lastError: Type.Optional(Type.String()),
     healthState: Type.Optional(Type.String()),
     lastStartAt: Type.Optional(Type.Integer({ minimum: 0 })),

@@ -228,6 +228,7 @@ export type ChannelAccountSnapshot = {
       }
     | null;
   slackTelemetry?: Record<string, number>;
+  reconciliationStatus?: Record<string, unknown>;
   lastDisconnect?:
     | string
     | {

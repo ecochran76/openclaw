@@ -102,6 +102,34 @@ export const slackChannelConfigUiHints = {
     label: "Slack Socket Mode Connections",
     help: "Concurrent Socket Mode receiver connections for the account. Keep at 1 by default; raise up to 10 only when hardening live receiver reliability with duplicate admission protections enabled.",
   },
+  reconciliation: {
+    label: "Slack History Reconciliation",
+    help: "Opt-in Slack Web API history catch-up that compares Slack history with OpenClaw admission state. Keep autoRecover off until dry-run status is proven.",
+  },
+  "reconciliation.enabled": {
+    label: "Slack Reconciliation Enabled",
+    help: "Start periodic Slack history scans for this account. Disabled by default.",
+  },
+  "reconciliation.intervalMs": {
+    label: "Slack Reconciliation Interval",
+    help: "Milliseconds between Slack history reconciliation cycles. Default: 60000.",
+  },
+  "reconciliation.lookbackMs": {
+    label: "Slack Reconciliation Lookback",
+    help: "Overlap window used when scanning Slack history so boundary messages are rechecked idempotently. Default: 600000.",
+  },
+  "reconciliation.maxMessagesPerCycle": {
+    label: "Slack Reconciliation Message Limit",
+    help: "Maximum channel/root messages to inspect per reconciliation cycle. Default: 200.",
+  },
+  "reconciliation.maxThreadRootsPerCycle": {
+    label: "Slack Reconciliation Thread Limit",
+    help: "Maximum thread roots to inspect with conversations.replies per reconciliation cycle. Default: 50.",
+  },
+  "reconciliation.autoRecover": {
+    label: "Slack Reconciliation Auto Recover",
+    help: "Replay eligible missing Slack history messages through the normal inbound path. Default: false for dry-run observation.",
+  },
   botToken: {
     label: "Slack Bot Token",
     help: "Slack bot token used for standard chat actions in the configured workspace. Keep this credential scoped and rotate if workspace app permissions change.",

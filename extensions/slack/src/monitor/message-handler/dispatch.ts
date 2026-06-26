@@ -53,7 +53,7 @@ import { danger, logVerbose, shouldLogVerbose, sleep } from "openclaw/plugin-sdk
 import { resolvePinnedMainDmOwnerFromAllowlist } from "openclaw/plugin-sdk/security-runtime";
 import { normalizeOptionalLowercaseString } from "openclaw/plugin-sdk/string-coerce-runtime";
 import { stripReasoningTagsFromText } from "openclaw/plugin-sdk/text-chunking";
-import { reactSlackMessage, removeSlackReaction } from "../../actions.js";
+import { deleteSlackMessage, reactSlackMessage, removeSlackReaction } from "../../actions.js";
 import { createSlackDraftStream } from "../../draft-stream.js";
 import { formatSlackError } from "../../errors.js";
 import { normalizeSlackOutboundText } from "../../format.js";
@@ -69,6 +69,7 @@ import {
   buildSlackProgressStreamStartChunks,
   buildSlackProgressStreamUpdateChunks,
 } from "../../progress-blocks.js";
+import type { SlackSendResult } from "../../send.js";
 import { recordSlackThreadParticipation } from "../../sent-thread-cache.js";
 import { applyAppendOnlyStreamUpdate, resolveSlackStreamingConfig } from "../../stream-mode.js";
 import type { SlackStreamSession } from "../../streaming.js";
@@ -105,6 +106,11 @@ const SLACK_THINKING_LABEL_PREFIX_RE = /^\s*(?:>\s*)?Thinking\.{0,3}(?=\s*(?:\n|
 
 const SLACK_PREVIEW_TOOL_PROGRESS_MAX_CHARS = 120;
 
+type TransientSlackProgressMessage = {
+  channelId: string;
+  messageId: string;
+};
+
 export function normalizeSlackPreviewToolProgressLine(line?: string): string | undefined {
   const normalized = line?.replace(/\s+/g, " ").trim();
   if (!normalized) {
@@ -118,6 +124,212 @@ export function normalizeSlackPreviewToolProgressLine(line?: string): string | u
 
 export function buildSlackPreviewToolProgressText(lines: string[]): string {
   return ["Working…", ...lines.map((entry) => `• ${entry}`)].join("\n");
+}
+
+function shouldTrackTransientSlackProgress(params: {
+  kind: ReplyDispatchKind;
+  payload: ReplyPayload;
+}): boolean {
+  if (params.payload.isReasoning === true || params.kind === "final") {
+    return false;
+  }
+  const reply = resolveSendableOutboundReplyParts(params.payload);
+  if (!reply.hasText || reply.hasMedia || readSlackReplyBlocks(params.payload)?.length) {
+    return false;
+  }
+  if (params.kind === "tool") {
+    return true;
+  }
+  const text = reply.trimmedText.toLowerCase();
+  return (
+    (params.payload as { isStatusNotice?: unknown }).isStatusNotice === true ||
+    text.startsWith("working:") ||
+    text.startsWith("status:")
+  );
+}
+
+function formatSlackPreviewDuration(ms: number): string {
+  const rounded = Math.max(0, Math.round(ms));
+  if (rounded < 1000) {
+    return `${rounded}ms`;
+  }
+  if (rounded < 60_000) {
+    return `${(rounded / 1000).toFixed(rounded < 10_000 ? 1 : 0)}s`;
+  }
+  return `${Math.round(rounded / 1000)}s`;
+}
+
+function createSlackTurnStartupTrace(params: {
+  accountId?: string;
+  channelId: string;
+  messageTs?: string;
+  pushPreview: (line?: ChannelProgressDraftLine) => void | Promise<void>;
+  log?: {
+    info?: (payload: Record<string, unknown>, message: string) => void;
+  };
+}) {
+  const startedAt = Date.now();
+  const traceId = `${params.channelId}:${params.messageTs ?? startedAt}`;
+  const stageStartedAt = new Map<string, number>();
+  const phaseDurations: Array<{
+    stage: string;
+    event: string;
+    durationMs: number;
+    elapsedMs: number;
+  }> = [];
+  const progress: Array<{
+    line: string;
+    elapsedMs: number;
+    meta?: Record<string, unknown>;
+  }> = [];
+  let lastEvent:
+    | {
+        kind: "progress" | "turn_event";
+        value: string;
+        elapsedMs: number;
+      }
+    | undefined;
+  let finished = false;
+
+  const logTrace = (
+    message: string,
+    extra?: Record<string, unknown>,
+    options?: { force?: boolean },
+  ) => {
+    if (process.env.OPENCLAW_SLACK_TURN_TRACE === "0" && options?.force !== true) {
+      return;
+    }
+    params.log?.info?.(
+      {
+        traceId,
+        accountId: params.accountId,
+        channel: params.channelId,
+        ts: params.messageTs,
+        elapsedMs: Math.max(0, Date.now() - startedAt),
+        lastEvent,
+        ...extra,
+      },
+      message,
+    );
+  };
+
+  const heartbeatInterval = setInterval(() => {
+    if (finished) {
+      return;
+    }
+    logTrace("slack turn live trace heartbeat");
+  }, 15_000);
+  heartbeatInterval.unref?.();
+
+  const markProgress = (line: string, meta?: Record<string, unknown>) => {
+    const elapsedMs = Math.max(0, Date.now() - startedAt);
+    progress.push({
+      line,
+      elapsedMs,
+      ...(meta ? { meta } : {}),
+    });
+    lastEvent = { kind: "progress", value: line, elapsedMs };
+    logTrace("slack turn live trace progress", { progressLine: line, ...(meta ? { meta } : {}) });
+    void params.pushPreview(
+      buildChannelProgressDraftLine({
+        event: "item",
+        progressText: line,
+      }),
+    );
+  };
+
+  return {
+    markProgress,
+    handleTurnEvent(event: {
+      stage: string;
+      event: string;
+      sessionKey?: string;
+      admission?: string;
+      reason?: string;
+    }) {
+      const now = Date.now();
+      lastEvent = {
+        kind: "turn_event",
+        value: `${event.stage}:${event.event}`,
+        elapsedMs: Math.max(0, now - startedAt),
+      };
+      logTrace("slack turn live trace event", {
+        stage: event.stage,
+        event: event.event,
+        sessionKey: event.sessionKey,
+        admission: event.admission,
+        reason: event.reason,
+      });
+      if (event.event === "start") {
+        stageStartedAt.set(event.stage, now);
+        if (event.stage === "record") {
+          markProgress("recording inbound session");
+        } else if (event.stage === "dispatch") {
+          markProgress("dispatching to agent runtime");
+        }
+        return;
+      }
+
+      const stageStart = stageStartedAt.get(event.stage);
+      const durationMs = stageStart === undefined ? 0 : Math.max(0, now - stageStart);
+      const elapsedMs = Math.max(0, now - startedAt);
+      phaseDurations.push({
+        stage: event.stage,
+        event: event.event,
+        durationMs,
+        elapsedMs,
+      });
+
+      if (event.event === "done") {
+        const shouldPreviewDuration =
+          durationMs >= SLACK_TURN_PHASE_PREVIEW_MS || elapsedMs >= SLACK_TURN_PHASE_PREVIEW_MS;
+        if (event.stage === "assemble" && shouldPreviewDuration) {
+          markProgress(`resolved agent route (${formatSlackPreviewDuration(elapsedMs)} total)`);
+        } else if (event.stage === "record" && shouldPreviewDuration) {
+          markProgress(`recorded inbound session (${formatSlackPreviewDuration(durationMs)})`);
+        } else if (event.stage === "dispatch") {
+          markProgress(`agent turn completed (${formatSlackPreviewDuration(elapsedMs)} total)`);
+        }
+      } else if (event.event === "drop" || event.event === "handled") {
+        markProgress(`turn ${event.event}: ${event.reason ?? event.stage}`);
+      } else if (event.event === "error") {
+        markProgress(`turn ${event.stage} failed`);
+      }
+    },
+    finish() {
+      finished = true;
+      clearInterval(heartbeatInterval);
+      const totalMs = Math.max(0, Date.now() - startedAt);
+      const slowPhases = phaseDurations.filter(
+        (entry) => entry.durationMs >= SLACK_TURN_PHASE_SLOW_MS,
+      );
+      logTrace(
+        "slack turn live trace finish",
+        {
+          totalMs,
+          phases: phaseDurations,
+          progress,
+          slowPhases,
+        },
+        { force: true },
+      );
+      if (totalMs < SLACK_TURN_TRACE_SLOW_MS && slowPhases.length === 0) {
+        return;
+      }
+      params.log?.info?.(
+        {
+          accountId: params.accountId,
+          channel: params.channelId,
+          ts: params.messageTs,
+          totalMs,
+          phases: phaseDurations,
+          progress,
+          slowPhases,
+        },
+        "slack turn startup trace",
+      );
+    },
+  };
 }
 
 export function shouldStartNewSlackDraftMessageOnBoundary(params: {
@@ -823,6 +1035,48 @@ export async function dispatchPreparedSlackMessage(prepared: PreparedSlackMessag
       deliveryTracker.markDelivered({ ...params, threadTs: nextThreadTs });
     }
   };
+  const transientProgressMessages: TransientSlackProgressMessage[] = [];
+  let transientProgressCleanupStarted = false;
+  const recordTransientProgressMessages = (
+    params: { kind: ReplyDispatchKind; payload: ReplyPayload },
+    results: readonly SlackSendResult[] | undefined,
+  ) => {
+    if (!results?.length || !shouldTrackTransientSlackProgress(params)) {
+      return;
+    }
+    for (const result of results) {
+      const channelId = result.channelId?.trim();
+      const messageId = result.messageId?.trim();
+      if (!channelId || !messageId || messageId === "unknown") {
+        continue;
+      }
+      transientProgressMessages.push({ channelId, messageId });
+    }
+  };
+  const cleanupTransientProgressMessages = async () => {
+    if (transientProgressCleanupStarted || transientProgressMessages.length === 0) {
+      return;
+    }
+    transientProgressCleanupStarted = true;
+    const uniqueMessages = new Map<string, TransientSlackProgressMessage>();
+    for (const message of transientProgressMessages) {
+      uniqueMessages.set(`${message.channelId}\0${message.messageId}`, message);
+    }
+    for (const message of uniqueMessages.values()) {
+      try {
+        await deleteSlackMessage(message.channelId, message.messageId, {
+          client: ctx.app.client,
+          token: ctx.botToken,
+          accountId: account.accountId,
+          cfg: ctx.cfg,
+        });
+      } catch (err) {
+        logVerbose(
+          `slack: transient progress cleanup failed for ${message.channelId}/${message.messageId}: ${formatSlackError(err)}`,
+          );
+        }
+    }
+  };
   const resolveDeliveryThreadTs = (params: {
     kind: ReplyDispatchKind;
     forcedThreadTs?: string;
@@ -961,7 +1215,7 @@ export async function dispatchPreparedSlackMessage(prepared: PreparedSlackMessag
       logVerbose("slack: suppressed duplicate normal delivery within the same turn");
       return deliveryReplyThreadTs;
     }
-    await deliverReplies({
+    const results = await deliverReplies({
       cfg: ctx.cfg,
       replies: [params.payload],
       target: prepared.replyTarget,
@@ -975,6 +1229,7 @@ export async function dispatchPreparedSlackMessage(prepared: PreparedSlackMessag
       ...(slackMessageMetadata ? { metadata: slackMessageMetadata } : {}),
       ...messageSentDeliveryHookContext,
     });
+    recordTransientProgressMessages(params, results);
     observedReplyDelivery = true;
     if (params.kind === "final") {
       observedFinalReplyDelivery = true;
@@ -992,6 +1247,9 @@ export async function dispatchPreparedSlackMessage(prepared: PreparedSlackMessag
       payload: params.payload,
       threadTs: deliveryReplyThreadTs,
     });
+    if (params.kind === "final") {
+      await cleanupTransientProgressMessages();
+    }
     return deliveryReplyThreadTs;
   };
 
@@ -1347,11 +1605,12 @@ export async function dispatchPreparedSlackMessage(prepared: PreparedSlackMessag
           forcedThreadTs: finalThreadTs,
         });
         markPreviewPayloadDelivered({ kind: info.kind, payload, threadTs: finalThreadTs });
+        await cleanupTransientProgressMessages();
         return;
       }
     }
 
-    await deliverWithFinalizableLivePreviewAdapter({
+    const result = await deliverWithFinalizableLivePreviewAdapter({
       kind: info.kind,
       payload,
       adapter: defineFinalizableLivePreviewAdapter({
@@ -1458,6 +1717,9 @@ export async function dispatchPreparedSlackMessage(prepared: PreparedSlackMessag
         });
       },
     });
+    if (result.kind === "preview-finalized") {
+      await cleanupTransientProgressMessages();
+    }
   };
   const onSlackDeliveryError = (err: unknown, info: { kind: string }) => {
     runtime.error?.(danger(`slack ${info.kind} reply failed: ${formatSlackError(err)}`));

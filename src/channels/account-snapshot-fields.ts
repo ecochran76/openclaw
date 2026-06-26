@@ -103,6 +103,89 @@ function readObjectRecord(
   return Object.keys(out).length > 0 ? out : undefined;
 }
 
+function readReconciliationStatus(
+  record: Record<string, unknown>,
+): Record<string, unknown> | undefined {
+  const value = record.reconciliationStatus;
+  if (!isRecord(value)) {
+    return undefined;
+  }
+  const out: Record<string, unknown> = {};
+  for (const key of ["enabled", "autoRecover"] as const) {
+    if (typeof value[key] === "boolean") {
+      out[key] = value[key];
+    }
+  }
+  for (const key of [
+    "intervalMs",
+    "lookbackMs",
+    "lastScanAt",
+    "missingCandidates",
+    "recoveredCandidates",
+    "failedCandidates",
+  ] as const) {
+    const numberValue = readNumber(value, key);
+    if (numberValue !== undefined) {
+      out[key] = numberValue;
+    }
+  }
+  const latestCheckpointTs = normalizeOptionalString(value.latestCheckpointTs);
+  if (latestCheckpointTs) {
+    out.latestCheckpointTs = latestCheckpointTs;
+  }
+  if (isRecord(value.lastApiError)) {
+    const at = readNumber(value.lastApiError, "at");
+    const code = normalizeOptionalString(value.lastApiError.code);
+    const channel = normalizeOptionalString(value.lastApiError.channel);
+    if (at !== undefined && code) {
+      out.lastApiError = {
+        at,
+        code,
+        ...(channel ? { channel } : {}),
+      };
+    }
+  }
+  if (Array.isArray(value.recentCandidates)) {
+    const recentCandidates = value.recentCandidates
+      .map((candidate) => {
+        if (!isRecord(candidate)) {
+          return undefined;
+        }
+        const channel = normalizeOptionalString(candidate.channel);
+        const ts = normalizeOptionalString(candidate.ts);
+        const status = normalizeOptionalString(candidate.status);
+        const reason = normalizeOptionalString(candidate.reason);
+        if (!channel || !ts || !status || !reason) {
+          return undefined;
+        }
+        return {
+          channel,
+          ts,
+          status,
+          reason,
+          ...(normalizeOptionalString(candidate.threadTs)
+            ? { threadTs: normalizeOptionalString(candidate.threadTs) }
+            : {}),
+          ...(normalizeOptionalString(candidate.user)
+            ? { user: normalizeOptionalString(candidate.user) }
+            : {}),
+          ...(normalizeOptionalString(candidate.clientMsgId)
+            ? { clientMsgId: normalizeOptionalString(candidate.clientMsgId) }
+            : {}),
+          ...(normalizeOptionalString(candidate.lastSeenAt)
+            ? { lastSeenAt: normalizeOptionalString(candidate.lastSeenAt) }
+            : {}),
+        };
+      })
+      .filter((candidate): candidate is NonNullable<typeof candidate> => Boolean(candidate))
+      .slice(0, 20);
+    if (recentCandidates.length > 0) {
+      out.recentCandidates = recentCandidates;
+    }
+  }
+  return Object.keys(out).length > 0 ? out : undefined;
+}
+
 function readSocketDisconnectReason(
   record: Record<string, unknown>,
 ): { at: number; reason?: string; kind?: string; expectedRefresh?: boolean } | null | undefined {
@@ -378,6 +461,9 @@ export function projectSafeChannelAccountSnapshotFields(
       : {}),
     ...(readNumberRecord(record, "slackTelemetry") !== undefined
       ? { slackTelemetry: readNumberRecord(record, "slackTelemetry") }
+      : {}),
+    ...(readReconciliationStatus(record) !== undefined
+      ? { reconciliationStatus: readReconciliationStatus(record) }
       : {}),
     ...(readNumber(record, "lastInboundAt") !== undefined
       ? { lastInboundAt: readNumber(record, "lastInboundAt") }

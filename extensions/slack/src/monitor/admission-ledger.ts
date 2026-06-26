@@ -19,7 +19,7 @@ export type SlackAdmissionRecord = {
   ts?: string;
   threadTs?: string;
   clientMsgId?: string;
-  source?: "message" | "app_mention";
+  source?: "message" | "app_mention" | "history_reconcile";
   outcome: SlackAdmissionOutcome;
   reason?: string;
   routeAgentId?: string;
@@ -88,7 +88,7 @@ function hashText(text: string | undefined): { textHash?: string; textLength?: n
 export function buildSlackAdmissionRecord(params: {
   accountId: string;
   message: SlackMessageEvent;
-  source?: "message" | "app_mention";
+  source?: "message" | "app_mention" | "history_reconcile";
   outcome: SlackAdmissionOutcome;
   reason?: string;
   routeAgentId?: string;
@@ -197,7 +197,7 @@ export async function readSlackAdmissionRecords(params: {
 export function recordSlackAdmission(params: {
   accountId: string;
   message: SlackMessageEvent;
-  source?: "message" | "app_mention";
+  source?: "message" | "app_mention" | "history_reconcile";
   outcome: SlackAdmissionOutcome;
   reason?: string;
   routeAgentId?: string;

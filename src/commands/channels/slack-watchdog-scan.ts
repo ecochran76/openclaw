@@ -206,6 +206,13 @@ type WatchdogHealthDiagnostics = {
   lastSocketErrorAge?: string;
   lastDisconnectAt?: string;
   slackTelemetry?: Record<string, number>;
+  reconciliation?: {
+    lastScanAt?: string;
+    missingCandidates?: number;
+    recoveredCandidates?: number;
+    failedCandidates?: number;
+    lastApiError?: string;
+  };
   issues?: string[];
   error?: string;
 };
@@ -915,6 +922,7 @@ function formatSlackWatchdogScanReport(report: WatchdogScanReport): string {
     `Scanned: ${report.scanned}`,
     `Counts: admitted=${report.counts.admitted} explicitly-ignored=${report.counts["explicitly-ignored"]} not-relevant=${report.counts["not-relevant"]} missing-admission=${report.counts["missing-admission"]}`,
   ];
+  lines.push(...formatSlackWatchdogHealthLines(report.health));
   const missing = report.records.filter((record) => record.verdict === "missing-admission");
   if (missing.length === 0) {
     lines.push("Missing admissions: none");
@@ -1131,6 +1139,26 @@ function formatSlackWatchdogHealthLines(health: WatchdogHealthDiagnostics | unde
     if (telemetryFacts.length > 0) {
       lines.push(`- Slack receiver counters: ${telemetryFacts.join(", ")}`);
     }
+  }
+  if (health.reconciliation) {
+    const reconciliationFacts = [
+      health.reconciliation.lastScanAt ? `lastScan=${health.reconciliation.lastScanAt}` : null,
+      typeof health.reconciliation.missingCandidates === "number"
+        ? `missing=${health.reconciliation.missingCandidates}`
+        : null,
+      typeof health.reconciliation.recoveredCandidates === "number"
+        ? `recovered=${health.reconciliation.recoveredCandidates}`
+        : null,
+      typeof health.reconciliation.failedCandidates === "number"
+        ? `failed=${health.reconciliation.failedCandidates}`
+        : null,
+      health.reconciliation.lastApiError ? `apiError=${health.reconciliation.lastApiError}` : null,
+    ].filter((fact): fact is string => Boolean(fact));
+    lines.push(
+      `- Slack reconciliation: ${reconciliationFacts.length ? reconciliationFacts.join(", ") : "not checked"}`,
+    );
+  } else {
+    lines.push("- Slack reconciliation: not checked");
   }
   return lines;
 }
@@ -1386,6 +1414,12 @@ async function collectSlackWatchdogHealthDiagnostics(params: {
     const lastSocketError = isRecord(account.lastSocketError) ? account.lastSocketError : {};
     const lastSocketErrorAt = readFiniteNumber(lastSocketError.at);
     const slackTelemetry = readNumberRecord(account.slackTelemetry);
+    const reconciliationStatus = isRecord(account.reconciliationStatus)
+      ? account.reconciliationStatus
+      : undefined;
+    const reconciliationLastApiError = isRecord(reconciliationStatus?.lastApiError)
+      ? reconciliationStatus.lastApiError
+      : undefined;
     const lastDisconnect = isRecord(account.lastDisconnect) ? account.lastDisconnect : {};
     const lastDisconnectAt = readFiniteNumber(lastDisconnect.at);
     const issues = collectChannelStatusIssues(payload)
@@ -1438,6 +1472,39 @@ async function collectSlackWatchdogHealthDiagnostics(params: {
         ? { lastDisconnectAt: formatWatchdogStatusTime(lastDisconnectAt) }
         : {}),
       ...(slackTelemetry ? { slackTelemetry } : {}),
+      ...(reconciliationStatus
+        ? {
+            reconciliation: {
+              ...(readFiniteNumber(reconciliationStatus.lastScanAt) !== undefined
+                ? {
+                    lastScanAt: formatWatchdogStatusTime(
+                      readFiniteNumber(reconciliationStatus.lastScanAt),
+                    ),
+                  }
+                : {}),
+              ...(readFiniteNumber(reconciliationStatus.missingCandidates) !== undefined
+                ? {
+                    missingCandidates: readFiniteNumber(reconciliationStatus.missingCandidates),
+                  }
+                : {}),
+              ...(readFiniteNumber(reconciliationStatus.recoveredCandidates) !== undefined
+                ? {
+                    recoveredCandidates: readFiniteNumber(reconciliationStatus.recoveredCandidates),
+                  }
+                : {}),
+              ...(readFiniteNumber(reconciliationStatus.failedCandidates) !== undefined
+                ? {
+                    failedCandidates: readFiniteNumber(reconciliationStatus.failedCandidates),
+                  }
+                : {}),
+              ...(normalizeOptionalString(reconciliationLastApiError?.code)
+                ? {
+                    lastApiError: normalizeOptionalString(reconciliationLastApiError?.code),
+                  }
+                : {}),
+            },
+          }
+        : {}),
       ...(issues.length > 0 ? { issues } : {}),
     };
   } catch (err) {

@@ -9,6 +9,7 @@ Related compatibility plan:
 - `docs/dev/upstream-compat-refactor-plan.md`
 - `docs/dev/upstream-compat-feature-preservation-plan.md`
 - `docs/dev/plans/0001-2026-04-20-plugin-survivability-roadmap.md`
+- `docs/dev/plans/0012-2026-06-26-ec-main-rebase-compatibility-plan.md`
 
 ## Why this exists
 
@@ -111,11 +112,16 @@ Use `--list` to print the command bundle without running it. Use `--live-patch` 
   - Pre-live-test polish checklist documented in `docs/dev/slack-turn-live-testing-polish-plan.md`
   - Stale-socket watchdog roadmap documented in `docs/dev/plans/0007-2026-05-18-slack-stale-socket-watchdog.md`
   - Slack Socket Mode hardening is tracked as roadmap milestone P04 in `ROADMAP.md`
-  - Slack active reconciliation is tracked as roadmap milestone P05 in `ROADMAP.md`
+  - Slack active reconciliation completed as roadmap milestone P05 in `ROADMAP.md`
+  - The next broad upstream rebase conflict forecast is tracked in `docs/dev/plans/0012-2026-06-26-ec-main-rebase-compatibility-plan.md`
 - Common validation:
   - `pnpm test -- src/auto-reply/reply/dispatch-from-config.test.ts`
   - `pnpm test -- src/auto-reply/reply/commands-turn-status.test.ts`
   - `pnpm test -- src/auto-reply/turn-tracker.test.ts`
+  - `pnpm test -- extensions/slack/src/monitor/reconciliation.test.ts`
+  - `pnpm test -- extensions/slack/src/monitor/provider.allowlist.test.ts`
+  - `pnpm test -- src/commands/channels/why-silent.test.ts`
+  - `pnpm test -- src/commands/channels/slack-watchdog-scan.test.ts`
 
 ### 4. Automation
 

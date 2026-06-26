@@ -70,6 +70,7 @@ import {
   type SlackBoltResolvedExports,
   type SlackStatusCounter,
 } from "./provider-support.js";
+import { startSlackHistoryReconciliation } from "./reconciliation.js";
 import {
   formatUnknownError,
   getSocketEmitter,
@@ -106,6 +107,7 @@ const SLACK_WEBHOOK_MAX_BODY_BYTES = 1024 * 1024;
 const SLACK_WEBHOOK_BODY_TIMEOUT_MS = 30_000;
 const SLACK_STARTUP_SLOW_STEP_MS = 5_000;
 const SLACK_SOCKET_MAX_CONNECTIONS = 10;
+const SLACK_AUTH_METADATA_RETRY_MS = 30_000;
 
 type SlackSocketRuntime = ReturnType<typeof createSlackBoltApp> & {
   connectionId: string;
@@ -597,13 +599,55 @@ export async function monitorSlackProvider(opts: MonitorSlackOpts = {}) {
   });
 
   let authMetadataHydrationStarted = false;
+  let authMetadataRetryTimer: NodeJS.Timeout | undefined;
+  let reconciliationStarted = false;
+  let stopReconciliation: (() => void) | undefined;
+  const startReconciliation = () => {
+    if (reconciliationStarted) {
+      return;
+    }
+    reconciliationStarted = true;
+    stopReconciliation = startSlackHistoryReconciliation({
+      ctx,
+      accountId: account.accountId,
+      config: slackCfg.reconciliation,
+      accountAllowBots: slackCfg.allowBots,
+      handleSlackMessage,
+      setStatus: opts.setStatus,
+      abortSignal: opts.abortSignal,
+    }).stop;
+  };
+  const scheduleAuthMetadataHydrationRetry = (reason: string) => {
+    if (
+      opts.abortSignal?.aborted ||
+      reconciliationStarted ||
+      authMetadataRetryTimer ||
+      slackCfg.reconciliation?.enabled !== true
+    ) {
+      return;
+    }
+    authMetadataHydrationStarted = false;
+    runtime.log?.(
+      `slack auth metadata missing; reconciliation deferred until bot identity is available (${reason}); retrying in ${SLACK_AUTH_METADATA_RETRY_MS}ms`,
+    );
+    authMetadataRetryTimer = setTimeout(() => {
+      authMetadataRetryTimer = undefined;
+      startAuthMetadataHydration();
+    }, SLACK_AUTH_METADATA_RETRY_MS);
+    authMetadataRetryTimer.unref?.();
+  };
   const startAuthMetadataHydration = () => {
     if (authMetadataHydrationStarted) {
       return;
     }
+    if (authMetadataRetryTimer) {
+      clearTimeout(authMetadataRetryTimer);
+      authMetadataRetryTimer = undefined;
+    }
     authMetadataHydrationStarted = true;
     void (async () => {
       const finishAuthStep = startSlackStartupStepTimer(runtime, "auth.test");
+      let retryReason: string | undefined;
       try {
         const auth = await app.client.auth.test({ token: botToken });
         const apiAppId = (auth as { api_app_id?: string }).api_app_id ?? "";
@@ -616,20 +660,27 @@ export async function monitorSlackProvider(opts: MonitorSlackOpts = {}) {
             `slack token mismatch: bot token api_app_id=${apiAppId} but app token looks like api_app_id=${expectedApiAppIdFromAppToken}`,
           );
         }
+        if (!ctx.botUserId) {
+          retryReason = "auth.test returned no user_id";
+        }
       } catch (err) {
         // Auth metadata improves self-filtering and routing, but Socket Mode should
-        // not be held hostage by a slow or transient auth.test request.
+        // not be held hostage by a slow or transient auth.test request. History
+        // reconciliation does need bot identity before it can safely checkpoint.
+        retryReason = formatUnknownError(err);
         runtime.log?.(
-          `slack auth metadata hydration failed; continuing. ${formatUnknownError(err)}`,
+          `slack auth metadata hydration failed; continuing without reconciliation. ${retryReason}`,
         );
       } finally {
         finishAuthStep();
+        if (ctx.botUserId) {
+          startReconciliation();
+        } else {
+          scheduleAuthMetadataHydrationRetry(retryReason ?? "missing bot identity");
+        }
       }
     })();
   };
-  if (slackMode !== "socket") {
-    startAuthMetadataHydration();
-  }
 
   // Slack's socket-mode client keeps ping/pong health private and closes on
   // missed pongs. App events are useful status activity, but not transport proof.
@@ -644,6 +695,9 @@ export async function monitorSlackProvider(opts: MonitorSlackOpts = {}) {
     trackEvent,
     trackTelemetry,
   });
+  if (slackMode !== "socket") {
+    startAuthMetadataHydration();
+  }
   if (
     isSlackAnyNativeApprovalClientEnabled({
       cfg,
@@ -1017,7 +1071,12 @@ export async function monitorSlackProvider(opts: MonitorSlackOpts = {}) {
     for (const dispose of socketObserverDisposers) {
       dispose();
     }
+    if (authMetadataRetryTimer) {
+      clearTimeout(authMetadataRetryTimer);
+      authMetadataRetryTimer = undefined;
+    }
     unregisterUnhandledRejectionHandler();
+    stopReconciliation?.();
     unregisterHttpHandler?.();
     await gracefulStop();
   }

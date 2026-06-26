@@ -61,6 +61,7 @@ type RuntimeLifecycleSnapshot = {
   lastEventAt?: number | null;
   lastTransportActivityAt?: number | null;
   slackTelemetry?: Record<string, number> | null;
+  reconciliationStatus?: Record<string, unknown> | null;
   healthState?: string | null;
   lastStartAt?: number | null;
   lastStopAt?: number | null;
@@ -381,6 +382,9 @@ export function buildRuntimeAccountStatusSnapshot<TExtra extends StatusSnapshotE
       : {}),
     ...(runtime?.slackTelemetry && typeof runtime.slackTelemetry === "object"
       ? { slackTelemetry: runtime.slackTelemetry }
+      : {}),
+    ...(runtime?.reconciliationStatus && typeof runtime.reconciliationStatus === "object"
+      ? { reconciliationStatus: runtime.reconciliationStatus }
       : {}),
     ...(typeof runtime?.healthState === "string" ? { healthState: runtime.healthState } : {}),
     ...(extra ?? ({} as TExtra)),

@@ -207,6 +207,12 @@ describe("resolveSlackAccount allowFrom precedence", () => {
               progress: { label: "Shelling", commandText: "status" },
               block: { enabled: true, coalesce: { minChars: 40, maxChars: 80, idleMs: 250 } },
             },
+            reconciliation: {
+              enabled: true,
+              intervalMs: 60_000,
+              lookbackMs: 600_000,
+              autoRecover: false,
+            },
             accounts: {
               work: {
                 botToken: "xoxb-work",
@@ -214,6 +220,9 @@ describe("resolveSlackAccount allowFrom precedence", () => {
                 streaming: {
                   progress: { nativeTaskCards: true },
                   block: { coalesce: { idleMs: 500 } },
+                },
+                reconciliation: {
+                  autoRecover: true,
                 },
               },
             },
@@ -229,6 +238,46 @@ describe("resolveSlackAccount allowFrom precedence", () => {
       preview: { toolProgress: true, commandText: "raw" },
       progress: { label: "Shelling", commandText: "status", nativeTaskCards: true },
       block: { enabled: true, coalesce: { minChars: 40, maxChars: 80, idleMs: 500 } },
+    });
+    expect(resolved.config.reconciliation).toEqual({
+      enabled: true,
+      intervalMs: 60_000,
+      lookbackMs: 600_000,
+      autoRecover: true,
+    });
+  });
+
+  it("merges account reconciliation over top-level defaults field-by-field", () => {
+    const resolved = resolveSlackAccount({
+      cfg: {
+        channels: {
+          slack: {
+            reconciliation: {
+              enabled: true,
+              intervalMs: 60_000,
+              lookbackMs: 600_000,
+              autoRecover: false,
+            },
+            accounts: {
+              work: {
+                botToken: "xoxb-work",
+                appToken: "xapp-work",
+                reconciliation: {
+                  autoRecover: true,
+                },
+              },
+            },
+          },
+        },
+      },
+      accountId: "work",
+    });
+
+    expect(resolved.config.reconciliation).toEqual({
+      enabled: true,
+      intervalMs: 60_000,
+      lookbackMs: 600_000,
+      autoRecover: true,
     });
   });
 
@@ -253,7 +302,6 @@ describe("resolveSlackAccount allowFrom precedence", () => {
 
     expect(resolved.config.streaming).toBe("off");
   });
-
   it("does not inherit default account allowFrom for named account when top-level is absent", () => {
     const resolved = resolveSlackAccount({
       cfg: {
