@@ -276,6 +276,18 @@ export function classifyEmbeddedAgentRunResultForModelFallback(params: {
       code: "empty_result",
     };
   }
+  const gpt5ErrorText = payloads
+    .filter((payload) => payload?.isError === true)
+    .map((payload) => (typeof payload.text === "string" ? payload.text : ""))
+    .join("\n");
+  if (/\bplan-only\b|repeated plan-only turns/i.test(gpt5ErrorText)) {
+    return {
+      message: `${params.provider}/${params.model} ended with a structured plan but no final answer`,
+      reason: "format",
+      code: "planning_only_result",
+      rawError: gpt5ErrorText,
+    };
+  }
   if (payloads.every((payload) => payload.isReasoning === true)) {
     return {
       message: `${params.provider}/${params.model} ended with reasoning only`,

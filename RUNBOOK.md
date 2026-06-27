@@ -27,7 +27,7 @@ This runbook is a dated log of planning-contract and execution events that shoul
 - Kept Slack A2A approval rendering independent from the optional inline interactive-replies capability toggle.
 - Updated core and Slack tests so core asserts safety metadata while Slack asserts Slack-specific interactive rendering.
 - Validation passed:
-  - `pnpm test -- src/agents/openclaw-tools.sessions.test.ts src/agents/a2a/permission-approval-action.test.ts src/agents/pi-embedded-subscribe.handlers.tools.test.ts extensions/slack/src/monitor/events/interactions.test.ts extensions/slack/src/channel.test.ts extensions/slack/src/interactive-replies.test.ts`
+  - `pnpm test -- src/agents/openclaw-tools.sessions.test.ts src/agents/a2a/permission-approval-action.test.ts src/agents/embedded-agent-subscribe.handlers.tools.test.ts extensions/slack/src/monitor/events/interactions.test.ts extensions/slack/src/channel.test.ts extensions/slack/src/interactive-replies.test.ts`
 
 ## Turn 4 | 2026-04-20
 

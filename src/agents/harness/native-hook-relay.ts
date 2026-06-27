@@ -995,7 +995,7 @@ function registerNativeHookRelayBridge(registration: ActiveNativeHookRelayRegist
   server.unref();
 }
 
-function refreshNativeHookRelayBridgeExpiry(registration: NativeHookRelayRegistration): void {
+function refreshNativeHookRelayBridgeExpiry(registration: ActiveNativeHookRelayRegistration): void {
   const bridge = relayBridges.get(registration.relayId);
   if (!bridge) {
     return;

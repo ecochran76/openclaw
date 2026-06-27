@@ -108,6 +108,7 @@ describe("createAgentToAgentPolicy", () => {
     expect(policy.isAllowed("ops-a", "ops-b")).toBe(true);
     expect(policy.isAllowed("main", "ops-a")).toBe(true);
     expect(policy.isAllowed("guest", "ops-a")).toBe(false);
+    expect(policy.allowPatterns).toEqual(["ops-*", "main"]);
   });
 
   it("matches wildcard patterns case-insensitively", () => {
@@ -521,7 +522,7 @@ describe("createSessionVisibilityGuard", () => {
       allowed: false,
       status: "forbidden",
       error:
-        "Session history visibility is restricted. Set tools.sessions.visibility=all to allow cross-agent access. Current pair: main -> ops. Ask the user whether to allow cross-agent session access, then retry.",
+        "Session history visibility is restricted. Set tools.sessions.visibility=all and tools.agentToAgent.enabled=true to allow cross-agent access; use tools.agentToAgent.allow to restrict permitted agent pairs. Current pair: main -> ops. Ask the user whether to allow cross-agent session access, then retry.",
       permissionRequest: {
         kind: "config_permission_request",
         reason: "session_visibility",

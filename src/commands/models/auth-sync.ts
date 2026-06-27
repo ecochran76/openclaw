@@ -1,8 +1,8 @@
+import { normalizeStringEntries } from "@openclaw/normalization-core/string-normalization";
 import { listAgentIds, resolveAgentDir } from "../../agents/agent-scope.js";
 import { syncAuthProfile } from "../../agents/auth-profiles.js";
 import { DEFAULT_AGENT_ID, normalizeAgentId } from "../../routing/session-key.js";
 import type { RuntimeEnv } from "../../runtime.js";
-import { normalizeStringEntries } from "../../shared/string-normalization.js";
 import { shortenHomePath } from "../../utils.js";
 import { loadModelsConfig } from "./load-config.js";
 import { resolveKnownAgentId } from "./shared.js";

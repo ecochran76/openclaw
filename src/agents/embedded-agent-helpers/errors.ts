@@ -1562,10 +1562,6 @@ export function formatAssistantErrorText(
   }
 
   if (providerRuntimeFailureKind === "schema") {
-    return PROVIDER_SCHEMA_REJECTION_USER_TEXT;
-  }
-
-  if (providerRuntimeFailureKind === "schema") {
     return "LLM request failed: provider rejected the request schema or tool payload.";
   }
 

@@ -197,6 +197,10 @@ function resolveConfiguredAgentMainSessionKey(params: {
   });
 }
 
+function isNoSessionSelectorMatchError(message: string): boolean {
+  return message.trim().startsWith("No session matched selector filters");
+}
+
 function isConfiguredAgentMainSessionKey(params: {
   cfg: OpenClawConfig;
   sessionKey: string;
@@ -650,15 +654,43 @@ export function createSessionsSendTool(opts?: {
               error: "Session not visible from this sandboxed agent session.",
             });
           }
-          return jsonResult({
-            runId: crypto.randomUUID(),
-            status: "error",
-            error:
-              msg ||
-              (labelParam
-                ? `No session found with label: ${labelParam}`
-                : "No session matched selector filters."),
-          });
+          const configuredAgentMainKey =
+            hasAgentIdOnlySelector &&
+            effectiveRequestedAgentId &&
+            isNoSessionSelectorMatchError(msg)
+              ? resolveConfiguredAgentMainSessionKey({
+                  cfg,
+                  agentId: effectiveRequestedAgentId,
+                  mainKey,
+                })
+              : undefined;
+          if (configuredAgentMainKey) {
+            resolvedKey = configuredAgentMainKey;
+          } else {
+            return jsonResult({
+              runId: crypto.randomUUID(),
+              status: "error",
+              error:
+                msg ||
+                (labelParam
+                  ? `No session found with label: ${labelParam}`
+                  : "No session matched selector filters."),
+            });
+          }
+        }
+
+        if (!resolvedKey) {
+          const configuredAgentMainKey =
+            hasAgentIdOnlySelector && effectiveRequestedAgentId
+              ? resolveConfiguredAgentMainSessionKey({
+                  cfg,
+                  agentId: effectiveRequestedAgentId,
+                  mainKey,
+                })
+              : undefined;
+          if (configuredAgentMainKey) {
+            resolvedKey = configuredAgentMainKey;
+          }
         }
 
         if (!resolvedKey) {

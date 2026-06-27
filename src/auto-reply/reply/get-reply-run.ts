@@ -1,4 +1,5 @@
 import crypto from "node:crypto";
+import { normalizeOptionalString } from "@openclaw/normalization-core/string-coerce";
 import {
   clearAutoFallbackPrimaryProbeSelection,
   hasSessionAutoModelFallbackProvenance,
@@ -6,12 +7,12 @@ import {
 } from "../../agents/agent-scope.js";
 import { resolveSessionAuthProfileOverride } from "../../agents/auth-profiles/session-override.js";
 import type { ExecToolDefaults } from "../../agents/bash-tools.js";
+import { resolveEmbeddedFullAccessState } from "../../agents/embedded-agent-runner/sandbox-info.js";
+import type { EmbeddedFullAccessBlockedReason } from "../../agents/embedded-agent-runner/types.js";
 import { resolveFastModeState } from "../../agents/fast-mode.js";
 import { resolveAgentHarnessPolicy } from "../../agents/harness/selection.js";
 import { normalizeProviderId } from "../../agents/model-selection.js";
 import { listOpenAIAuthProfileProvidersForAgentRuntime } from "../../agents/openai-routing.js";
-import { resolveEmbeddedFullAccessState } from "../../agents/embedded-agent-runner/sandbox-info.js";
-import type { EmbeddedFullAccessBlockedReason } from "../../agents/embedded-agent-runner/types.js";
 import { resolveIngressWorkspaceOverrideForSpawnedRun } from "../../agents/spawned-context.js";
 import type { SilentReplyPromptMode } from "../../agents/system-prompt.types.js";
 import { normalizeChatType } from "../../channels/chat-type.js";
@@ -34,7 +35,6 @@ import {
 } from "../../routing/session-key.js";
 import { createLazyImportLoader } from "../../shared/lazy-promise.js";
 import type { SilentReplyConversationType } from "../../shared/silent-reply-policy.js";
-import { normalizeOptionalString } from "@openclaw/normalization-core/string-coerce";
 import { isReasoningTagProvider } from "../../utils/provider-utils.js";
 import { hasControlCommand } from "../command-detection.js";
 import { resolveCommandTurnTargetSessionKey } from "../command-turn-context.js";
@@ -42,6 +42,7 @@ import { resolveEnvelopeFormatOptions } from "../envelope.js";
 import type { MsgContext, TemplateContext } from "../templating.js";
 import {
   type ElevatedLevel,
+  type FastMode,
   formatThinkingLevels,
   isThinkingLevelSupported,
   normalizeThinkLevel,
@@ -368,12 +369,17 @@ type RunPreparedReplyParams = {
   resetTriggered: boolean;
   systemSent: boolean;
   sessionEntry?: SessionEntry;
+  sessionEntryHandle?: unknown;
   sessionStore?: Record<string, SessionEntry>;
   sessionKey: string;
   sessionId?: string;
   storePath?: string;
   workspaceDir: string;
   abortedLastRun: boolean;
+  resolvedFastMode?: FastMode;
+  resolvedFastModeAutoOnSeconds?: number;
+  resolvedFastModeOverride?: boolean;
+  resolvedFastModeAutoOnSecondsOverride?: boolean;
   hasAppliedImageModelOverride?: boolean;
   imageModelOverrideBaseProvider?: string;
   imageModelFallbacksOverride?: string[];

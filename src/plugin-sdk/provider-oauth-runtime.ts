@@ -77,6 +77,8 @@ export interface OAuthLoginCallbacks {
   onProgress?: (message: string) => void;
   /** Optional direct manual-code entry hook used when callback-server flows cannot complete. */
   onManualCodeInput?: () => Promise<string>;
+  /** Provider-specific OAuth origin marker for upstream authorization flows. */
+  originator?: string;
   /** Show an interactive selector and return the selected option id, or undefined on cancel. */
   onSelect?: (prompt: OAuthSelectPrompt) => Promise<string | undefined>;
   /** Cancels pending OAuth waits and prompts when aborted. */

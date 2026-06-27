@@ -14,6 +14,54 @@ import {
 import { resolveModelRuntimePolicy } from "./model-runtime-policy.js";
 import { resolveProviderIdForAuth } from "./provider-auth-aliases.js";
 
+type LegacyRuntimeModelProviderAlias = {
+  /** Legacy provider id that encoded the runtime in the model ref. */
+  legacyProvider: string;
+  /** Canonical provider id that should own model selection. */
+  provider: string;
+  /** Runtime/backend id selected for the migrated ref. */
+  runtime: string;
+  /** True when the runtime is a CLI backend rather than an embedded harness. */
+  cli: boolean;
+  /** True when migration must write runtime policy even if the target runtime is the default. */
+  requiresRuntimePolicy: boolean;
+};
+
+const LEGACY_RUNTIME_MODEL_PROVIDER_ALIASES = [
+  {
+    legacyProvider: "codex",
+    provider: "openai",
+    runtime: "codex",
+    cli: false,
+    requiresRuntimePolicy: false,
+  },
+  {
+    legacyProvider: "codex-cli",
+    provider: "openai",
+    runtime: "codex",
+    cli: false,
+    requiresRuntimePolicy: true,
+  },
+  {
+    legacyProvider: "claude-cli",
+    provider: "anthropic",
+    runtime: "claude-cli",
+    cli: true,
+    requiresRuntimePolicy: true,
+  },
+  {
+    legacyProvider: "google-gemini-cli",
+    provider: "google",
+    runtime: "google-gemini-cli",
+    cli: true,
+    requiresRuntimePolicy: true,
+  },
+] as const satisfies readonly LegacyRuntimeModelProviderAlias[];
+
+export function listLegacyRuntimeModelProviderAliases(): readonly LegacyRuntimeModelProviderAlias[] {
+  return LEGACY_RUNTIME_MODEL_PROVIDER_ALIASES;
+}
+
 /** True for CLI runtime provider ids such as `claude-cli` and `google-gemini-cli`. */
 export function isCliRuntimeProvider(
   provider: string,

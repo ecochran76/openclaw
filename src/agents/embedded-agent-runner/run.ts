@@ -3556,7 +3556,10 @@ async function runEmbeddedAgentInternal(
             reasoningLevel: params.reasoningLevel,
             thinkingLevel: params.thinkLevel,
             toolResultFormat: resolvedToolResultFormat,
-            suppressToolErrorWarnings: params.suppressToolErrorWarnings,
+            suppressToolErrorWarnings:
+              typeof params.suppressToolErrorWarnings === "function"
+                ? params.suppressToolErrorWarnings()
+                : params.suppressToolErrorWarnings,
             inlineToolResultsAllowed: false,
             didSendViaMessagingTool: attempt.didSendViaMessagingTool,
             didDeliverSourceReplyViaMessageTool:

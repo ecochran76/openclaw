@@ -195,14 +195,15 @@ export function createAgentToAgentPolicy(cfg: OpenClawConfig): AgentToAgentPolic
   const routingA2A = cfg.tools?.agentToAgent;
   const enabled = routingA2A?.enabled === true;
   const rawAllowPatterns = Array.isArray(routingA2A?.allow) ? routingA2A.allow : [];
-  const allowPatterns = rawAllowPatterns.map((pattern) => compileAgentAllowPattern(pattern));
-  const hasWildcardPatterns = allowPatterns.some((pattern) => pattern.kind === "wildcard");
+  const allowPatterns = rawAllowPatterns.map((pattern) => normalizeOptionalString(pattern) ?? "");
+  const compiledAllowPatterns = allowPatterns.map((pattern) => compileAgentAllowPattern(pattern));
+  const hasWildcardPatterns = compiledAllowPatterns.some((pattern) => pattern.kind === "wildcard");
   const matchesAllow = (agentId: string) => {
     if (allowPatterns.length === 0) {
       return true;
     }
     const lowerAgentId = hasWildcardPatterns ? agentId.toLowerCase() : "";
-    return allowPatterns.some((pattern) => {
+    return compiledAllowPatterns.some((pattern) => {
       if (pattern.kind === "all") {
         return true;
       }

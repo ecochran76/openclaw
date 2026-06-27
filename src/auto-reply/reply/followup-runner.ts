@@ -717,6 +717,11 @@ export function createFollowupRunner(params: {
         replyOperation.fail("run_failed", err);
         const preflightCompactionFailureText = buildPreflightCompactionFailureText(message, {
           includeDetails: run.verboseLevel === "on" || run.verboseLevel === "full",
+          cfg: runtimeConfig,
+          agentId: run.agentId,
+          primaryProvider: fallbackProvider,
+          primaryModel: fallbackModel,
+          activeSessionEntry,
         });
         if (preflightCompactionFailureText) {
           await sendFollowupPayloads(

@@ -10,22 +10,22 @@ import {
 import { handleCommands } from "./commands.js";
 import { buildCommandTestParams } from "./commands.test-harness.js";
 
-const queueEmbeddedPiMessageMock = vi.hoisted(() => vi.fn(() => false));
+const queueEmbeddedAgentMessageMock = vi.hoisted(() => vi.fn(() => false));
 
-vi.mock("../../agents/pi-embedded.js", async () => {
-  const actual = await vi.importActual<typeof import("../../agents/pi-embedded.js")>(
-    "../../agents/pi-embedded.js",
+vi.mock("../../agents/embedded-agent-runner/runs.js", async () => {
+  const actual = await vi.importActual<typeof import("../../agents/embedded-agent-runner/runs.js")>(
+    "../../agents/embedded-agent-runner/runs.js",
   );
   return {
     ...actual,
-    queueEmbeddedPiMessage: queueEmbeddedPiMessageMock,
+    queueEmbeddedAgentMessage: queueEmbeddedAgentMessageMock,
   };
 });
 
 afterEach(() => {
   resetTrackedTurnsForTests();
-  queueEmbeddedPiMessageMock.mockReset();
-  queueEmbeddedPiMessageMock.mockReturnValue(false);
+  queueEmbeddedAgentMessageMock.mockReset();
+  queueEmbeddedAgentMessageMock.mockReturnValue(false);
 });
 
 describe("/turns, /nudge, and /turn-steer", () => {
@@ -152,7 +152,7 @@ describe("/turns, /nudge, and /turn-steer", () => {
     const result = await handleCommands(params);
     expect(result.shouldContinue).toBe(false);
     expect(result.reply?.text).toBe("🧭 Turn steer\nNo active steerable turn for this session.");
-    expect(queueEmbeddedPiMessageMock).not.toHaveBeenCalled();
+    expect(queueEmbeddedAgentMessageMock).not.toHaveBeenCalled();
   });
 
   it("reports when the active turn cannot accept live steering right now", async () => {
@@ -185,7 +185,7 @@ describe("/turns, /nudge, and /turn-steer", () => {
     expect(result.reply?.text).toBe(
       "🧭 Turn steer\nActive turn is not accepting live steering right now.",
     );
-    expect(queueEmbeddedPiMessageMock).toHaveBeenCalledWith(
+    expect(queueEmbeddedAgentMessageMock).toHaveBeenCalledWith(
       "session-steer-1",
       "focus on tests first",
     );
@@ -193,7 +193,7 @@ describe("/turns, /nudge, and /turn-steer", () => {
   });
 
   it("steers the active tracked turn and records steering metadata", async () => {
-    queueEmbeddedPiMessageMock.mockReturnValue(true);
+    queueEmbeddedAgentMessageMock.mockReturnValue(true);
     const turn = startTrackedTurn({
       sessionKey: "agent:main:main",
       sessionId: "session-steer-1",
@@ -223,7 +223,7 @@ describe("/turns, /nudge, and /turn-steer", () => {
     expect(result.reply?.text).toBe(
       "🧭 Turn steer\nSent to active turn.\nInstruction: run tests before more edits",
     );
-    expect(queueEmbeddedPiMessageMock).toHaveBeenCalledWith(
+    expect(queueEmbeddedAgentMessageMock).toHaveBeenCalledWith(
       "session-steer-1",
       "run tests before more edits",
     );

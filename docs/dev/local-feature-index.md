@@ -81,7 +81,7 @@ Use `--list` to print the command bundle without running it. Use `--live-patch` 
 - Common validation:
   - `pnpm test -- src/agents/openclaw-tools.sessions.test.ts`
   - `pnpm test -- src/agents/a2a/permission-approval-action.test.ts`
-  - `pnpm test -- src/agents/pi-embedded-subscribe.handlers.tools.test.ts`
+  - `pnpm test -- src/agents/embedded-agent-subscribe.handlers.tools.test.ts`
   - `pnpm test -- src/auto-reply/reply/dispatch-stream-delivery.test.ts`
   - `pnpm test -- extensions/slack/src/monitor/events/interactions.test.ts`
   - `pnpm test -- src/gateway/server.sessions-send.test.ts`

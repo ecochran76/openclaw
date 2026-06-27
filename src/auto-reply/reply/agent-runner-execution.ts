@@ -1,8 +1,15 @@
 import crypto from "node:crypto";
 import {
+  hasNonEmptyString,
+  normalizeLowercaseStringOrEmpty,
+  normalizeOptionalString,
+  readStringValue,
+} from "@openclaw/normalization-core/string-coerce";
+import {
   hasOutboundReplyContent,
   resolveSendableOutboundReplyParts,
 } from "openclaw/plugin-sdk/reply-payload";
+import { sanitizeForLog } from "../../../packages/terminal-core/src/ansi.js";
 import {
   clearAutoFallbackPrimaryProbeSelection,
   entryMatchesAutoFallbackPrimaryProbe,
@@ -18,20 +25,6 @@ import { formatAuthRecoveryHint } from "../../agents/auth-profiles/reauth-guidan
 import { resolveBootstrapWarningSignaturesSeen } from "../../agents/bootstrap-budget.js";
 import { getCliSessionBinding } from "../../agents/cli-session.js";
 import { resolveContextTokensForModel } from "../../agents/context.js";
-import { ensureSelectedAgentHarnessPlugin } from "../../agents/harness/runtime-plugin.js";
-import { resolveAgentHarnessPolicy } from "../../agents/harness/selection.js";
-import { LiveSessionModelSwitchError } from "../../agents/live-model-switch-error.js";
-import { runWithModelFallback, isFallbackSummaryError } from "../../agents/model-fallback.js";
-import {
-  listLegacyRuntimeModelProviderAliases,
-  resolveCliRuntimeExecutionProvider,
-} from "../../agents/model-runtime-aliases.js";
-import {
-  isCliProvider,
-  resolveModelRefFromString,
-  resolvePersistedOverrideModelRef,
-} from "../../agents/model-selection.js";
-import { resolveOpenAIRuntimeProvider } from "../../agents/openai-routing.js";
 import {
   BILLING_ERROR_USER_MESSAGE,
   formatRateLimitOrOverloadedErrorCopy,
@@ -47,6 +40,20 @@ import {
 import { sanitizeUserFacingText } from "../../agents/embedded-agent-helpers/sanitize-user-facing-text.js";
 import { isMessagingToolSendAction } from "../../agents/embedded-agent-messaging.js";
 import { runEmbeddedAgent } from "../../agents/embedded-agent.js";
+import { ensureSelectedAgentHarnessPlugin } from "../../agents/harness/runtime-plugin.js";
+import { resolveAgentHarnessPolicy } from "../../agents/harness/selection.js";
+import { LiveSessionModelSwitchError } from "../../agents/live-model-switch-error.js";
+import { runWithModelFallback, isFallbackSummaryError } from "../../agents/model-fallback.js";
+import {
+  listLegacyRuntimeModelProviderAliases,
+  resolveCliRuntimeExecutionProvider,
+} from "../../agents/model-runtime-aliases.js";
+import {
+  isCliProvider,
+  resolveModelRefFromString,
+  resolvePersistedOverrideModelRef,
+} from "../../agents/model-selection.js";
+import { resolveOpenAIRuntimeProvider } from "../../agents/openai-routing.js";
 import { buildAgentRuntimeOutcomePlan } from "../../agents/runtime-plan/build.js";
 import {
   resolveGroupSessionKey,
@@ -65,13 +72,6 @@ import { CommandLane } from "../../process/lanes.js";
 import { defaultRuntime } from "../../runtime.js";
 import { shouldPreserveUserFacingSessionStateForInputProvenance } from "../../sessions/input-provenance.js";
 import { truncateUtf16Safe } from "../../shared/utf16-slice.js";
-import {
-  hasNonEmptyString,
-  normalizeLowercaseStringOrEmpty,
-  normalizeOptionalString,
-  readStringValue,
-} from "@openclaw/normalization-core/string-coerce";
-import { sanitizeForLog } from "../../../packages/terminal-core/src/ansi.js";
 import {
   isMarkdownCapableMessageChannel,
   resolveMessageChannel,
@@ -1000,6 +1000,35 @@ export function buildContextOverflowRecoveryText(params: {
   );
 }
 
+export function buildPreflightCompactionFailureText(
+  message: string,
+  params: {
+    includeDetails?: boolean;
+    cfg: FollowupRun["run"]["config"];
+    agentId?: string;
+    primaryProvider?: string;
+    primaryModel?: string;
+    activeSessionEntry?: SessionEntry;
+  },
+): string | undefined {
+  if (!/^Preflight compaction required but failed:/i.test(message)) {
+    return undefined;
+  }
+  const details = params.includeDetails ? `\n\nDetails: ${message}` : "";
+  return (
+    "⚠️ Context is too large and auto-compaction could not recover this turn. " +
+    "I kept this conversation mapped to the current session. Please try again, use /compact, or use /new to start a fresh session." +
+    (resolveHeartbeatBleedHint({
+      cfg: params.cfg,
+      agentId: params.agentId,
+      primaryProvider: params.primaryProvider,
+      primaryModel: params.primaryModel,
+      activeSessionEntry: params.activeSessionEntry,
+    }) ?? "") +
+    details
+  );
+}
+
 function buildRestartLifecycleReplyText(): string {
   return "⚠️ Gateway is restarting. Please wait a few seconds and try again.";
 }
@@ -1125,9 +1154,67 @@ function emitModelFallbackStepLifecycle(params: {
   });
 }
 
+export function buildCommandOutputFromToolResultEvent(evt: {
+  stream: string;
+  data: Record<string, unknown>;
+}):
+  | {
+      itemId?: string;
+      phase?: string;
+      title?: string;
+      toolCallId?: string;
+      name?: string;
+      output?: string;
+      status?: string;
+      exitCode?: number | null;
+      durationMs?: number;
+      cwd?: string;
+    }
+  | undefined {
+  if (evt.stream !== "tool" || readStringValue(evt.data.phase) !== "result") {
+    return undefined;
+  }
+  const result =
+    evt.data.result && typeof evt.data.result === "object"
+      ? (evt.data.result as Record<string, unknown>)
+      : undefined;
+  if (!result) {
+    return undefined;
+  }
+  const exitCode =
+    typeof result.exitCode === "number" || result.exitCode === null ? result.exitCode : undefined;
+  const durationMs = typeof result.durationMs === "number" ? result.durationMs : undefined;
+  const content = Array.isArray(result.content) ? result.content : undefined;
+  const output =
+    readStringValue(result.output) ??
+    readStringValue(result.stdout) ??
+    content
+      ?.map((entry) =>
+        entry && typeof entry === "object"
+          ? readStringValue((entry as Record<string, unknown>).text)
+          : readStringValue(entry),
+      )
+      .filter((text): text is string => Boolean(text))
+      .join("\n");
+  const status = evt.data.isError === true ? "failed" : readStringValue(evt.data.status);
+  return {
+    itemId: readStringValue(evt.data.itemId),
+    phase: "end",
+    title: readStringValue(evt.data.title),
+    toolCallId: readStringValue(evt.data.toolCallId),
+    name: readStringValue(evt.data.name),
+    output: output || undefined,
+    status,
+    exitCode,
+    durationMs,
+    cwd: readStringValue(result.cwd) ?? readStringValue(evt.data.cwd),
+  };
+}
+
 export function resolveSessionRuntimeOverrideForProvider(params: {
   provider: string;
   entry?: Pick<SessionEntry, "agentRuntimeOverride">;
+  cfg?: OpenClawConfig;
 }): string | undefined {
   const provider = normalizeLowercaseStringOrEmpty(params.provider);
   const runtime = normalizeLowercaseStringOrEmpty(params.entry?.agentRuntimeOverride);
@@ -1254,6 +1341,7 @@ export async function runAgentTurnWithFallback(params: {
   let autoCompactionCount = 0;
   // Track payloads sent directly (not via pipeline) during tool flush to avoid duplicates.
   const directlySentBlockKeys = new Set<string>();
+  const directlySentBlockPayloads: Array<ReplyPayload | undefined> = [];
   let runnableRun = resolveRunAfterAutoFallbackPrimaryProbeRecheck({
     run: params.followupRun.run,
     entry: params.activeSessionStore?.[params.sessionKey ?? ""] ?? params.getActiveSessionEntry(),
@@ -1454,7 +1542,7 @@ export async function runAgentTurnWithFallback(params: {
     model: string,
     candidateRun: FollowupRun["run"],
   ): Promise<(() => Promise<void>) | undefined> => {
-    if (effectiveRun.hasOneTurnModelOverride === true) {
+    if (params.followupRun.run.hasOneTurnModelOverride === true) {
       return undefined;
     }
     if (
@@ -1678,6 +1766,7 @@ export async function runAgentTurnWithFallback(params: {
             blockStreamingEnabled: params.blockStreamingEnabled,
             blockReplyPipeline,
             directlySentBlockKeys,
+            directlySentBlockPayloads,
           })
         : undefined;
       let messageToolOnlyDeliveryCompleted = false;
@@ -2425,9 +2514,7 @@ export async function runAgentTurnWithFallback(params: {
       const isSessionCorruption = /function call turn comes immediately after/i.test(message);
       const isRoleOrderingError = /incorrect role information|roles must alternate/i.test(message);
       const providerRequestError =
-        !isBilling && !isRoleOrderingError && !shouldSurfaceToControlUi
-          ? classifyProviderRequestError(err)
-          : undefined;
+        !isBilling && !shouldSurfaceToControlUi ? classifyProviderRequestError(message) : undefined;
       const isTransientHttp = isTransientHttpError(message);
 
       if (isReplyOperationRestartAbort(params.replyOperation)) {
@@ -2489,19 +2576,6 @@ export async function runAgentTurnWithFallback(params: {
           }),
         };
       }
-      if (isRoleOrderingError) {
-        const didReset = await params.resetSessionAfterRoleOrderingConflict(message);
-        if (didReset) {
-          params.replyOperation?.fail("run_failed", err);
-          return {
-            kind: "final",
-            payload: markAgentRunFailureReplyPayload({
-              text: "⚠️ Message ordering conflict. I've reset the conversation - please try again.",
-            }),
-          };
-        }
-      }
-
       // Auto-recover from Gemini session corruption by resetting the session
       if (
         isSessionCorruption &&

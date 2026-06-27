@@ -7,11 +7,15 @@
 export {
   abortAndDrainEmbeddedAgentRun,
   abortEmbeddedAgentRun,
+  abortEmbeddedAgentRun as abortEmbeddedPiRun,
   isEmbeddedAgentRunActive,
+  isEmbeddedAgentRunActive as isEmbeddedPiRunActive,
   isEmbeddedAgentRunStreaming,
+  isEmbeddedAgentRunStreaming as isEmbeddedPiRunStreaming,
   resolveActiveEmbeddedRunSessionId,
   resolveActiveEmbeddedRunSessionIdBySessionFile,
   runEmbeddedAgent,
   resolveEmbeddedSessionLane,
   waitForEmbeddedAgentRunEnd,
+  waitForEmbeddedAgentRunEnd as waitForEmbeddedPiRunEnd,
 } from "./embedded-agent.js";

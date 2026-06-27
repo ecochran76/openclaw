@@ -1,4 +1,7 @@
-import type { AssistantMessage } from "@earendil-works/pi-ai";
+import {
+  normalizeOptionalLowercaseString,
+  normalizeOptionalString,
+} from "@openclaw/normalization-core/string-coerce";
 import type { SourceReplyDeliveryMode } from "../../../auto-reply/get-reply-options.types.js";
 import {
   createHeartbeatToolResponsePayload,
@@ -15,14 +18,11 @@ import type { ReasoningLevel, ThinkLevel, VerboseLevel } from "../../../auto-rep
 import { isSilentReplyPayloadText, SILENT_REPLY_TOKEN } from "../../../auto-reply/tokens.js";
 import { formatToolAggregate } from "../../../auto-reply/tool-meta.js";
 import type { OpenClawConfig } from "../../../config/types.openclaw.js";
-import { hasReplyPayloadContent } from "../../../interactive/payload.js";
 import { formatErrorMessage } from "../../../infra/errors.js";
+import { hasReplyPayloadContent } from "../../../interactive/payload.js";
+import type { AssistantMessage } from "../../../llm/types.js";
 import { isCronSessionKey } from "../../../routing/session-key.js";
 import { extractAssistantTextForPhase } from "../../../shared/chat-message-content.js";
-import {
-  normalizeOptionalLowercaseString,
-  normalizeOptionalString,
-} from "@openclaw/normalization-core/string-coerce";
 import {
   BILLING_ERROR_USER_MESSAGE,
   formatAssistantErrorText,
@@ -33,7 +33,10 @@ import {
 } from "../../embedded-agent-helpers.js";
 import type { MessagingToolSourceReplyPayload } from "../../embedded-agent-messaging.types.js";
 import type { ToolResultFormat } from "../../embedded-agent-subscribe.shared-types.js";
-import { extractAssistantThinking, extractAssistantVisibleText } from "../../embedded-agent-utils.js";
+import {
+  extractAssistantThinking,
+  extractAssistantVisibleText,
+} from "../../embedded-agent-utils.js";
 import { isExecLikeToolName, type ToolErrorSummary } from "../../tool-error-summary.js";
 import { isLikelyMutatingToolName } from "../../tool-mutation.js";
 
@@ -185,15 +188,18 @@ function resolveToolErrorWarningPolicy(params: {
 
 export function buildEmbeddedRunPayloads(params: {
   assistantTexts: string[];
+  assistantMessageIndex?: number;
   toolMetas: ToolMetaEntry[];
   lastAssistant: AssistantMessage | undefined;
   currentAssistant?: AssistantMessage | null;
   lastToolError?: ToolErrorSummary;
   config?: OpenClawConfig;
   isCronTrigger?: boolean;
+  isHeartbeatTrigger?: boolean;
   sessionKey: string;
   provider?: string;
   model?: string;
+  authMode?: string;
   authProfileId?: string;
   promptError?: unknown;
   verboseLevel?: VerboseLevel;
@@ -203,6 +209,7 @@ export function buildEmbeddedRunPayloads(params: {
   suppressToolErrorWarnings?: boolean;
   inlineToolResultsAllowed: boolean;
   didSendViaMessagingTool?: boolean;
+  didDeliverSourceReplyViaMessageTool?: boolean;
   messagingToolSourceReplyPayloads?: MessagingToolSourceReplyPayload[];
   sourceReplyDeliveryMode?: SourceReplyDeliveryMode;
   agentId?: string;

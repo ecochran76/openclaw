@@ -1,9 +1,9 @@
-import { normalizeProviderId } from "@openclaw/model-catalog-core/provider-id";
 import { execFileSync } from "node:child_process";
 import { createCipheriv, createDecipheriv, createHash, randomBytes } from "node:crypto";
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
+import { normalizeProviderId } from "@openclaw/model-catalog-core/provider-id";
 import { resolveOAuthDir, resolveOAuthPath, resolveStateDir } from "../../config/paths.js";
 import { coerceSecretRef } from "../../config/types.secrets.js";
 import { loadJsonFile, saveJsonFile } from "../../infra/json-file.js";
@@ -34,6 +34,7 @@ import {
 import type {
   AuthProfileCredential,
   AuthProfileFailureReason,
+  AuthProfileState,
   AuthProfileSecretsStore,
   AuthProfileStore,
   OAuthCredential,
@@ -49,6 +50,10 @@ type LoadPersistedAuthProfileStoreOptions = {
   repairOAuthSecretPayloads?: boolean;
   resolveLegacyOAuthSidecars?: boolean;
   rewriteInlineOAuthSecrets?: boolean;
+};
+
+type MergeAuthProfileStoresOptions = {
+  preserveBaseRuntimeExternalProfiles?: boolean;
 };
 
 type CredentialRejectReason = "non_object" | "invalid_type" | "missing_provider";
@@ -568,6 +573,9 @@ function normalizeRawCredentialEntry(raw: Record<string, unknown>): Partial<Auth
   if (!("type" in entry) && typeof entry["mode"] === "string") {
     entry["type"] = entry["mode"];
   }
+  if (entry.type === "apiKey") {
+    entry.type = "api_key";
+  }
   if (!("key" in entry) && typeof entry["apiKey"] === "string") {
     entry["key"] = entry["apiKey"];
   }
@@ -839,6 +847,171 @@ function mergeRecord<T>(
 
 function dedupeMergedProfileOrder(profileIds: string[]): string[] {
   return Array.from(new Set(profileIds));
+}
+
+function normalizeRuntimeProfileIds(raw: readonly string[] | undefined): string[] | undefined {
+  if (!raw) {
+    return undefined;
+  }
+  const normalized = dedupeMergedProfileOrder(
+    raw.flatMap((entry) => {
+      const profileId = normalizeOptionalCredentialString(entry);
+      return profileId ? [profileId] : [];
+    }),
+  );
+  return normalized.length > 0 ? normalized : [];
+}
+
+function normalizeAuthStoreStateForMerge(store: AuthProfileStore): AuthProfileState {
+  return coerceAuthProfileState(store);
+}
+
+function resolveCredentialProviderKey(
+  profileId: string,
+  credential?: AuthProfileCredential,
+): string {
+  const provider = credential?.provider;
+  const providerKey = typeof provider === "string" ? normalizeProviderId(provider) : "";
+  if (providerKey) {
+    return providerKey;
+  }
+  const separatorIndex = profileId.indexOf(":");
+  return separatorIndex > 0 ? normalizeProviderId(profileId.slice(0, separatorIndex)) : "";
+}
+
+function groupProfileIdsByProvider(
+  profiles: Record<string, AuthProfileCredential>,
+): Record<string, string[]> {
+  const grouped: Record<string, string[]> = {};
+  for (const [profileId, credential] of Object.entries(profiles)) {
+    const providerKey = resolveCredentialProviderKey(profileId, credential);
+    if (!providerKey) {
+      continue;
+    }
+    grouped[providerKey] ??= [];
+    grouped[providerKey].push(profileId);
+  }
+  return grouped;
+}
+
+function normalizeProviderStateKeys<T>(
+  state: Record<string, T> | undefined,
+): Record<string, T> | undefined {
+  if (!state) {
+    return undefined;
+  }
+  const normalized: Record<string, T> = {};
+  for (const [provider, value] of Object.entries(state)) {
+    const providerKey = normalizeProviderId(provider);
+    if (!providerKey) {
+      continue;
+    }
+    normalized[providerKey] = value;
+  }
+  return Object.keys(normalized).length > 0 ? normalized : undefined;
+}
+
+function buildMergedProfileOrder(params: {
+  base: AuthProfileStore;
+  override: AuthProfileStore;
+  profiles: Record<string, AuthProfileCredential>;
+  removedProfileIds: ReadonlySet<string>;
+  synthesizeProfileOrder: boolean;
+}): AuthProfileState["order"] {
+  const baseState = normalizeAuthStoreStateForMerge(params.base);
+  const overrideState = normalizeAuthStoreStateForMerge(params.override);
+  const baseProfileIdsByProvider = groupProfileIdsByProvider(params.base.profiles);
+  const overrideProfileIdsByProvider = groupProfileIdsByProvider(params.override.profiles);
+  const providerKeys = new Set<string>([
+    ...Object.keys(baseState.order ?? {}),
+    ...Object.keys(overrideState.order ?? {}),
+    ...(params.synthesizeProfileOrder ? Object.keys(baseProfileIdsByProvider) : []),
+    ...(params.synthesizeProfileOrder ? Object.keys(overrideProfileIdsByProvider) : []),
+  ]);
+  const order: Record<string, string[]> = {};
+  for (const providerKey of providerKeys) {
+    const explicitOverride = overrideState.order?.[providerKey];
+    const merged = explicitOverride
+      ? explicitOverride
+      : params.synthesizeProfileOrder
+        ? [
+            ...(overrideProfileIdsByProvider[providerKey] ?? []),
+            ...(baseState.order?.[providerKey] ?? baseProfileIdsByProvider[providerKey] ?? []),
+          ]
+        : (baseState.order?.[providerKey] ?? []);
+    const normalized = dedupeMergedProfileOrder(
+      merged.filter((profileId) => !params.removedProfileIds.has(profileId)),
+    );
+    if (normalized.length > 0) {
+      order[providerKey] = normalized;
+    }
+  }
+  return Object.keys(order).length > 0 ? order : undefined;
+}
+
+function pruneRemovedLastGood(
+  lastGood: AuthProfileState["lastGood"],
+  removedProfileIds: ReadonlySet<string>,
+): AuthProfileState["lastGood"] {
+  if (!lastGood) {
+    return undefined;
+  }
+  const normalized = Object.fromEntries(
+    Object.entries(lastGood).filter(([, profileId]) => !removedProfileIds.has(profileId)),
+  );
+  return Object.keys(normalized).length > 0 ? normalized : undefined;
+}
+
+function buildMergedRuntimePersistedProfileIds(params: {
+  base: AuthProfileStore;
+  override: AuthProfileStore;
+  removedProfileIds: ReadonlySet<string>;
+}): string[] | undefined {
+  const overrideIds = normalizeRuntimeProfileIds(params.override.runtimePersistedProfileIds) ?? [];
+  const baseIds = normalizeRuntimeProfileIds(params.base.runtimePersistedProfileIds) ?? [];
+  const overrideProfileIds = new Set(Object.keys(params.override.profiles));
+  const merged = dedupeMergedProfileOrder([
+    ...overrideIds.filter((profileId) => !params.removedProfileIds.has(profileId)),
+    ...baseIds.filter(
+      (profileId) => !overrideProfileIds.has(profileId) && !params.removedProfileIds.has(profileId),
+    ),
+  ]);
+  return merged.length > 0 ? merged : undefined;
+}
+
+function buildMergedRuntimeExternalProfileIds(params: {
+  base: AuthProfileStore;
+  override: AuthProfileStore;
+  preserveBaseRuntimeExternalProfiles: boolean;
+}): { ids?: string[]; authoritative?: true; removedProfileIds: Set<string> } {
+  const baseIds = normalizeRuntimeProfileIds(params.base.runtimeExternalProfileIds) ?? [];
+  const overrideIds = normalizeRuntimeProfileIds(params.override.runtimeExternalProfileIds);
+  if (
+    params.preserveBaseRuntimeExternalProfiles &&
+    params.base.runtimeExternalProfileIdsAuthoritative === true
+  ) {
+    return {
+      ids: baseIds,
+      authoritative: true,
+      removedProfileIds: new Set(),
+    };
+  }
+  if (params.override.runtimeExternalProfileIdsAuthoritative === true) {
+    const ids = overrideIds ?? [];
+    const overrideProfileIds = new Set(Object.keys(params.override.profiles));
+    const kept = new Set(ids);
+    const removedProfileIds = new Set(
+      baseIds.filter((profileId) => !kept.has(profileId) && !overrideProfileIds.has(profileId)),
+    );
+    return { ids, authoritative: true, removedProfileIds };
+  }
+  const merged =
+    overrideIds !== undefined ? dedupeMergedProfileOrder([...baseIds, ...overrideIds]) : baseIds;
+  return {
+    ids: merged.length > 0 ? merged : undefined,
+    authoritative: params.base.runtimeExternalProfileIdsAuthoritative === true ? true : undefined,
+    removedProfileIds: new Set(),
+  };
 }
 
 function hasComparableOAuthIdentityConflict(
@@ -1142,21 +1315,71 @@ function reconcileMainStoreOAuthProfileDrift(params: {
 export function mergeAuthProfileStores(
   base: AuthProfileStore,
   override: AuthProfileStore,
+  options?: MergeAuthProfileStoresOptions,
 ): AuthProfileStore {
+  const hasRuntimeExternalOverride =
+    override.runtimeExternalProfileIds !== undefined ||
+    override.runtimeExternalProfileIdsAuthoritative === true;
+  const hasRuntimePersistedOverride = override.runtimePersistedProfileIds !== undefined;
   if (
     Object.keys(override.profiles).length === 0 &&
     !override.order &&
     !override.lastGood &&
-    !override.usageStats
+    !override.usageStats &&
+    !hasRuntimeExternalOverride &&
+    !hasRuntimePersistedOverride
   ) {
     return base;
   }
-  const merged = {
+  const runtimeExternal = buildMergedRuntimeExternalProfileIds({
+    base,
+    override,
+    preserveBaseRuntimeExternalProfiles: options?.preserveBaseRuntimeExternalProfiles === true,
+  });
+  const removedProfileIds = runtimeExternal.removedProfileIds;
+  const profiles: Record<string, AuthProfileCredential> = {};
+  for (const [profileId, credential] of Object.entries(override.profiles)) {
+    profiles[profileId] = credential;
+  }
+  for (const [profileId, credential] of Object.entries(base.profiles)) {
+    if (profileId in profiles || removedProfileIds.has(profileId)) {
+      continue;
+    }
+    profiles[profileId] = credential;
+  }
+
+  const baseState = normalizeAuthStoreStateForMerge(base);
+  const overrideState = normalizeAuthStoreStateForMerge(override);
+  const lastGood = pruneRemovedLastGood(
+    mergeRecord(
+      normalizeProviderStateKeys(baseState.lastGood),
+      normalizeProviderStateKeys(overrideState.lastGood),
+    ),
+    removedProfileIds,
+  );
+  const usageStats = mergeRecord(baseState.usageStats, overrideState.usageStats);
+  for (const profileId of removedProfileIds) {
+    delete usageStats?.[profileId];
+  }
+  const merged: AuthProfileStore = {
     version: Math.max(base.version, override.version ?? base.version),
-    profiles: { ...base.profiles, ...override.profiles },
-    order: mergeRecord(base.order, override.order),
-    lastGood: mergeRecord(base.lastGood, override.lastGood),
-    usageStats: mergeRecord(base.usageStats, override.usageStats),
+    profiles,
+    order: buildMergedProfileOrder({
+      base,
+      override,
+      profiles,
+      removedProfileIds,
+      synthesizeProfileOrder: options?.preserveBaseRuntimeExternalProfiles === true,
+    }),
+    lastGood,
+    usageStats: usageStats && Object.keys(usageStats).length > 0 ? usageStats : undefined,
+    runtimePersistedProfileIds: buildMergedRuntimePersistedProfileIds({
+      base,
+      override,
+      removedProfileIds,
+    }),
+    runtimeExternalProfileIds: runtimeExternal.ids,
+    runtimeExternalProfileIdsAuthoritative: runtimeExternal.authoritative,
   };
   return reconcileMainStoreOAuthProfileDrift({ base, override, merged });
 }
@@ -1189,7 +1412,10 @@ export function buildPersistedAuthProfileSecretsStore(
         delete sanitized.token;
         return [[profileId, sanitized]];
       }
-      if (options?.redactOAuthSecrets === true && shouldPersistOAuthWithoutInlineSecrets(credential)) {
+      if (
+        options?.redactOAuthSecrets === true &&
+        shouldPersistOAuthWithoutInlineSecrets(credential)
+      ) {
         return [
           [
             profileId,

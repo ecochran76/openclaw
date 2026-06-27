@@ -1792,15 +1792,15 @@ export async function dispatchReplyFromConfig(
     abortSignal?: AbortSignal,
     mirror?: boolean,
     kind: ReplyDispatchKind = "tool",
-  ): Promise<void> => {
+  ): Promise<boolean> => {
     // Keep the runtime guard explicit because this helper is called from nested
     // reply callbacks where TypeScript cannot narrow shouldRouteToOriginating.
     if (!routeReplyRuntime || !routeReplyChannel || !routeReplyTo) {
-      return;
+      return false;
     }
     const effectiveAbortSignal = abortSignal ?? getDispatchAbortSignal();
     if (effectiveAbortSignal?.aborted) {
-      return;
+      return false;
     }
     const result = await routeReplyToOriginating(payload, {
       abortSignal: effectiveAbortSignal,
@@ -1810,6 +1810,7 @@ export async function dispatchReplyFromConfig(
     if (result && !result.ok) {
       logVerbose(`dispatch-from-config: route-reply failed: ${result.error ?? "unknown error"}`);
     }
+    return result ? isRoutedReplyDelivered(result) : false;
   };
 
   const deliverBindingPayload = async (
@@ -2028,8 +2029,7 @@ export async function dispatchReplyFromConfig(
     : suppressAutomaticSourceDelivery
       ? "sourceReplyDeliveryMode: message_tool_only"
       : sourceReplyPolicy.deliverySuppressionReason;
-  const suppressHookUserDelivery =
-    suppressAcpChildUserDelivery === true || suppressDelivery;
+  const suppressHookUserDelivery = suppressAcpChildUserDelivery === true || suppressDelivery;
   const suppressHookReplyLifecycle = sourceReplyPolicy.suppressHookReplyLifecycle;
   const attachSourceReplyDeliveryMode = (
     result: DispatchFromConfigResult,
@@ -2289,7 +2289,7 @@ export async function dispatchReplyFromConfig(
       const active = trackedTurnId && sessionKey ? getActiveTrackedTurn(sessionKey) : undefined;
       return Boolean(
         (active && initialMemoryFlushAt < active.startedAt) ||
-          Date.now() - initialMemoryFlushAt > 1_000,
+        Date.now() - initialMemoryFlushAt > 1_000,
       );
     }
     return latestMemoryFlushAt > initialMemoryFlushAt;
@@ -2428,19 +2428,19 @@ export async function dispatchReplyFromConfig(
         }
         return ok;
       }
-      const queued = dispatcher.sendBlockReply(payload);
+      dispatcher.sendBlockReply(payload);
       if (trackedTurnId) {
         const at = Date.now();
         updateTrackedTurn(trackedTurnId, {
-          deliveryState: queued ? "block_sent" : "delivery_failed",
+          deliveryState: "block_sent",
           deliveryTarget,
           lastDeliveryAttemptAt: at,
-          lastDeliverySuccessAt: queued ? at : undefined,
-          lastDeliveryError: queued ? undefined : failureText,
-          markVisible: queued,
+          lastDeliverySuccessAt: at,
+          lastDeliveryError: undefined,
+          markVisible: true,
         });
       }
-      return queued;
+      return true;
     };
     const schedule = (delayMs: number) => {
       clearTurnNudgeTimer();

@@ -13,11 +13,7 @@ export function getDefaultChatReauthProvider(
   providerIds: readonly string[] = CHAT_REAUTH_PROVIDERS,
 ): string | undefined {
   const normalized = Array.from(
-    new Set(
-      providerIds
-        .map((id) => normalizeChatReauthProvider(id))
-        .filter((id) => id.length > 0),
-    ),
+    new Set(providerIds.map((id) => normalizeChatReauthProvider(id)).filter((id) => id.length > 0)),
   );
   if (normalized.includes("openai")) {
     return "openai";
@@ -27,5 +23,5 @@ export function getDefaultChatReauthProvider(
 
 export function supportsChatReauthProvider(provider?: string): boolean {
   const normalized = provider ? normalizeChatReauthProvider(provider) : undefined;
-  return Boolean(normalized) && listChatReauthProviders().includes(normalized);
+  return normalized !== undefined && listChatReauthProviders().includes(normalized);
 }

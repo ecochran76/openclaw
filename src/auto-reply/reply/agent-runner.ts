@@ -1,4 +1,5 @@
 import fs from "node:fs/promises";
+import { normalizeOptionalString } from "@openclaw/normalization-core/string-coerce";
 import {
   hasSessionAutoModelFallbackProvenance,
   hasConfiguredModelFallbacks,
@@ -7,12 +8,12 @@ import {
 } from "../../agents/agent-scope.js";
 import { resolveContextTokensForModel } from "../../agents/context.js";
 import { DEFAULT_CONTEXT_TOKENS } from "../../agents/defaults.js";
+import {
+  formatEmbeddedAgentQueueFailureSummary,
+  queueEmbeddedAgentMessageWithOutcomeAsync,
+} from "../../agents/embedded-agent-runner/runs.js";
 import { resolveModelAuthMode } from "../../agents/model-auth.js";
 import { isCliProvider } from "../../agents/model-selection.js";
-import {
-  formatEmbeddedPiQueueFailureSummary,
-  queueEmbeddedPiMessageWithOutcomeAsync,
-} from "../../agents/embedded-agent-runner/runs.js";
 import { deriveContextPromptTokens, hasNonzeroUsage, normalizeUsage } from "../../agents/usage.js";
 import { enqueueCommitmentExtraction } from "../../commitments/runtime.js";
 import type { OpenClawConfig } from "../../config/config.js";
@@ -36,7 +37,6 @@ import { measureDiagnosticsTimelineSpan } from "../../infra/diagnostics-timeline
 import { enqueueSystemEvent } from "../../infra/system-events.js";
 import { CommandLaneClearedError, GatewayDrainingError } from "../../process/command-queue.js";
 import { resolveSendPolicy } from "../../sessions/send-policy.js";
-import { normalizeOptionalString } from "@openclaw/normalization-core/string-coerce";
 import {
   estimateUsageCost,
   formatTokenCount,
@@ -1162,7 +1162,7 @@ export async function runReplyAgent(params: {
     const steerSessionId =
       (sessionKey ? replyRunRegistry.resolveSessionId(sessionKey) : undefined) ??
       followupRun.run.sessionId;
-    const steerOutcome = await queueEmbeddedPiMessageWithOutcomeAsync(
+    const steerOutcome = await queueEmbeddedAgentMessageWithOutcomeAsync(
       steerSessionId,
       followupRun.prompt,
       {
@@ -1175,7 +1175,7 @@ export async function runReplyAgent(params: {
       typing.cleanup();
       return undefined;
     }
-    const summary = formatEmbeddedPiQueueFailureSummary(steerOutcome);
+    const summary = formatEmbeddedAgentQueueFailureSummary(steerOutcome);
     logVerbose(`queue: active session ${steerSessionId} rejected steering injection: ${summary}`);
   }
 

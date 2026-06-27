@@ -95,6 +95,7 @@ export async function loginOpenAICodex(callbacks: OAuthLoginCallbacks): Promise<
       runtime: createLegacyRuntime(callbacks),
       isRemote: false,
       signal: callbacks.signal,
+      originator: callbacks.originator,
       onManualCodeInput,
       openUrl: async (url) => {
         throwIfOAuthLoginAborted(callbacks.signal);

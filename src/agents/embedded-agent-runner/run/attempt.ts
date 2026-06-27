@@ -250,11 +250,11 @@ import {
   type ToolSearchCatalogToolExecutor,
   type ToolSearchTargetTranscriptProjection,
 } from "../../tool-search.js";
+import type { AnyAgentTool } from "../../tools/common.js";
 import {
   replaceWithEffectiveCronCreatorToolAllowlist,
   type CronCreatorToolAllowlistEntry,
 } from "../../tools/cron-tool.js";
-import type { AnyAgentTool } from "../../tools/common.js";
 import { shouldAllowProviderOwnedThinkingReplay } from "../../transcript-policy.js";
 import { normalizeUsage, type NormalizedUsage } from "../../usage.js";
 import {
@@ -429,6 +429,7 @@ import {
 } from "./attempt.session-lock.js";
 import {
   persistSessionsYieldContextMessage,
+  createYieldAbortedResponse,
   queueSessionsYieldInterruptMessage,
   stripSessionsYieldArtifacts,
   waitForSessionsYieldAbortSettle,
@@ -488,6 +489,7 @@ import {
   resolveSilentToolResultReplyPayload,
   shouldTreatEmptyAssistantReplyAsSilent,
 } from "./incomplete-turn.js";
+import { resolveLlmIdleTimeoutMs, streamWithIdleTimeout } from "./llm-idle-timeout.js";
 import { resolveMessageMergeStrategy } from "./message-merge-strategy.js";
 import { installMessageToolOnlyTerminalHook } from "./message-tool-terminal.js";
 import { wrapStreamFnWithMessageTransform } from "./message-transform-stream-wrapper.js";
@@ -719,162 +721,6 @@ function removeTrailingMidTurnPrecheckAssistantError(params: {
   }
 }
 
-export function shouldCreateBundleMcpRuntimeForAttempt(params: {
-  toolsEnabled: boolean;
-  disableTools?: boolean;
-  toolsAllow?: string[];
-  config?: EmbeddedRunAttemptParams["config"];
-  sandboxToolPolicy?: { allow?: string[]; deny?: string[] };
-  sessionKey?: string;
-  sandboxSessionKey?: string;
-  agentId?: string;
-  modelProvider?: string;
-  modelId?: string;
-  messageProvider?: string;
-  agentAccountId?: string | null;
-  groupId?: string | null;
-  groupChannel?: string | null;
-  groupSpace?: string | null;
-  spawnedBy?: string | null;
-  senderId?: string | null;
-  senderName?: string | null;
-  senderUsername?: string | null;
-  senderE164?: string | null;
-  senderIsOwner?: boolean;
-  warn?: (message: string) => void;
-}): boolean {
-  if (!params.toolsEnabled || params.disableTools === true) {
-    return false;
-  }
-  if (params.toolsAllow && params.toolsAllow.length > 0) {
-    const canReachBundleMcp = params.toolsAllow.some(
-      (toolName) => toolName === "bundle-mcp" || toolName.includes(TOOL_NAME_SEPARATOR),
-    );
-    if (!canReachBundleMcp) {
-      return false;
-    }
-  }
-  const probeName =
-    selectBundleMcpPolicyProbeName({
-      toolsAllow: params.toolsAllow,
-      config: params.config,
-      sessionKey: params.sandboxSessionKey ?? params.sessionKey,
-      agentId: params.agentId,
-      modelProvider: params.modelProvider,
-      modelId: params.modelId,
-    }) ?? `${TOOL_NAME_SEPARATOR}bundle_mcp_policy_probe`;
-  const sentinelTool = {
-    name: probeName,
-    label: "Bundle MCP policy probe",
-    description: "Internal bundle MCP policy probe.",
-    parameters: { type: "object", properties: {} },
-    execute: async () => ({
-      content: [{ type: "text", text: "bundle-mcp-policy-probe" }],
-      details: undefined,
-    }),
-  } as unknown as AnyAgentTool;
-  setPluginToolMeta(sentinelTool, { pluginId: "bundle-mcp", optional: false });
-  return (
-    applyFinalEffectiveToolPolicy({
-      bundledTools: [sentinelTool],
-      config: params.config,
-      sandboxToolPolicy: params.sandboxToolPolicy,
-      sessionKey: params.sandboxSessionKey ?? params.sessionKey,
-      agentId: params.agentId,
-      modelProvider: params.modelProvider,
-      modelId: params.modelId,
-      messageProvider: params.messageProvider,
-      agentAccountId: params.agentAccountId,
-      groupId: params.groupId,
-      groupChannel: params.groupChannel,
-      groupSpace: params.groupSpace,
-      spawnedBy: params.spawnedBy,
-      senderId: params.senderId,
-      senderName: params.senderName,
-      senderUsername: params.senderUsername,
-      senderE164: params.senderE164,
-      warn: params.warn ?? ((message) => log.warn(message)),
-    }).length > 0
-  );
-}
-
-function selectBundleMcpPolicyProbeName(params: {
-  toolsAllow?: string[];
-  config?: EmbeddedRunAttemptParams["config"];
-  sessionKey?: string;
-  agentId?: string;
-  modelProvider?: string;
-  modelId?: string;
-}): string | undefined {
-  const explicitPolicy = resolveEffectiveToolPolicy({
-    config: params.config,
-    sessionKey: params.sessionKey,
-    agentId: params.agentId,
-    modelProvider: params.modelProvider,
-    modelId: params.modelId,
-  });
-  const candidates = [
-    ...(params.toolsAllow ?? []),
-    ...(explicitPolicy.profileAlsoAllow ?? []),
-    ...(explicitPolicy.providerProfileAlsoAllow ?? []),
-    ...(explicitPolicy.globalPolicy?.allow ?? []),
-    ...(explicitPolicy.globalProviderPolicy?.allow ?? []),
-    ...(explicitPolicy.agentPolicy?.allow ?? []),
-    ...(explicitPolicy.agentProviderPolicy?.allow ?? []),
-  ];
-  return candidates
-    .map((toolName) => normalizeToolName(toolName))
-    .find((toolName) => toolName.includes(TOOL_NAME_SEPARATOR));
-}
-
-export function collectSpecificBundleMcpServerAllowlist(params: {
-  toolsAllow?: string[];
-  config?: EmbeddedRunAttemptParams["config"];
-  sessionKey?: string;
-  agentId?: string;
-  modelProvider?: string;
-  modelId?: string;
-}): string[] | undefined {
-  const explicitPolicy = resolveEffectiveToolPolicy({
-    config: params.config,
-    sessionKey: params.sessionKey,
-    agentId: params.agentId,
-    modelProvider: params.modelProvider,
-    modelId: params.modelId,
-  });
-  const candidates = [
-    ...(params.toolsAllow ?? []),
-    ...(explicitPolicy.profileAlsoAllow ?? []),
-    ...(explicitPolicy.providerProfileAlsoAllow ?? []),
-    ...(explicitPolicy.globalPolicy?.allow ?? []),
-    ...(explicitPolicy.globalProviderPolicy?.allow ?? []),
-    ...(explicitPolicy.agentPolicy?.allow ?? []),
-    ...(explicitPolicy.agentProviderPolicy?.allow ?? []),
-  ].map((toolName) => normalizeToolName(toolName));
-  if (candidates.some((toolName) => toolName === "bundle-mcp" || toolName === "group:plugins")) {
-    return undefined;
-  }
-  const servers = new Set<string>();
-  for (const toolName of candidates) {
-    const separatorIndex = toolName.indexOf(TOOL_NAME_SEPARATOR);
-    if (separatorIndex <= 0) {
-      continue;
-    }
-    servers.add(toolName.slice(0, separatorIndex));
-  }
-  if (servers.size === 0 && candidates.includes("*")) {
-    return undefined;
-  }
-  return servers.size > 0 ? Array.from(servers).toSorted() : undefined;
-}
-
-export function resolveAttemptToolPolicyMessageProvider(params: {
-  messageProvider?: string;
-  messageChannel?: string;
-}): string | undefined {
-  return params.messageProvider ?? params.messageChannel;
-}
-
 const TURN_STARTUP_PHASE_WARN_MS = 2_000;
 
 function createAttemptStartupPhaseLogger(params: {
@@ -1039,6 +885,12 @@ export async function runEmbeddedAttempt(
     `embedded run start: runId=${params.runId} sessionId=${params.sessionId} provider=${params.provider} model=${params.modelId} thinking=${params.thinkLevel} messageChannel=${params.messageChannel ?? params.messageProvider ?? "unknown"}`,
   );
   const prepStages = createEmbeddedRunStageTracker();
+  const markStartupPhase = createAttemptStartupPhaseLogger({
+    runId: params.runId,
+    sessionId: params.sessionId,
+    sessionKey: params.sessionKey,
+    agentId: params.agentId,
+  });
   const emitPrepStageSummary = (phase: string) => {
     const summary = prepStages.snapshot();
     const shouldWarn = shouldWarnEmbeddedRunStageSummary(summary);
@@ -2699,7 +2551,7 @@ export async function runEmbeddedAttempt(
           modelRegistry: params.modelRegistry,
           model: params.model,
           thinkingLevel: mapThinkingLevel(params.thinkLevel),
-          tools: sdkToolAllowlist,
+          tools: sessionToolAllowlist,
           customTools: allCustomTools,
           sessionManager,
           settingsManager,

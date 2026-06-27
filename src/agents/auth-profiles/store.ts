@@ -65,6 +65,8 @@ type LoadAuthProfileStoreOptions = {
 type SaveAuthProfileStoreOptions = {
   filterExternalAuthProfiles?: boolean;
   syncExternalCli?: boolean;
+  preserveOrderProfileIds?: readonly string[];
+  preserveStateProfileIds?: readonly string[];
 };
 
 type ResolvedExternalCliOverlayOptions = {
@@ -567,14 +569,21 @@ export function loadAuthProfileStoreForRuntime(
   });
 }
 
-export function loadAuthProfileStoreForSecretsRuntime(agentDir?: string): AuthProfileStore {
+export function loadAuthProfileStoreForSecretsRuntime(
+  agentDir?: string,
+  options?: Pick<LoadAuthProfileStoreOptions, "externalCli">,
+): AuthProfileStore {
   // Secrets runtime snapshots should store the raw per-agent auth file content.
   // Merging main+agent happens in resolveRuntimeAuthProfileStore(), and storing
   // pre-merged snapshots can cause stale main data to override fresher updates.
-  return loadAuthProfileStoreForAgentFile(agentDir, {
+  const store = loadAuthProfileStoreForAgentFile(agentDir, {
     readOnly: true,
     allowKeychainPrompt: false,
     resolveLegacyOAuthSidecars: true,
+  });
+  return overlayExternalAuthProfiles(store, {
+    agentDir,
+    ...resolveExternalCliOverlayOptions(options),
   });
 }
 
@@ -636,13 +645,16 @@ function hydrateResolvedSecretsFromRuntime(params: {
 
 export function ensureAuthProfileStore(
   agentDir?: string,
-  options?: {
-    allowKeychainPrompt?: boolean;
-    config?: OpenClawConfig;
-    externalCli?: ExternalCliAuthDiscovery;
-    externalCliProviderIds?: Iterable<string>;
-    externalCliProfileIds?: Iterable<string>;
-  },
+  options?: Pick<
+    LoadAuthProfileStoreOptions,
+    | "allowKeychainPrompt"
+    | "config"
+    | "externalCli"
+    | "externalCliProviderIds"
+    | "externalCliProfileIds"
+    | "readOnly"
+    | "syncExternalCli"
+  >,
 ): AuthProfileStore {
   const externalCli = resolveExternalCliOverlayOptions(options);
   return overlayExternalAuthProfiles(
@@ -656,7 +668,10 @@ export function ensureAuthProfileStore(
 
 export function ensureAuthProfileStoreWithoutExternalProfiles(
   agentDir?: string,
-  options?: { allowKeychainPrompt?: boolean; resolveLegacyOAuthSidecars?: boolean },
+  options?: Pick<
+    LoadAuthProfileStoreOptions,
+    "allowKeychainPrompt" | "resolveLegacyOAuthSidecars" | "readOnly" | "syncExternalCli"
+  >,
 ): AuthProfileStore {
   const effectiveOptions: LoadAuthProfileStoreOptions = {
     ...options,

@@ -1,11 +1,20 @@
 // Media Core module implements inbound path policy behavior.
 import path from "node:path";
-import type { OpenClawConfig } from "../config/types.openclaw.js";
 
 const WILDCARD_SEGMENT = "*";
 const WINDOWS_DRIVE_ABS_RE = /^[A-Za-z]:\//;
 const WINDOWS_DRIVE_ROOT_RE = /^[A-Za-z]:$/;
 export const DEFAULT_IMESSAGE_ATTACHMENT_ROOTS = ["/Users/*/Library/Messages/Attachments"] as const;
+
+type IMessageInboundPathConfig = {
+  channels?: {
+    imessage?: {
+      attachmentRoots?: readonly string[];
+      remoteAttachmentRoots?: readonly string[];
+      accounts?: Record<string, unknown>;
+    };
+  };
+};
 
 function normalizePosixAbsolutePath(value: string): string | undefined {
   const trimmed = value.trim();
@@ -122,7 +131,7 @@ export function isInboundPathAllowed(params: {
 }
 
 function resolveIMessageChannelAccountConfig(params: {
-  cfg: OpenClawConfig;
+  cfg: IMessageInboundPathConfig;
   accountId?: string | null;
 }): Record<string, unknown> | undefined {
   const accounts = params.cfg.channels?.imessage?.accounts;
@@ -154,7 +163,7 @@ function readStringArrayField(
 }
 
 export function resolveIMessageAttachmentRoots(params: {
-  cfg: OpenClawConfig;
+  cfg: IMessageInboundPathConfig;
   accountId?: string | null;
 }): string[] {
   const account = resolveIMessageChannelAccountConfig(params);
@@ -166,7 +175,7 @@ export function resolveIMessageAttachmentRoots(params: {
 }
 
 export function resolveIMessageRemoteAttachmentRoots(params: {
-  cfg: OpenClawConfig;
+  cfg: IMessageInboundPathConfig;
   accountId?: string | null;
 }): string[] {
   const account = resolveIMessageChannelAccountConfig(params);

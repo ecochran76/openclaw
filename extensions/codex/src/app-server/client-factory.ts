@@ -48,3 +48,5 @@ export const defaultLeasedCodexAppServerClientFactory: CodexAppServerClientFacto
       timeoutMs: options?.timeoutMs,
     }),
   );
+
+export const defaultCodexAppServerClientFactory = defaultLeasedCodexAppServerClientFactory;

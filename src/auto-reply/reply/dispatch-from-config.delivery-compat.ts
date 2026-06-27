@@ -47,6 +47,7 @@ async function routeReplyToOriginatingChannel(params: {
   params.markReplayUnsafe?.();
   return await params.routeReplyRuntime.routeReply({
     payload: params.payload,
+    replyKind: "final",
     channel: params.originatingChannel,
     to: params.originatingTo,
     sessionKey: params.ctx.SessionKey,

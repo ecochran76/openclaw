@@ -368,6 +368,10 @@ export type ProviderAuthContext = {
   allowSecretRefPrompt?: boolean;
   isRemote: boolean;
   openUrl: (url: string) => Promise<void>;
+  /** Optional cancellation signal for interactive OAuth/login flows. */
+  signal?: AbortSignal;
+  /** Optional direct manual-code entry hook used when callback-server flows cannot complete. */
+  onManualCodeInput?: () => Promise<string>;
   oauth: {
     createVpsAwareHandlers: typeof createVpsAwareOAuthHandlers;
   };

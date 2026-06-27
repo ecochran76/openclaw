@@ -21,6 +21,7 @@ export {
 } from "./auth-profiles/oauth.js";
 export {
   isConfiguredAwsSdkAuthProfileForProvider,
+  isStoredCredentialCompatibleWithAuthProvider,
   resolveAuthProfileEligibility,
   resolveAuthProfileOrder,
 } from "./auth-profiles/order.js";
@@ -43,6 +44,7 @@ export {
   upsertAuthProfile,
   upsertAuthProfileWithLock,
 } from "./auth-profiles/profiles.js";
+export { resolveSubscriptionAuthModeForProfiles } from "./auth-profiles/profile-list.js";
 export {
   repairOAuthProfileIdMismatch,
   suggestOAuthProfileIdForLegacyDefault,
@@ -58,7 +60,6 @@ export {
   clearRuntimeAuthProfileStoreSnapshots,
   ensureAuthProfileStore,
   ensureAuthProfileStoreWithoutExternalProfiles,
-  hasAnyAuthProfileStoreSource,
   loadAuthProfileStoreForSecretsRuntime,
   loadAuthProfileStoreWithoutExternalProfiles,
   loadAuthProfileStoreForRuntime,
@@ -68,6 +69,15 @@ export {
   findPersistedAuthProfileCredential,
   resolvePersistedAuthProfileOwnerAgentDir,
 } from "./auth-profiles/store.js";
+export {
+  getRuntimeAuthProfileStoreSnapshot,
+  hasRuntimeAuthProfileStoreSnapshot,
+  setRuntimeAuthProfileStoreSnapshot,
+} from "./auth-profiles/runtime-snapshots.js";
+export {
+  hasAnyAuthProfileStoreSource,
+  hasLocalAuthProfileStoreSource,
+} from "./auth-profiles/source-check.js";
 export type {
   ApiKeyCredential,
   AuthProfileBlockedReason,

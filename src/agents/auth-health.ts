@@ -17,6 +17,7 @@ import {
   resolveTokenExpiryState,
 } from "./auth-profiles/credential-state.js";
 import { resolveAuthProfileDisplayLabel } from "./auth-profiles/display.js";
+import { resolveEffectiveOAuthCredential } from "./auth-profiles/effective-oauth.js";
 import { resolveAuthProfileOrder } from "./auth-profiles/order.js";
 import type { AuthProfileCredential, AuthProfileStore } from "./auth-profiles/types.js";
 import { resolveProviderIdForAuth } from "./provider-auth-aliases.js";

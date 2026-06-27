@@ -1,6 +1,6 @@
 /** Handles informational commands such as /help, /commands, /tools, and exports. */
 import { resolveSessionAgentId } from "../../agents/agent-scope.js";
-import { queueEmbeddedPiMessage } from "../../agents/pi-embedded.js";
+import { queueEmbeddedAgentMessage } from "../../agents/embedded-agent-runner/runs.js";
 import { resolveEffectiveToolInventory } from "../../agents/tools-effective-inventory.js";
 import { getChannelPlugin } from "../../channels/plugins/index.js";
 import { logVerbose } from "../../globals.js";
@@ -404,7 +404,7 @@ export const handleStatusCommand: CommandHandler = async (params, allowTextComma
       };
     }
     const sessionId = active.sessionId?.trim();
-    if (!sessionId || !queueEmbeddedPiMessage(sessionId, steerText)) {
+    if (!sessionId || !queueEmbeddedAgentMessage(sessionId, steerText)) {
       return {
         shouldContinue: false,
         reply: {

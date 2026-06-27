@@ -1,7 +1,9 @@
-import type { ImageContent } from "@earendil-works/pi-ai";
+import type { ImageContent } from "../llm/types.js";
 import type { PromptImageOrderEntry } from "../media/prompt-image-order.js";
+import type { UserTurnTranscriptRecorder } from "../sessions/user-turn-transcript.types.js";
 import type { ReplyPayload } from "./reply-payload.js";
 import type { TypingController } from "./reply/typing.js";
+import type { FastMode } from "./thinking.js";
 
 export type BlockReplyContext = {
   abortSignal?: AbortSignal;
@@ -72,18 +74,26 @@ export type GetReplyOptions = {
   typingPolicy?: TypingPolicy;
   /** Force-disable typing indicators for this run (system/internal/cross-channel routes). */
   suppressTyping?: boolean;
+  /** Override whether the typing lifecycle keeps the indicator warm while the turn runs. */
+  typingKeepalive?: boolean;
   /** Resolved heartbeat model override (provider/model string from merged per-agent config). */
   heartbeatModelOverride?: string;
   /** One-shot thinking level override for this run; does not persist to the session. */
   thinkingLevelOverride?: string;
   /** One-shot fast-mode override for this run; does not persist to the session. */
-  fastModeOverride?: boolean;
+  fastModeOverride?: FastMode;
+  /** One-shot fast-mode auto enable threshold override in seconds. */
+  fastModeAutoOnSecondsOverride?: number;
   /** Controls bootstrap workspace context injection (default: full). */
   bootstrapContextMode?: "full" | "lightweight";
   /** If true, suppress tool error warning payloads for this run. */
   suppressToolErrorWarnings?: boolean;
+  /** Dynamic warning suppression used by dispatch/followup progress routing. */
+  shouldSuppressToolErrorWarnings?: () => boolean | undefined;
   /** If true, run the model without OpenClaw tools for this turn. */
   disableTools?: boolean;
+  /** Runtime tool allowlist for this turn. */
+  toolsAllow?: string[];
   /** If true, include the heartbeat response tool for structured heartbeat outcomes. */
   enableHeartbeatTool?: boolean;
   /** If true, keep the heartbeat response tool available even under narrow tool profiles. */
@@ -93,6 +103,16 @@ export type GetReplyOptions = {
    * channel to surface progress via its own streaming/edit UX.
    */
   suppressDefaultToolProgressMessages?: boolean;
+  /** Let suppressed channel progress still forward lifecycle callbacks for tool UI. */
+  allowToolLifecycleWhenProgressHidden?: boolean;
+  /** Force tool-result progress even when ordinary source delivery is suppressed. */
+  forceToolResultProgress?: boolean;
+  /** Let commentary/preamble progress flow through channel-owned item events. */
+  commentaryProgressEnabled?: boolean;
+  /** Lets channels observe whether verbose progress will be surfaced for this turn. */
+  onVerboseProgressVisibility?: (isVisible: () => boolean) => void;
+  /** Called once dispatch observes user-visible reply delivery. */
+  onObservedReplyDelivery?: () => Promise<void> | void;
   onPartialReply?: (payload: PartialReplyPayload) => Promise<void> | void;
   onReasoningStream?: (payload: ReplyPayload) => Promise<void> | void;
   /** Called when a thinking/reasoning block ends. */
@@ -107,6 +127,8 @@ export type GetReplyOptions = {
   onToolResult?: (payload: ReplyPayload) => Promise<void> | void;
   /** Called when a tool phase starts/updates, before summary payloads are emitted. */
   onToolStart?: (payload: {
+    itemId?: string;
+    toolCallId?: string;
     name?: string;
     phase?: string;
     args?: Record<string, unknown>;
@@ -115,6 +137,7 @@ export type GetReplyOptions = {
   /** Called when a concrete work item starts, updates, or completes. */
   onItemEvent?: (payload: {
     itemId?: string;
+    toolCallId?: string;
     kind?: string;
     title?: string;
     name?: string;
@@ -208,4 +231,6 @@ export type GetReplyOptions = {
   modelOverride?: string;
   /** Capability-checked runtime fallbacks for the one-turn image model override. */
   modelOverrideFallbacks?: string[];
+  /** Prepared current-turn transcript persistence shared across queued followups and runtimes. */
+  userTurnTranscriptRecorder?: UserTurnTranscriptRecorder;
 };

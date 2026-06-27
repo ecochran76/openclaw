@@ -4086,7 +4086,7 @@ describe("runAgentTurnWithFallback", () => {
   });
 
   it("surfaces runtime auth refresh timeouts with chat reauth guidance in channel sessions", async () => {
-    state.runEmbeddedPiAgentMock.mockRejectedValueOnce(
+    state.runEmbeddedAgentMock.mockRejectedValueOnce(
       new Error("auth refresh request timed out after 10s"),
     );
 

@@ -1,10 +1,12 @@
 import { createHash, randomBytes } from "node:crypto";
-import { loginOpenAICodex, type OAuthCredentials } from "../llm/oauth.js";
 import { formatErrorMessage } from "../infra/errors.js";
 import { ensureGlobalUndiciEnvProxyDispatcher } from "../infra/net/undici-global-dispatcher.js";
+import type { OAuthCredentials } from "../llm/oauth.js";
+import { loadActivatedBundledPluginPublicSurfaceModuleSync } from "../plugin-sdk/facade-runtime.js";
 import type { RuntimeEnv } from "../runtime.js";
 import type { WizardPrompter } from "../wizard/prompts.js";
 import type { ChatReauthCapability } from "./provider-auth-types.js";
+import { resolveProviderRuntimePlugin } from "./provider-hook-runtime.js";
 import type { OAuthPrompt } from "./provider-oauth-flow.js";
 import { createVpsAwareOAuthHandlers } from "./provider-oauth-flow.js";
 import {
@@ -612,6 +614,9 @@ export async function loginOpenAICodexOAuth(params: {
   runtime: RuntimeEnv;
   isRemote: boolean;
   openUrl: (url: string) => Promise<void>;
+  signal?: AbortSignal;
+  originator?: string;
+  onManualCodeInput?: () => Promise<string>;
   localBrowserMessage?: string;
 }): Promise<OAuthCredentials | null> {
   const { prompter, runtime, isRemote, openUrl, localBrowserMessage } = params;
@@ -674,21 +679,52 @@ export async function loginOpenAICodexOAuth(params: {
       browserAuthStarted = true;
       await baseOnAuth(event);
     };
-
-    const creds = await loginOpenAICodex({
-      onAuth,
-      onPrompt,
-      originator: openAICodexOAuthOriginator,
-      onManualCodeInput: createManualCodeInputHandler({
-        isRemote,
-        onPrompt,
+    const oauth = { createVpsAwareHandlers: createVpsAwareOAuthHandlers };
+    const providerOAuth = resolveProviderRuntimePlugin({
+      provider: "openai",
+      config: {},
+    })?.auth?.find((entry) => entry.id === "oauth")?.run;
+    if (providerOAuth) {
+      const result = await providerOAuth({
+        config: {},
+        prompter,
         runtime,
-        updateProgress,
-        stopProgress,
-        waitForLoginToSettle,
-        hasBrowserAuthStarted: () => browserAuthStarted,
-      }),
-      onProgress: (msg: string) => updateProgress(msg),
+        isRemote,
+        openUrl,
+        signal: params.signal,
+        onManualCodeInput: params.onManualCodeInput,
+        oauth,
+      });
+      stopProgress("OpenAI OAuth complete");
+      const credential = result.profiles[0]?.credential;
+      return credential?.type === "oauth" ? credential : null;
+    }
+
+    const facade = loadActivatedBundledPluginPublicSurfaceModuleSync<{
+      loginOpenAICodexOAuth: (facadeParams: {
+        prompter: WizardPrompter;
+        runtime: RuntimeEnv;
+        isRemote: boolean;
+        openUrl: (url: string) => Promise<void>;
+        signal?: AbortSignal;
+        originator?: string;
+        onManualCodeInput?: () => Promise<string>;
+        localBrowserMessage?: string;
+        oauth: { createVpsAwareHandlers: typeof createVpsAwareOAuthHandlers };
+      }) => Promise<OAuthCredentials | null>;
+    }>({
+      dirName: "openai",
+      artifactBasename: "api.js",
+    });
+    const creds = await facade.loginOpenAICodexOAuth({
+      prompter,
+      runtime,
+      isRemote,
+      openUrl,
+      signal: params.signal,
+      onManualCodeInput: params.onManualCodeInput,
+      localBrowserMessage,
+      oauth,
     });
     stopProgress("OpenAI OAuth complete");
     return creds ?? null;
