@@ -3,12 +3,18 @@ import os from "node:os";
 import path from "node:path";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { AUTH_STORE_LOCK_OPTIONS, AUTH_STORE_VERSION } from "./auth-profiles/constants.js";
+import { resolveAuthStoreLockTargetPath } from "./auth-profiles/paths.js";
+import {
+  readPersistedAuthProfileStoreRaw,
+  resolveAuthProfileDatabasePath,
+  writePersistedAuthProfileStoreRaw,
+} from "./auth-profiles/sqlite.js";
 import {
   clearRuntimeAuthProfileStoreSnapshots,
   ensureAuthProfileStore,
   ensureAuthProfileStoreWithoutExternalProfiles,
 } from "./auth-profiles/store.js";
-import type { OAuthCredential } from "./auth-profiles/types.js";
+import type { AuthProfileStore, OAuthCredential } from "./auth-profiles/types.js";
 
 type RuntimeOnlyOverlay = {
   profileId: string;
@@ -53,46 +59,35 @@ async function withAgentDirEnv(prefix: string, run: (agentDir: string) => void |
   }
 }
 
-function writeAuthStore(agentDir: string, key: string) {
-  const authPath = path.join(agentDir, "auth-profiles.json");
-  fs.writeFileSync(
-    authPath,
-    `${JSON.stringify(
-      {
-        version: AUTH_STORE_VERSION,
-        profiles: {
-          "openai:default": {
-            type: "api_key",
-            provider: "openai",
-            key,
-          },
-        },
-      },
-      null,
-      2,
-    )}\n`,
-    "utf8",
-  );
-  return authPath;
+function writeRawStore(agentDir: string, store: AuthProfileStore): string {
+  writePersistedAuthProfileStoreRaw(store, agentDir);
+  return resolveAuthProfileDatabasePath(agentDir);
 }
 
-function writeOAuthStore(agentDir: string, profileId: string, credential: OAuthCredential) {
-  const authPath = path.join(agentDir, "auth-profiles.json");
-  fs.writeFileSync(
-    authPath,
-    `${JSON.stringify(
-      {
-        version: AUTH_STORE_VERSION,
-        profiles: {
-          [profileId]: credential,
-        },
+function readRawStore(agentDir: string): AuthProfileStore {
+  return readPersistedAuthProfileStoreRaw(agentDir) as AuthProfileStore;
+}
+
+function writeAuthStore(agentDir: string, key: string): string {
+  return writeRawStore(agentDir, {
+    version: AUTH_STORE_VERSION,
+    profiles: {
+      "openai:default": {
+        type: "api_key",
+        provider: "openai",
+        key,
       },
-      null,
-      2,
-    )}\n`,
-    "utf8",
-  );
-  return authPath;
+    },
+  });
+}
+
+function writeOAuthStore(agentDir: string, profileId: string, credential: OAuthCredential): string {
+  return writeRawStore(agentDir, {
+    version: AUTH_STORE_VERSION,
+    profiles: {
+      [profileId]: credential,
+    },
+  });
 }
 
 describe("auth profile store cache", () => {
@@ -151,7 +146,7 @@ describe("auth profile store cache", () => {
     });
   });
 
-  it("refreshes the cached auth store after auth-profiles.json changes", async () => {
+  it("refreshes the cached auth store after SQLite store changes", async () => {
     await withAgentDirEnv("openclaw-auth-store-refresh-", async (agentDir) => {
       const authPath = writeAuthStore(agentDir, "sk-test-1");
 
@@ -162,6 +157,39 @@ describe("auth profile store cache", () => {
       fs.utimesSync(authPath, bumpedMtime, bumpedMtime);
 
       const reloaded = ensureAuthProfileStore(agentDir);
+
+      expect((reloaded.profiles["openai:default"] as { key?: string } | undefined)?.key).toBe(
+        "sk-test-2",
+      );
+    });
+  });
+
+  it("refreshes the cached auth store when only the SQLite WAL sidecar mtime changes", async () => {
+    await withAgentDirEnv("openclaw-auth-store-wal-refresh-", async (agentDir) => {
+      const authPath = writeAuthStore(agentDir, "sk-test-1");
+      const cachedTime = new Date(Date.now() - 10_000);
+      fs.utimesSync(authPath, cachedTime, cachedTime);
+
+      ensureAuthProfileStore(agentDir);
+
+      writeAuthStore(agentDir, "sk-test-2");
+      fs.utimesSync(authPath, cachedTime, cachedTime);
+      const realStatSync = fs.statSync;
+      const walPath = `${authPath}-wal`;
+      const walStat = { mtimeMs: Date.now() + 2_000 } as fs.Stats;
+      const statSpy = vi.spyOn(fs, "statSync").mockImplementation((pathname, options) => {
+        if (pathname.toString() === walPath) {
+          return walStat;
+        }
+        return realStatSync(pathname, options as never) as never;
+      });
+
+      let reloaded: AuthProfileStore;
+      try {
+        reloaded = ensureAuthProfileStore(agentDir);
+      } finally {
+        statSpy.mockRestore();
+      }
 
       expect((reloaded.profiles["openai:default"] as { key?: string } | undefined)?.key).toBe(
         "sk-test-2",
@@ -231,22 +259,21 @@ describe("auth profile store cache", () => {
         .mockReturnValue([]);
 
       const store = ensureAuthProfileStore(agentDir);
-      const persisted = JSON.parse(
-        fs.readFileSync(path.join(agentDir, "auth-profiles.json"), "utf8"),
-      ) as { profiles: Record<string, OAuthCredential> };
+      const persisted = readRawStore(agentDir);
+      const persistedProfile = persisted.profiles[profileId] as OAuthCredential | undefined;
 
       expect((store.profiles[profileId] as OAuthCredential | undefined)?.access).toBe(
         "fresh-cli-access",
       );
-      expect(persisted.profiles[profileId]?.access).toBe("fresh-cli-access");
-      expect(persisted.profiles[profileId]?.refresh).toBe("fresh-cli-refresh");
+      expect(persistedProfile?.access).toBe("fresh-cli-access");
+      expect(persistedProfile?.refresh).toBe("fresh-cli-refresh");
     });
   });
 
   it("preserves concurrent auth-store updates while persisting external CLI oauth", async () => {
     await withAgentDirEnv("openclaw-auth-store-external-cli-concurrent-", (agentDir) => {
       const profileId = "anthropic:claude-cli";
-      const authPath = writeOAuthStore(agentDir, profileId, {
+      writeOAuthStore(agentDir, profileId, {
         type: "oauth",
         provider: "claude-cli",
         access: "stale-local-access",
@@ -254,28 +281,18 @@ describe("auth profile store cache", () => {
         expires: Date.now() - 60_000,
       });
       mocks.resolveExternalCliAuthProfiles.mockImplementationOnce(() => {
-        const current = JSON.parse(fs.readFileSync(authPath, "utf8")) as {
-          profiles: Record<string, unknown>;
-        };
-        fs.writeFileSync(
-          authPath,
-          `${JSON.stringify(
-            {
-              ...current,
-              profiles: {
-                ...current.profiles,
-                "openai:default": {
-                  type: "api_key",
-                  provider: "openai",
-                  key: "sk-concurrent",
-                },
-              },
+        const current = readRawStore(agentDir);
+        writeRawStore(agentDir, {
+          ...current,
+          profiles: {
+            ...current.profiles,
+            "openai:default": {
+              type: "api_key",
+              provider: "openai",
+              key: "sk-concurrent",
             },
-            null,
-            2,
-          )}\n`,
-          "utf8",
-        );
+          },
+        });
         return [
           createPersistedOverlay(profileId, {
             type: "oauth",
@@ -288,9 +305,7 @@ describe("auth profile store cache", () => {
       });
 
       ensureAuthProfileStore(agentDir);
-      const persisted = JSON.parse(fs.readFileSync(authPath, "utf8")) as {
-        profiles: Record<string, unknown>;
-      };
+      const persisted = readRawStore(agentDir);
       const cliProfile = persisted.profiles[profileId] as OAuthCredential | undefined;
       const openaiProfile = persisted.profiles["openai:default"] as { key?: string } | undefined;
 
@@ -302,7 +317,7 @@ describe("auth profile store cache", () => {
   it("returns the reloaded store when the synced CLI profile changed concurrently", async () => {
     await withAgentDirEnv("openclaw-auth-store-external-cli-profile-race-", (agentDir) => {
       const profileId = "anthropic:claude-cli";
-      const authPath = writeOAuthStore(agentDir, profileId, {
+      writeOAuthStore(agentDir, profileId, {
         type: "oauth",
         provider: "claude-cli",
         access: "stale-local-access",
@@ -330,9 +345,8 @@ describe("auth profile store cache", () => {
 
       const first = ensureAuthProfileStore(agentDir);
       const second = ensureAuthProfileStore(agentDir);
-      const persisted = JSON.parse(fs.readFileSync(authPath, "utf8")) as {
-        profiles: Record<string, OAuthCredential>;
-      };
+      const persisted = readRawStore(agentDir);
+      const persistedProfile = persisted.profiles[profileId] as OAuthCredential | undefined;
 
       expect((first.profiles[profileId] as OAuthCredential | undefined)?.access).toBe(
         "manual-concurrent-access",
@@ -340,21 +354,23 @@ describe("auth profile store cache", () => {
       expect((second.profiles[profileId] as OAuthCredential | undefined)?.access).toBe(
         "manual-concurrent-access",
       );
-      expect(persisted.profiles[profileId]?.access).toBe("manual-concurrent-access");
+      expect(persistedProfile?.access).toBe("manual-concurrent-access");
     });
   });
 
   it("does not reclaim an existing auth-store lock while syncing external CLI oauth", async () => {
     await withAgentDirEnv("openclaw-auth-store-external-cli-live-lock-", (agentDir) => {
       const profileId = "anthropic:claude-cli";
-      const authPath = writeOAuthStore(agentDir, profileId, {
+      writeOAuthStore(agentDir, profileId, {
         type: "oauth",
         provider: "claude-cli",
         access: "stale-local-access",
         refresh: "stale-local-refresh",
         expires: Date.now() - 60_000,
       });
-      const lockPath = `${authPath}.lock`;
+      const lockTargetPath = resolveAuthStoreLockTargetPath(agentDir);
+      const lockPath = `${lockTargetPath}.lock`;
+      fs.mkdirSync(path.dirname(lockPath), { recursive: true });
       const lockRaw = `${JSON.stringify(
         {
           pid: process.pid,
@@ -377,27 +393,28 @@ describe("auth profile store cache", () => {
       ]);
 
       ensureAuthProfileStore(agentDir);
-      const persisted = JSON.parse(fs.readFileSync(authPath, "utf8")) as {
-        profiles: Record<string, OAuthCredential>;
-      };
+      const persisted = readRawStore(agentDir);
+      const persistedProfile = persisted.profiles[profileId] as OAuthCredential | undefined;
 
       expect(fs.readFileSync(lockPath, "utf8")).toBe(lockRaw);
-      expect(persisted.profiles[profileId]?.access).toBe("stale-local-access");
-      expect(persisted.profiles[profileId]?.refresh).toBe("stale-local-refresh");
+      expect(persistedProfile?.access).toBe("stale-local-access");
+      expect(persistedProfile?.refresh).toBe("stale-local-refresh");
     });
   });
 
   it("reclaims a dead auth-store lock while syncing external CLI oauth", async () => {
     await withAgentDirEnv("openclaw-auth-store-external-cli-dead-lock-", (agentDir) => {
       const profileId = "anthropic:claude-cli";
-      const authPath = writeOAuthStore(agentDir, profileId, {
+      writeOAuthStore(agentDir, profileId, {
         type: "oauth",
         provider: "claude-cli",
         access: "stale-local-access",
         refresh: "stale-local-refresh",
         expires: Date.now() - 60_000,
       });
-      const lockPath = `${authPath}.lock`;
+      const lockTargetPath = resolveAuthStoreLockTargetPath(agentDir);
+      const lockPath = `${lockTargetPath}.lock`;
+      fs.mkdirSync(path.dirname(lockPath), { recursive: true });
       fs.writeFileSync(
         lockPath,
         `${JSON.stringify(
@@ -421,13 +438,12 @@ describe("auth profile store cache", () => {
       ]);
 
       ensureAuthProfileStore(agentDir);
-      const persisted = JSON.parse(fs.readFileSync(authPath, "utf8")) as {
-        profiles: Record<string, OAuthCredential>;
-      };
+      const persisted = readRawStore(agentDir);
+      const persistedProfile = persisted.profiles[profileId] as OAuthCredential | undefined;
 
       expect(fs.existsSync(lockPath)).toBe(false);
-      expect(persisted.profiles[profileId]?.access).toBe("fresh-cli-access");
-      expect(persisted.profiles[profileId]?.refresh).toBe("fresh-cli-refresh");
+      expect(persistedProfile?.access).toBe("fresh-cli-access");
+      expect(persistedProfile?.refresh).toBe("fresh-cli-refresh");
     });
   });
 
@@ -441,7 +457,9 @@ describe("auth profile store cache", () => {
         refresh: "stale-local-refresh",
         expires: Date.now() - 60_000,
       });
-      const lockPath = `${authPath}.lock`;
+      const lockTargetPath = resolveAuthStoreLockTargetPath(agentDir);
+      const lockPath = `${lockTargetPath}.lock`;
+      fs.mkdirSync(path.dirname(lockPath), { recursive: true });
       fs.writeFileSync(
         lockPath,
         `${JSON.stringify({ pid: process.pid, createdAt: new Date().toISOString() }, null, 2)}\n`,

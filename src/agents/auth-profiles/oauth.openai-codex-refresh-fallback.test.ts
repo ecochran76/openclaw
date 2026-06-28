@@ -15,6 +15,7 @@ import {
   createExpiredOauthStore,
   readAuthProfileStoreForTest,
 } from "./oauth-test-utils.js";
+import { loadPersistedAuthProfileState } from "./state.js";
 import {
   clearRuntimeAuthProfileStoreSnapshots,
   ensureAuthProfileStore,
@@ -90,10 +91,7 @@ async function readPersistedStore(agentDir: string): Promise<AuthProfileStore> {
 }
 
 async function readPersistedState(agentDir: string): Promise<Pick<AuthProfileStore, "usageStats">> {
-  return JSON.parse(await fs.readFile(path.join(agentDir, "auth-state.json"), "utf8")) as Pick<
-    AuthProfileStore,
-    "usageStats"
-  >;
+  return loadPersistedAuthProfileState(agentDir);
 }
 
 function mockRotatedOpenAICodexRefresh() {

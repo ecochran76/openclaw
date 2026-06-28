@@ -65,6 +65,13 @@ function parseProfilesCommand(raw: string): ParsedProfilesCommand | { error: str
   return { provider: parsed.provider };
 }
 
+function normalizeAuthCommandProvider(provider: string): string {
+  const normalized = normalizeProviderId(provider.trim());
+  return normalized === "codex" || normalized === "openai-codex" || normalized === "openaicodex"
+    ? "openai"
+    : normalized;
+}
+
 async function persistSessionEntry(params: Parameters<CommandHandler>[0]): Promise<boolean> {
   if (!params.sessionEntry || !params.sessionStore || !params.sessionKey) {
     return false;
@@ -80,7 +87,7 @@ async function persistSessionEntry(params: Parameters<CommandHandler>[0]): Promi
 }
 
 function resolveTargetProvider(inputProvider: string | undefined, runtimeProvider: string): string {
-  return normalizeProviderId((inputProvider ?? runtimeProvider).trim());
+  return normalizeAuthCommandProvider(inputProvider ?? runtimeProvider);
 }
 
 function formatProviderProfiles(params: {
@@ -95,7 +102,7 @@ function formatProviderProfiles(params: {
   });
   const seen = new Set(order);
   const fallback = Object.entries(params.store.profiles)
-    .filter(([, entry]) => normalizeProviderId(entry.provider) === params.provider)
+    .filter(([, entry]) => normalizeAuthCommandProvider(entry.provider) === params.provider)
     .map(([profileId]) => profileId)
     .filter((id) => !seen.has(id));
   return [...order, ...fallback];
@@ -120,7 +127,9 @@ export const handleProfilesCommand: CommandHandler = async (params, allowTextCom
   const ids = formatProviderProfiles({ provider, store, cfg: params.cfg });
   const active = params.sessionEntry?.authProfileOverride?.trim();
   const activeProvider = active ? store.profiles[active]?.provider : undefined;
-  const hasActive = Boolean(active && normalizeProviderId(activeProvider ?? "") === provider);
+  const hasActive = Boolean(
+    active && normalizeAuthCommandProvider(activeProvider ?? "") === provider,
+  );
 
   if (ids.length === 0) {
     return {
@@ -129,7 +138,7 @@ export const handleProfilesCommand: CommandHandler = async (params, allowTextCom
         text: [
           `👤 Profiles (${provider}): none`,
           `Login: openclaw models auth login --provider ${provider} --profile-id <id>`,
-          `Set: /profile <id>${provider !== normalizeProviderId(params.provider) ? ` --provider ${provider}` : ""}`,
+          `Set: /profile <id>${provider !== normalizeAuthCommandProvider(params.provider) ? ` --provider ${provider}` : ""}`,
         ].join("\n"),
       },
     };
@@ -147,7 +156,7 @@ export const handleProfilesCommand: CommandHandler = async (params, allowTextCom
         `👤 Profiles (${provider})`,
         ...lines,
         hasActive ? `Active: ${active}` : "Active: inherited/default",
-        `Set: /profile <id>${provider !== normalizeProviderId(params.provider) ? ` --provider ${provider}` : ""}`,
+        `Set: /profile <id>${provider !== normalizeAuthCommandProvider(params.provider) ? ` --provider ${provider}` : ""}`,
       ].join("\n"),
     },
   };
@@ -207,7 +216,7 @@ export const handleProfileCommand: CommandHandler = async (params, allowTextComm
       reply: { text: `⚠️ Auth profile "${parsed.profileId}" not found.` },
     };
   }
-  if (normalizeProviderId(entry.provider) !== provider) {
+  if (normalizeAuthCommandProvider(entry.provider) !== provider) {
     return {
       shouldContinue: false,
       reply: {

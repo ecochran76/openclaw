@@ -4,7 +4,12 @@ import path from "node:path";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { captureEnv } from "../../test-utils/env.js";
 import { resolveApiKeyForProfile } from "./oauth.js";
-import { clearRuntimeAuthProfileStoreSnapshots, ensureAuthProfileStore } from "./store.js";
+import { readPersistedAuthProfileStoreRaw } from "./sqlite.js";
+import {
+  clearRuntimeAuthProfileStoreSnapshots,
+  ensureAuthProfileStore,
+  saveAuthProfileStore,
+} from "./store.js";
 import type { AuthProfileStore } from "./types.js";
 
 const { getOAuthApiKeyMock } = vi.hoisted(() => ({
@@ -18,16 +23,10 @@ const { getOAuthApiKeyMock } = vi.hoisted(() => ({
   })),
 }));
 
-vi.mock("@earendil-works/pi-ai/oauth", async () => {
-  const actual = await vi.importActual<typeof import("@earendil-works/pi-ai/oauth")>(
-    "@earendil-works/pi-ai/oauth",
-  );
+vi.mock("../../llm/oauth.js", () => {
   return {
-    ...actual,
     getOAuthApiKey: getOAuthApiKeyMock,
-    getOAuthProviders: () => [
-      { id: "anthropic", envApiKey: "ANTHROPIC_API_KEY", oauthTokenEnv: "ANTHROPIC_OAUTH_TOKEN" },
-    ],
+    getOAuthProviders: () => [{ id: "anthropic" }],
   };
 });
 
@@ -61,18 +60,18 @@ describe("resolveApiKeyForProfile promotion to canonical main agent", () => {
     await fs.rm(tempRoot, { recursive: true, force: true });
   });
 
-  async function writeStore(agentDir: string, store: AuthProfileStore) {
-    await fs.writeFile(path.join(agentDir, "auth-profiles.json"), JSON.stringify(store));
+  function writeStore(agentDir: string, store: AuthProfileStore) {
+    saveAuthProfileStore(store, agentDir);
   }
 
-  async function readStore(agentDir: string): Promise<AuthProfileStore> {
-    return JSON.parse(await fs.readFile(path.join(agentDir, "auth-profiles.json"), "utf8"));
+  function readStore(agentDir: string): AuthProfileStore {
+    return readPersistedAuthProfileStoreRaw(agentDir) as AuthProfileStore;
   }
 
   it("promotes refreshed non-main OAuth credentials into canonical main", async () => {
     const profileId = "anthropic:work";
 
-    await writeStore(workerAgentDir, {
+    writeStore(workerAgentDir, {
       version: 1,
       profiles: {
         [profileId]: {
@@ -97,13 +96,13 @@ describe("resolveApiKeyForProfile promotion to canonical main agent", () => {
     });
     expect(getOAuthApiKeyMock).toHaveBeenCalledTimes(1);
 
-    const updatedWorker = await readStore(workerAgentDir);
+    const updatedWorker = readStore(workerAgentDir);
     expect(updatedWorker.profiles[profileId]).toMatchObject({
       access: "fresh-access-token",
       refresh: "fresh-refresh-token",
     });
 
-    const updatedMain = await readStore(mainAgentDir);
+    const updatedMain = readStore(mainAgentDir);
     expect(updatedMain.profiles[profileId]).toMatchObject({
       access: "fresh-access-token",
       refresh: "fresh-refresh-token",

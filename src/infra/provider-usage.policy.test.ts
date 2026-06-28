@@ -24,8 +24,8 @@ function makeConfig(
 
 function makeUsage(overrides: Partial<CachedProfileUsageState> = {}): CachedProfileUsageState {
   return {
-    provider: "openai-codex",
-    profileId: "openai-codex:pcg",
+    provider: "openai",
+    profileId: "openai:pcg",
     updatedAt: Date.UTC(2026, 2, 27, 12, 0, 0),
     windows: [
       { label: "5h", usedPercent: 70, resetAt: Date.UTC(2026, 2, 27, 14, 0, 0) },
@@ -52,18 +52,18 @@ describe("provider-usage.policy", () => {
           warn: [{ window: "5h", remainingPercentLte: 20 }],
         },
         providers: {
-          "openai-codex": {
+          openai: {
             warn: [{ window: "5h", remainingPercentLte: 15 }],
           },
         },
         profiles: {
-          "openai-codex:pcg": {
+          "openai:pcg": {
             stop: [{ window: "5h", remainingPercentLte: 10 }],
           },
         },
       }),
       provider: "OPENAI-CODEX",
-      profileId: "openai-codex:pcg",
+      profileId: "openai:pcg",
     });
 
     expect(resolved.scope).toBe("profile");
@@ -96,8 +96,8 @@ describe("provider-usage.policy", () => {
       config: makeConfig({
         enabled: false,
       }),
-      provider: "openai-codex",
-      profileId: "openai-codex:pcg",
+      provider: "openai",
+      profileId: "openai:pcg",
       usage: makeUsage(),
     });
 
@@ -114,8 +114,8 @@ describe("provider-usage.policy", () => {
           warn: [{ window: "5h", remainingPercentLte: 20 }],
         },
       }),
-      provider: "openai-codex",
-      profileId: "openai-codex:pcg",
+      provider: "openai",
+      profileId: "openai:pcg",
     });
 
     expect(decision.action).toBe("allow");
@@ -134,8 +134,8 @@ describe("provider-usage.policy", () => {
           warn: [{ window: "5h", remainingPercentLte: 20 }],
         },
       }),
-      provider: "openai-codex",
-      profileId: "openai-codex:pcg",
+      provider: "openai",
+      profileId: "openai:pcg",
       usage: makeUsage({
         updatedAt: now - 21 * 60_000,
       }),
@@ -157,8 +157,8 @@ describe("provider-usage.policy", () => {
           stop: [{ window: "5h", remainingPercentLte: 10 }],
         },
       }),
-      provider: "openai-codex",
-      profileId: "openai-codex:pcg",
+      provider: "openai",
+      profileId: "openai:pcg",
       usage: makeUsage({
         windows: [{ label: "5h", usedPercent: 92 }],
       }),
@@ -184,8 +184,8 @@ describe("provider-usage.policy", () => {
           switch: [{ window: "5h", remainingPercentLte: 20 }],
         },
       }),
-      provider: "openai-codex",
-      profileId: "openai-codex:pcg",
+      provider: "openai",
+      profileId: "openai:pcg",
       selectionSource: "user",
       usage: makeUsage({
         windows: [{ label: "5h", usedPercent: 85 }],
@@ -210,8 +210,8 @@ describe("provider-usage.policy", () => {
           warn: [{ window: "5h", remainingPercentLte: 30 }],
         },
       }),
-      provider: "openai-codex",
-      profileId: "openai-codex:pcg",
+      provider: "openai",
+      profileId: "openai:pcg",
       selectionSource: "user",
       usage: makeUsage({
         windows: [{ label: "5h", usedPercent: 85 }],
@@ -232,13 +232,13 @@ describe("provider-usage.policy", () => {
       config: makeConfig({
         enabled: true,
         profiles: {
-          "openai-codex:pcg": {
+          "openai:pcg": {
             stop: [{ window: "5h", remainingPercentLte: 20 }],
           },
         },
       }),
-      provider: "openai-codex",
-      profileId: "openai-codex:pcg",
+      provider: "openai",
+      profileId: "openai:pcg",
       selectionSource: "user",
       usage: makeUsage({
         windows: [{ label: "5h", usedPercent: 85 }],
@@ -262,8 +262,8 @@ describe("provider-usage.policy", () => {
           warn: [{ window: "1w", remainingPercentLte: 60 }],
         },
       }),
-      provider: "openai-codex",
-      profileId: "openai-codex:pcg",
+      provider: "openai",
+      profileId: "openai:pcg",
       usage: makeUsage({
         windows: [{ label: "Week", usedPercent: 50 }],
       }),
@@ -289,24 +289,24 @@ describe("provider-usage.policy", () => {
     expect(
       isUsagePolicySurfaceEnabled({
         config,
-        provider: "openai-codex",
-        profileId: "openai-codex:pcg",
+        provider: "openai",
+        profileId: "openai:pcg",
         surface: "status",
       }),
     ).toBe(true);
     expect(
       isUsagePolicySurfaceEnabled({
         config,
-        provider: "openai-codex",
-        profileId: "openai-codex:pcg",
+        provider: "openai",
+        profileId: "openai:pcg",
         surface: "sessionStatus",
       }),
     ).toBe(true);
     expect(
       isUsagePolicySurfaceEnabled({
         config,
-        provider: "openai-codex",
-        profileId: "openai-codex:pcg",
+        provider: "openai",
+        profileId: "openai:pcg",
         surface: "preflightNotice",
       }),
     ).toBe(false);
@@ -320,8 +320,8 @@ describe("provider-usage.policy", () => {
           switch: [{ window: "5h", remainingPercentLte: 20 }],
         },
       }),
-      provider: "openai-codex",
-      profileId: "openai-codex:pcg",
+      provider: "openai",
+      profileId: "openai:pcg",
       usage: makeUsage({
         windows: [{ label: "5h", usedPercent: 85 }],
       }),
@@ -343,8 +343,8 @@ describe("provider-usage.policy", () => {
           warn: [{ window: "5h", remainingPercentLte: 20 }],
         },
       }),
-      provider: "openai-codex",
-      profileId: "openai-codex:pcg",
+      provider: "openai",
+      profileId: "openai:pcg",
       usage: makeUsage(),
       now: Date.UTC(2026, 2, 27, 12, 30, 1),
     });

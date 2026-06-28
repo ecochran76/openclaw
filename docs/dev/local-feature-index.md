@@ -10,6 +10,7 @@ Related compatibility plan:
 - `docs/dev/upstream-compat-feature-preservation-plan.md`
 - `docs/dev/plans/0001-2026-04-20-plugin-survivability-roadmap.md`
 - `docs/dev/plans/0012-2026-06-26-ec-main-rebase-compatibility-plan.md`
+- `docs/dev/plans/0014-2026-06-28-profile-support-retirement.md`
 
 ## Why this exists
 
@@ -50,19 +51,29 @@ Use `--list` to print the command bundle without running it. Use `--live-patch` 
 ### 1. Profiles
 
 - Doc: `docs/dev/local-features/profiles.md`
+- Active retirement plan: `docs/dev/plans/0014-2026-06-28-profile-support-retirement.md`
 - Design docs:
   - `docs/dev/codex-status-profile-quota-plan.md`
   - `docs/dev/profile-usage-alerts-auto-switch-plan.md`
 - Scope:
-  - auth profiles
-  - profile-aware routing / selection
-  - auth profile normalization and usage reporting
+  - retained profile-aware chat/operator UX
+  - session profile override behavior
+  - profile-aware usage reporting and policy not covered upstream
   - profile-aware usage alerts / stop gates / auto-switch policy
-  - profile-oriented UI and CLI behaviors
+  - profile-oriented UI behavior that is not covered upstream
+- Upstream-owned base layer:
+  - auth profile SQLite storage
+  - `openclaw models auth` CLI profile flows
+  - provider profile ordering, cooldown, and rotation
+  - doctor migration of legacy auth profile stores
 - Common validation:
-  - `pnpm test -- src/commands/models/auth.test.ts`
-  - `pnpm test -- src/commands/models/auth.login-profiles.test.ts`
-  - `pnpm test -- src/cli/models-cli.test.ts`
+  - `node scripts/run-vitest.mjs src/auto-reply/reply/commands-profiles.test.ts`
+  - `node scripts/run-vitest.mjs src/agents/auth-profiles/session-override.test.ts`
+  - `node scripts/run-vitest.mjs src/agents/auth-profiles/profiles.test.ts src/agents/auth-profiles.store-cache.test.ts src/agents/auth-profiles.sqlite-store.test.ts`
+  - `node scripts/run-vitest.mjs src/commands/doctor-auth-flat-profiles.test.ts src/commands/doctor-auth-oauth-sidecar.test.ts`
+  - `node scripts/run-vitest.mjs src/commands/models/auth.test.ts src/commands/models/auth.login-profiles.test.ts src/cli/models-cli.test.ts`
+  - `node scripts/run-vitest.mjs src/infra/provider-usage.policy.test.ts src/infra/provider-usage.cache.test.ts src/infra/provider-usage.auth.normalizes-keys.test.ts`
+  - `node scripts/run-vitest.mjs ui/src/ui/views/agents-utils.test.ts`
 
 ### 2. Slack / A2A
 

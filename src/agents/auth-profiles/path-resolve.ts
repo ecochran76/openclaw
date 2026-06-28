@@ -63,11 +63,18 @@ export function resolveAuthStatePathForDisplay(agentDir?: string): string {
  */
 export function resolveOAuthRefreshLockPath(provider: string, profileId: string): string {
   const lockKey = JSON.stringify([provider, profileId]);
-  const safeId = `lock-${oauthLockPathDigest(lockKey)}`;
+  const safeId = `lock-${lockPathDigest(lockKey)}`;
   return path.join(resolveStateDir(), "locks", "oauth-refresh", safeId);
 }
 
-function oauthLockPathDigest(value: string): string {
+/** Resolve the filesystem target used to serialize auth profile store writes. */
+export function resolveAuthStoreLockTargetPath(agentDir?: string): string {
+  const lockKey = resolveAuthProfileDatabasePath(agentDir);
+  const safeId = `agent-${lockPathDigest(lockKey)}`;
+  return path.join(resolveStateDir(), "locks", "auth-profile-store", safeId);
+}
+
+function lockPathDigest(value: string): string {
   let left = 0xcbf29ce484222325n;
   let right = 0x9ae16a3b2f90404fn;
   const prime = 0x100000001b3n;

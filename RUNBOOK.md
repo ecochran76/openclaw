@@ -230,3 +230,8 @@ This runbook is a dated log of planning-contract and execution events that shoul
   health alongside gateway, Slack, cron, and timer health.
 - Updated the wake-trigger plan with the current userland diagnostic and alert
   surfaces.
+
+## Turn 21 | 2026-06-28
+
+- Created `docs/dev/plans/0014-2026-06-28-profile-support-retirement.md` after confirming upstream OpenClaw now owns native auth-profile storage, CLI auth commands, ordering, rotation, and doctor migration.
+- Updated `ROADMAP.md`, `docs/dev/local-feature-index.md`, and `docs/dev/local-features/profiles.md` so future profile work aims to retire duplicated `ec-main` storage/CLI ownership and keep only thin operator UX/policy surfaces.

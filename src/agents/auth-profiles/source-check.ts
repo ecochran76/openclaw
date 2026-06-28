@@ -3,25 +3,18 @@
  * These checks intentionally avoid loading secret-bearing credential payloads.
  */
 import fs from "node:fs";
-import {
-  resolveAuthStatePath,
-  resolveAuthStorePath,
-  resolveLegacyAuthStorePath,
-} from "./path-resolve.js";
+import { resolveLegacyAuthStorePath } from "./path-resolve.js";
 import {
   getRuntimeAuthProfileStoreSnapshot,
   hasAnyRuntimeAuthProfileStoreSource,
 } from "./runtime-snapshots.js";
 import { readPersistedAuthProfileStateRaw, readPersistedAuthProfileStoreRaw } from "./sqlite.js";
 
-// Auth-profile source checks look at runtime snapshots, JSON compatibility
-// files, legacy files, and SQLite stores without materializing secret values.
+// Auth-profile source checks look at runtime snapshots, legacy auth.json files,
+// and SQLite stores without materializing secret values. Retired auth-profile
+// JSON files are doctor/import inputs, not runtime auth sources.
 function hasStoredAuthProfileFiles(agentDir?: string): boolean {
-  return (
-    fs.existsSync(resolveAuthStorePath(agentDir)) ||
-    fs.existsSync(resolveAuthStatePath(agentDir)) ||
-    fs.existsSync(resolveLegacyAuthStorePath(agentDir))
-  );
+  return fs.existsSync(resolveLegacyAuthStorePath(agentDir));
 }
 
 /** Returns true when any local/runtime/main auth profile source exists. */
@@ -33,11 +26,8 @@ export function hasAnyAuthProfileStoreSource(agentDir?: string): boolean {
     return true;
   }
 
-  const authPath = resolveAuthStorePath(agentDir);
-  const mainAuthPath = resolveAuthStorePath();
   if (
     agentDir &&
-    authPath !== mainAuthPath &&
     (hasStoredAuthProfileFiles(undefined) ||
       readPersistedAuthProfileStoreRaw(undefined) ||
       readPersistedAuthProfileStateRaw(undefined))

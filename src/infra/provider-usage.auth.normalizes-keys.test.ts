@@ -8,6 +8,34 @@ import type { OpenClawConfig } from "../config/config.js";
 import type { ModelDefinitionConfig } from "../config/types.models.js";
 import { createSuiteTempRootTracker } from "../test-helpers/temp-dir.js";
 
+type TestAuthProfileStore = {
+  version: number;
+  profiles: Record<string, Record<string, unknown>>;
+  order?: Record<string, string[]>;
+  lastGood?: Record<string, string>;
+  usageStats?: Record<string, unknown>;
+};
+
+const authProfileStoreMocks = vi.hoisted(() => {
+  const stores = new Map<string, TestAuthProfileStore>();
+  return {
+    stores,
+    read(agentDir?: string): TestAuthProfileStore {
+      const store = agentDir ? stores.get(agentDir) : undefined;
+      return store ? structuredClone(store) : { version: 1, profiles: {} };
+    },
+    write(agentDir: string, store: TestAuthProfileStore): void {
+      stores.set(agentDir, structuredClone(store));
+    },
+    has(agentDir?: string): boolean {
+      return Boolean(agentDir && stores.has(agentDir));
+    },
+    clear(): void {
+      stores.clear();
+    },
+  };
+});
+
 vi.mock("../agents/auth-profiles.js", () => {
   const normalizeProvider = (provider?: string | null): string =>
     (provider ?? "")
@@ -22,30 +50,6 @@ vi.mock("../agents/auth-profiles.js", () => {
     Object.entries(store.profiles ?? {})
       .filter(([, profile]) => normalizeProvider(profile?.provider) === normalizeProvider(provider))
       .map(([profileId]) => profileId);
-  const readStore = (agentDir?: string) => {
-    if (!agentDir) {
-      return { version: 1, profiles: {} };
-    }
-    const authPath = path.join(agentDir, "auth-profiles.json");
-    try {
-      const parsed = JSON.parse(nodeFs.readFileSync(authPath, "utf8")) as {
-        version?: number;
-        profiles?: Record<string, unknown>;
-        order?: Record<string, string[]>;
-        lastGood?: Record<string, string>;
-        usageStats?: Record<string, unknown>;
-      };
-      return {
-        version: parsed.version ?? 1,
-        profiles: parsed.profiles ?? {},
-        ...(parsed.order ? { order: parsed.order } : {}),
-        ...(parsed.lastGood ? { lastGood: parsed.lastGood } : {}),
-        ...(parsed.usageStats ? { usageStats: parsed.usageStats } : {}),
-      };
-    } catch {
-      return { version: 1, profiles: {} };
-    }
-  };
 
   const resolveAuthProfileOrder = (params: {
     cfg?: { auth?: { profiles?: Record<string, { provider?: string } | undefined> } };
@@ -120,10 +124,9 @@ vi.mock("../agents/auth-profiles.js", () => {
   };
 
   return {
-    clearRuntimeAuthProfileStoreSnapshots: () => {},
-    ensureAuthProfileStore: (agentDir?: string) => readStore(agentDir),
-    hasAnyAuthProfileStoreSource: (agentDir?: string) =>
-      Boolean(agentDir && nodeFs.existsSync(path.join(agentDir, "auth-profiles.json"))),
+    clearRuntimeAuthProfileStoreSnapshots: () => authProfileStoreMocks.clear(),
+    ensureAuthProfileStore: (agentDir?: string) => authProfileStoreMocks.read(agentDir),
+    hasAnyAuthProfileStoreSource: (agentDir?: string) => authProfileStoreMocks.has(agentDir),
     dedupeProfileIds,
     listProfilesForProvider,
     resolveApiKeyForProfile,
@@ -307,11 +310,7 @@ describe("resolveProviderAuths key normalization", () => {
     const agentDir = path.join(stateDir, "agents", "main", "agent");
     nodeFs.mkdirSync(path.join(stateDir, "agents", "main", "sessions"), { recursive: true });
     nodeFs.mkdirSync(agentDir, { recursive: true });
-    nodeFs.writeFileSync(
-      path.join(agentDir, "auth-profiles.json"),
-      `${JSON.stringify({ version: 1, profiles: {} }, null, 2)}\n`,
-      "utf8",
-    );
+    authProfileStoreMocks.write(agentDir, { version: 1, profiles: {} });
     return await fn(base);
   }
 
@@ -341,11 +340,11 @@ describe("resolveProviderAuths key normalization", () => {
   async function writeAuthProfiles(home: string, profiles: Record<string, unknown>) {
     const agentDir = agentDirForHome(home);
     await fs.mkdir(agentDir, { recursive: true });
-    await fs.writeFile(
-      path.join(agentDir, "auth-profiles.json"),
-      `${JSON.stringify({ version: 1, profiles }, null, 2)}\n`,
-      "utf8",
-    );
+    const current = authProfileStoreMocks.read(agentDir);
+    authProfileStoreMocks.write(agentDir, {
+      ...current,
+      profiles: profiles as TestAuthProfileStore["profiles"],
+    });
   }
 
   async function writeConfig(home: string, config: Record<string, unknown>) {
@@ -360,19 +359,10 @@ describe("resolveProviderAuths key normalization", () => {
 
   async function writeProfileOrder(home: string, provider: string, profileIds: string[]) {
     const agentDir = agentDirForHome(home);
-    const parsed = JSON.parse(
-      await fs.readFile(path.join(agentDir, "auth-profiles.json"), "utf8"),
-    ) as Record<string, unknown>;
-    const order = (parsed.order && typeof parsed.order === "object" ? parsed.order : {}) as Record<
-      string,
-      unknown
-    >;
+    const current = authProfileStoreMocks.read(agentDir);
+    const order = { ...(current.order ?? {}) };
     order[provider] = profileIds;
-    parsed.order = order;
-    await fs.writeFile(
-      path.join(agentDir, "auth-profiles.json"),
-      `${JSON.stringify(parsed, null, 2)}\n`,
-    );
+    authProfileStoreMocks.write(agentDir, { ...current, order });
   }
 
   function createTestModelDefinition(): ModelDefinitionConfig {

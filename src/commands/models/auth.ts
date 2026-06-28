@@ -25,7 +25,6 @@ import {
   externalCliDiscoveryForProviderAuth,
   removeProviderAuthProfilesWithLock,
 } from "../../agents/auth-profiles.js";
-import { normalizeRequestedProfileId } from "../../agents/auth-profiles/profile-id.js";
 import {
   listProfilesForProvider,
   promoteAuthProfileInOrder,
@@ -44,6 +43,7 @@ import { ensurePluginRegistryLoaded } from "../../cli/plugin-registry.js";
 import { logConfigUpdated } from "../../config/logging.js";
 import { normalizeAgentModelRefForConfig } from "../../config/model-input.js";
 import type { OpenClawConfig } from "../../config/types.openclaw.js";
+import { isRemoteEnvironment } from "../../infra/remote-env.js";
 import {
   applyProviderAuthConfigPatch,
   applyDefaultModel,
@@ -69,12 +69,10 @@ import { createClackPrompter } from "../../wizard/clack-prompter.js";
 import { validateAnthropicSetupToken } from "../auth-token.js";
 import { repairCodexRuntimePluginInstallForModelSelection } from "../codex-runtime-plugin-install.js";
 import { repairCopilotRuntimePluginInstallForModelSelection } from "../copilot-runtime-plugin-install.js";
-import { isRemoteEnvironment } from "../../infra/remote-env.js";
 import { messageCommand } from "../message.js";
 import { loadValidConfigOrThrow, resolveKnownAgentId, updateConfig } from "./shared.js";
 
 type UpsertAuthProfileParams = Parameters<typeof upsertAuthProfileWithLock>[0];
-export { normalizeRequestedProfileId } from "../../agents/auth-profiles/profile-id.js";
 
 function resolveManualTokenExpiryMs(expiresIn: string | undefined): number | undefined {
   const normalizedExpiresIn = normalizeStringifiedOptionalString(expiresIn);
@@ -157,6 +155,20 @@ async function readPastedSecret(params: {
 
 function resolveDefaultTokenProfileId(provider: string): string {
   return `${normalizeProviderId(provider)}:manual`;
+}
+
+function normalizeRequestedProfileId(
+  provider: string,
+  profileId: string | undefined,
+): string | undefined {
+  const normalizedProfileId = normalizeOptionalString(profileId);
+  if (!normalizedProfileId) {
+    return undefined;
+  }
+  if (normalizedProfileId.includes(":")) {
+    return normalizedProfileId;
+  }
+  return `${normalizeManualAuthProvider(provider)}:${normalizedProfileId}`;
 }
 
 function normalizeManualAuthProvider(provider: string): string {

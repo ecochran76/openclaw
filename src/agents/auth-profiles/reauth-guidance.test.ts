@@ -15,15 +15,17 @@ describe("formatAuthRecoveryHint", () => {
   });
 
   it("can include a CLI fallback for openai-codex thread reauth", () => {
-    expect(
-      formatAuthRecoveryHint({
-        provider: "openai-codex",
-        authProfileId: "openai-codex:dillan",
-        allowChatReauth: true,
-        includeCliAlternative: true,
-      }),
-    ).toContain(
+    const hint = formatAuthRecoveryHint({
+      provider: "openai-codex",
+      authProfileId: "openai-codex:dillan",
+      allowChatReauth: true,
+      includeCliAlternative: true,
+    });
+    expect(hint).toContain(
       "Reply /reauth --device-code openai-codex:dillan in this thread to refresh it here; supported providers will post a device code or chat-safe auth flow, or run",
+    );
+    expect(hint).toContain(
+      "openclaw models auth login --provider openai --profile-id openai-codex:dillan",
     );
   });
 

@@ -99,7 +99,8 @@ Observed operational failure mode:
 Desired behavior already captured in the ledger:
 
 - `main` should be treated as the canonical shared OAuth store for long-lived profiles
-- add an explicit profile sync helper
+- retire the explicit profile sync helper in favor of upstream-owned auth profile storage and
+  rotation surfaces
 - consider promoting fresher credentials into `main` automatically after a successful non-main refresh
 - keep writes profile-scoped and avoid clobbering unrelated auth metadata
 - add regression coverage
@@ -107,8 +108,8 @@ Desired behavior already captured in the ledger:
 Local WIP already started in this area:
 
 - canonical-main auth-store path helpers
-- profile-scoped sync helper implementation
-- CLI scaffolding for `models auth sync`
+- retired profile-scoped sync helper implementation
+- retired CLI scaffolding for `models auth sync`
 - refresh-promotion logic from non-main -> canonical main
 - read/write refactors to avoid mutating merged runtime views directly
 
@@ -306,28 +307,17 @@ Stop relying on implicit “main = whatever current env resolves to” behavior 
 
 ### B3. Add a first-class profile sync helper / command
 
+Retired by `docs/dev/plans/0014-2026-06-28-profile-support-retirement.md`: `ec-main`
+no longer carries the local `openclaw models auth sync` command. Future work in this
+area should use upstream auth profile storage/rotation surfaces or a separately justified
+operator UX, not revive the deleted CLI command.
+
 **Primary files**
 
 - `src/agents/auth-profiles/profiles.ts`
-- `src/commands/models/auth-sync.ts`
-- `src/commands/models.ts`
 - `src/cli/models-cli.ts`
 
-**Desired UX**
-
-Example shape:
-
-```bash
-openclaw models auth sync --profile-id openai-codex:work --from-agent main --to-agents dev-openclaw,gpod
-```
-
-or
-
-```bash
-openclaw models auth sync --profile-id openai-codex:work --from-agent main --to-agents all
-```
-
-**Rules**
+**Retired rules**
 
 - copy only the selected profile
 - do not overwrite unrelated profiles
@@ -400,7 +390,7 @@ Runtime code often reads merged auth views (main + agent). That is useful for re
 
 - auth-profiles oauth tests
 - onboard-auth tests
-- new auth-sync command tests
+- retired auth-sync command tests
 
 ---
 
@@ -456,7 +446,7 @@ Run targeted tests first, not just full repo compile.
 - `src/commands/models/auth.test.ts`
 - `src/commands/onboard-auth.test.ts`
 - auth-profiles oauth fallback / drift tests
-- new auth-sync command tests
+- retired auth-sync command tests
 
 ### D2. Full compile as a sanity gate
 

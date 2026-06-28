@@ -174,32 +174,6 @@ describe("models cli", () => {
       expected: { agent: "poe", provider: "openai" },
     },
     {
-      label: "login notify slack",
-      args: [
-        "models",
-        "auth",
-        "--agent",
-        "poe",
-        "login",
-        "--provider",
-        "openai-codex",
-        "--method",
-        "device-code",
-        "--notify-slack",
-        "user:U123",
-        "--notify-slack-account",
-        "soylei",
-      ],
-      command: modelsAuthLoginCommand,
-      expected: {
-        agent: "poe",
-        provider: "openai-codex",
-        method: "device-code",
-        notifySlack: "user:U123",
-        notifySlackAccount: "soylei",
-      },
-    },
-    {
       label: "setup-token",
       args: ["models", "auth", "--agent", "poe", "setup-token", "--provider", "anthropic"],
       command: modelsAuthSetupTokenCommand,
@@ -255,6 +229,28 @@ describe("models cli", () => {
     });
   });
 
+  it("accepts deprecated Slack device-code notification flags", async () => {
+    await runModelsCommand([
+      "models",
+      "auth",
+      "login",
+      "--provider",
+      "openai",
+      "--device-code",
+      "--notify-slack",
+      "user:U123",
+      "--notify-slack-account",
+      "team-a",
+    ]);
+
+    expectCommandOptions(modelsAuthLoginCommand, {
+      provider: "openai",
+      method: "device-code",
+      notifySlack: "user:U123",
+      notifySlackAccount: "team-a",
+    });
+  });
+
   it("passes list-specific --agent and --json to models auth list", async () => {
     await runModelsCommand(["models", "auth", "list", "--agent", "poe", "--json"]);
 
@@ -304,8 +300,7 @@ describe("models cli", () => {
     const order = auth?.commands.find((cmd) => cmd.name() === "order");
     const set = order?.commands.find((cmd) => cmd.name() === "set");
 
-    expect(sync?.helpInformation()).toContain("<provider>:work");
-    expect(sync?.helpInformation()).not.toContain("openai-codex:work");
+    expect(sync).toBeUndefined();
     expect(set?.helpInformation()).toContain("<provider>:default");
   });
 });

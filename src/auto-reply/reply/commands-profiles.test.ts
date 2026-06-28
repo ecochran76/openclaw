@@ -80,7 +80,32 @@ describe("/profile commands", () => {
     };
 
     const result = await handleProfilesCommand(params, true);
-    expect(result?.reply?.text).toContain("Profiles (openai-codex)");
+    expect(result?.reply?.text).toContain("Profiles (openai)");
     expect(result?.reply?.text).toContain("* openai-codex:personal");
+  });
+
+  it("lists canonical OpenAI auth profiles from Codex-backed sessions", async () => {
+    hoisted.ensureAuthProfileStoreMock.mockReturnValue({
+      profiles: {
+        "openai:work": { provider: "openai", type: "oauth", token: "t" },
+        "openai:personal": { provider: "openai", type: "oauth", token: "t2" },
+      },
+    });
+    hoisted.resolveAuthProfileOrderMock.mockReturnValue(["openai:work", "openai:personal"]);
+
+    const params = buildCommandTestParams("/profiles", cfg);
+    params.provider = "codex";
+    params.sessionEntry = {
+      sessionId: "s1",
+      updatedAt: 1,
+      authProfileOverride: "openai:personal",
+    };
+
+    const result = await handleProfilesCommand(params, true);
+    expect(hoisted.resolveAuthProfileOrderMock).toHaveBeenCalledWith(
+      expect.objectContaining({ provider: "openai" }),
+    );
+    expect(result?.reply?.text).toContain("Profiles (openai)");
+    expect(result?.reply?.text).toContain("* openai:personal");
   });
 });

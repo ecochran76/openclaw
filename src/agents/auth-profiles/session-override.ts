@@ -3,8 +3,6 @@
  * Keeps automatic profile choice stable within a session while still rotating
  * across new sessions, compactions, provider changes, and cooldowns.
  */
-import fs from "node:fs/promises";
-import path from "node:path";
 import type { SessionEntry } from "../../config/sessions/types.js";
 import type { OpenClawConfig } from "../../config/types.openclaw.js";
 import { type UsagePolicyDecision } from "../../infra/provider-usage.policy.js";
@@ -78,52 +76,25 @@ function uniqueProviders(provider: string, acceptedProviderIds?: readonly string
   return [...providers];
 }
 
-async function readAuthProfileOrderFromDisk(params: {
-  agentDir: string;
-  provider: string;
-}): Promise<string[]> {
-  try {
-    const raw = await fs.readFile(path.join(params.agentDir, "auth-profiles.json"), "utf8");
-    const parsed = JSON.parse(raw) as {
-      order?: Record<string, unknown>;
-      profiles?: Record<string, { provider?: unknown }>;
-    };
-    const direct = parsed.order?.[params.provider];
-    if (Array.isArray(direct)) {
-      return direct.filter((item): item is string => typeof item === "string" && item.trim() !== "");
-    }
-    return Object.entries(parsed.profiles ?? {})
-      .filter(([, profile]) => profile?.provider === params.provider)
-      .map(([profileId]) => profileId);
-  } catch {
-    return [];
-  }
-}
-
-async function resolveAuthProfileOrderWithDiskFallback(params: {
+function resolveSessionAuthProfileOrder(params: {
   cfg: OpenClawConfig;
   store: ReturnType<typeof ensureAuthProfileStore>;
   provider: string;
-  agentDir: string;
   acceptedProviderIds?: readonly string[];
-}): Promise<string[]> {
+}): string[] {
   const providers = uniqueProviders(params.provider, params.acceptedProviderIds);
   const fromStore = [
     ...new Set(
       providers.flatMap((candidateProvider) =>
-        resolveAuthProfileOrder({ cfg: params.cfg, store: params.store, provider: candidateProvider }),
+        resolveAuthProfileOrder({
+          cfg: params.cfg,
+          store: params.store,
+          provider: candidateProvider,
+        }),
       ),
     ),
   ];
-  if (fromStore.length > 0) {
-    return fromStore;
-  }
-  const fromDisk = await Promise.all(
-    providers.map((candidateProvider) =>
-      readAuthProfileOrderFromDisk({ agentDir: params.agentDir, provider: candidateProvider }),
-    ),
-  );
-  return [...new Set(fromDisk.flat())];
+  return fromStore;
 }
 
 export type SessionAuthProfileBlockedReason = {
@@ -270,11 +241,10 @@ export async function clearSessionAuthProfileOverride(params: {
   if (storePath) {
     await (
       await loadSessionAccessor()
-    ).patchSessionEntry(
-      { storePath, sessionKey },
-      () => sessionEntry,
-      { fallbackEntry: sessionEntry, replaceEntry: true },
-    );
+    ).patchSessionEntry({ storePath, sessionKey }, () => sessionEntry, {
+      fallbackEntry: sessionEntry,
+      replaceEntry: true,
+    });
   }
 }
 
@@ -339,18 +309,10 @@ export async function resolveSessionAuthProfileSelection(params: {
   const hasConfiguredAuthProfiles =
     Boolean(cfg.auth?.profiles && Object.keys(cfg.auth.profiles).length > 0) ||
     Boolean(cfg.auth?.order && Object.keys(cfg.auth.order).length > 0);
-  const diskOrder = (
-    await Promise.all(
-      providers.map((candidateProvider) =>
-        readAuthProfileOrderFromDisk({ agentDir, provider: candidateProvider }),
-      ),
-    )
-  ).flat();
   if (
     !sessionEntry.authProfileOverride?.trim() &&
     !hasConfiguredAuthProfiles &&
-    !hasAnyAuthProfileStoreSource(agentDir) &&
-    diskOrder.length === 0
+    !hasAnyAuthProfileStoreSource(agentDir)
   ) {
     return {
       profileId: undefined,
@@ -359,11 +321,10 @@ export async function resolveSessionAuthProfileSelection(params: {
   }
 
   const store = ensureAuthProfileStore(agentDir, { allowKeychainPrompt: false });
-  const order = await resolveAuthProfileOrderWithDiskFallback({
+  const order = resolveSessionAuthProfileOrder({
     cfg,
     store,
     provider,
-    agentDir,
     acceptedProviderIds: params.acceptedProviderIds,
   });
   let current = sessionEntry.authProfileOverride?.trim();
@@ -376,21 +337,9 @@ export async function resolveSessionAuthProfileSelection(params: {
         : undefined);
 
   const currentProfileId = current;
-  const currentProfileExistsOnDisk =
-    currentProfileId &&
-    (
-      await Promise.all(
-        providers.map((candidateProvider) =>
-          readAuthProfileOrderFromDisk({ agentDir, provider: candidateProvider }),
-        ),
-      )
-    )
-      .flat()
-      .includes(currentProfileId);
   if (
     currentProfileId &&
     !store.profiles[currentProfileId] &&
-    !currentProfileExistsOnDisk &&
     !providers.some((candidateProvider) =>
       isConfiguredAwsSdkAuthProfileForProvider({
         cfg,
@@ -403,11 +352,7 @@ export async function resolveSessionAuthProfileSelection(params: {
     current = undefined;
   }
 
-  if (
-    current &&
-    !currentProfileExistsOnDisk &&
-    !isProfileForProvider({ cfg, providers, profileId: current, store })
-  ) {
+  if (current && !isProfileForProvider({ cfg, providers, profileId: current, store })) {
     await clearSessionAuthProfileOverride({ sessionEntry, sessionStore, sessionKey, storePath });
     current = undefined;
   }

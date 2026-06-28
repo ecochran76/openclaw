@@ -1,21 +1,6 @@
 // Model auth login profile tests cover login profile selection for provider auth.
 import { describe, expect, it } from "vitest";
-import { normalizeRequestedProfileId, resolveLoginProfiles } from "./auth.js";
-
-describe("normalizeRequestedProfileId", () => {
-  it("returns undefined when no profile id is provided", () => {
-    expect(normalizeRequestedProfileId("openai", undefined)).toBeUndefined();
-    expect(normalizeRequestedProfileId("openai", "   ")).toBeUndefined();
-  });
-
-  it("prefixes provider when bare profile label is passed", () => {
-    expect(normalizeRequestedProfileId("openai", "work")).toBe("openai:work");
-  });
-
-  it("keeps explicit provider profile ids unchanged", () => {
-    expect(normalizeRequestedProfileId("openai", "openai:work")).toBe("openai:work");
-  });
-});
+import { resolveLoginProfiles } from "./auth.js";
 
 describe("resolveLoginProfiles", () => {
   it("returns original profiles when --profile-id is not provided", () => {

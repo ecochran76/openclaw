@@ -3,7 +3,6 @@
  * Updates profile order, last-good state, usage stats, and provider profile
  * records through locked or immediate store writes.
  */
-import path from "node:path";
 import {
   findNormalizedProviderKey,
   normalizeProviderId,
@@ -12,10 +11,8 @@ import { normalizeStringEntries } from "@openclaw/normalization-core/string-norm
 import { resolveProviderIdForAuth } from "../provider-auth-aliases.js";
 import { normalizeAuthProfileCredential } from "./credential-normalize.js";
 import { dedupeProfileIds, listProfilesForProvider } from "./profile-list.js";
-import { savePersistedAuthProfileState } from "./state.js";
 import {
   ensureAuthProfileStoreForLocalUpdate,
-  loadAuthProfileStoreForAgentFile,
   saveAuthProfileStore,
   updateAuthProfileStoreFileWithLock,
   updateAuthProfileStoreWithLock,
@@ -261,67 +258,6 @@ export async function clearLastGoodProfileWithLock(params: {
       return true;
     },
   });
-}
-
-/** Mark a profile as successfully used and update ordering/usage metadata. */
-export type SyncAuthProfileResult = {
-  profileId: string;
-  credential: AuthProfileCredential;
-  updatedAgentDirs: string[];
-  skippedAgentDirs: string[];
-};
-
-export async function syncAuthProfile(params: {
-  profileId: string;
-  sourceAgentDir?: string;
-  targetAgentDirs: string[];
-}): Promise<SyncAuthProfileResult> {
-  const sourceStore = loadAuthProfileStoreForAgentFile(params.sourceAgentDir, {
-    readOnly: true,
-    allowKeychainPrompt: false,
-  });
-  const credential = sourceStore.profiles[params.profileId];
-  if (!credential) {
-    throw new Error(`Auth profile "${params.profileId}" not found in source agent store.`);
-  }
-
-  const sourceDir = params.sourceAgentDir ? path.resolve(params.sourceAgentDir) : undefined;
-  const uniqueTargetAgentDirs = dedupeProfileIds(
-    params.targetAgentDirs.map((targetAgentDir) => path.resolve(targetAgentDir)),
-  );
-  const updatedAgentDirs: string[] = [];
-  const skippedAgentDirs: string[] = [];
-
-  for (const targetAgentDir of uniqueTargetAgentDirs) {
-    if (sourceDir && targetAgentDir === sourceDir) {
-      skippedAgentDirs.push(targetAgentDir);
-      continue;
-    }
-    const updated = await updateAuthProfileStoreFileWithLock({
-      agentDir: targetAgentDir,
-      saveOptions: {
-        filterExternalAuthProfiles: false,
-        syncExternalCli: false,
-      },
-      updater: (store) => {
-        store.profiles[params.profileId] = structuredClone(credential);
-        return true;
-      },
-    });
-    if (updated) {
-      savePersistedAuthProfileState(updated, targetAgentDir);
-      updatedAgentDirs.push(targetAgentDir);
-    } else {
-      skippedAgentDirs.push(targetAgentDir);
-    }
-  }
-
-  return {
-    profileId: params.profileId,
-    credential: structuredClone(credential),
-    updatedAgentDirs,
-    skippedAgentDirs,
-  };
 }
 
 /** Mark a profile as successfully used and update ordering/usage metadata. */

@@ -57,6 +57,9 @@ const mocks = vi.hoisted(() => ({
   logConfigUpdated: vi.fn(),
   openUrl: vi.fn(),
   isRemoteEnvironment: vi.fn(() => false),
+  createDefaultDeps: vi.fn(() => ({ mocked: "deps" })),
+  ensurePluginRegistryLoaded: vi.fn(),
+  messageCommand: vi.fn(),
   validateAnthropicSetupToken: vi.fn<() => string | undefined>(() => undefined),
   loadAuthProfileStoreForRuntime: vi.fn(),
   listProfilesForProvider: vi.fn(),
@@ -64,9 +67,6 @@ const mocks = vi.hoisted(() => ({
   clearAuthProfileCooldown: vi.fn(),
   resolvePluginSetupProvider: vi.fn(),
   resolvePluginSetupRegistry: vi.fn(),
-  createDefaultDeps: vi.fn(() => ({ slack: vi.fn() })),
-  ensurePluginRegistryLoaded: vi.fn(),
-  messageCommand: vi.fn(),
 }));
 
 vi.mock("../../agents/auth-profiles/profiles.js", () => ({
@@ -135,18 +135,6 @@ vi.mock("../../agents/workspace.js", () => ({
   resolveDefaultAgentWorkspaceDir: mocks.resolveDefaultAgentWorkspaceDir,
 }));
 
-vi.mock("../../cli/deps.js", () => ({
-  createDefaultDeps: mocks.createDefaultDeps,
-}));
-
-vi.mock("../../cli/plugin-registry.js", () => ({
-  ensurePluginRegistryLoaded: mocks.ensurePluginRegistryLoaded,
-}));
-
-vi.mock("../message.js", () => ({
-  messageCommand: mocks.messageCommand,
-}));
-
 vi.mock("../../plugins/providers.runtime.js", () => ({
   resolvePluginProviders: mocks.resolvePluginProviders,
 }));
@@ -179,6 +167,18 @@ vi.mock("../onboard-helpers.js", () => ({
 
 vi.mock("../../infra/remote-env.js", () => ({
   isRemoteEnvironment: mocks.isRemoteEnvironment,
+}));
+
+vi.mock("../../cli/deps.js", () => ({
+  createDefaultDeps: mocks.createDefaultDeps,
+}));
+
+vi.mock("../../cli/plugin-registry.js", () => ({
+  ensurePluginRegistryLoaded: mocks.ensurePluginRegistryLoaded,
+}));
+
+vi.mock("../message.js", () => ({
+  messageCommand: mocks.messageCommand,
 }));
 
 vi.mock("../../plugins/provider-oauth-flow.js", () => ({
@@ -375,6 +375,10 @@ describe("modelsAuthLoginCommand", () => {
     mocks.clackPassword.mockReset();
     mocks.clackSelect.mockReset();
     mocks.clackText.mockReset();
+    mocks.createDefaultDeps.mockClear();
+    mocks.ensurePluginRegistryLoaded.mockClear();
+    mocks.messageCommand.mockReset();
+    mocks.messageCommand.mockResolvedValue(undefined);
     mocks.validateAnthropicSetupToken.mockReset();
     mocks.validateAnthropicSetupToken.mockReturnValue(undefined);
     mocks.upsertAuthProfileWithLock.mockReset();
@@ -382,9 +386,6 @@ describe("modelsAuthLoginCommand", () => {
     mocks.promoteAuthProfileInOrder.mockReset();
     mocks.removeProviderAuthProfilesWithLock.mockReset();
     mocks.removeProviderAuthProfilesWithLock.mockResolvedValue({ version: 1, profiles: {} });
-    mocks.createDefaultDeps.mockClear();
-    mocks.ensurePluginRegistryLoaded.mockClear();
-    mocks.messageCommand.mockReset();
 
     mocks.resolveDefaultAgentId.mockReturnValue("main");
     mocks.resolveAgentDir.mockReturnValue("/tmp/openclaw/agents/main");
@@ -842,62 +843,6 @@ describe("modelsAuthLoginCommand", () => {
     ).toBe("/tmp/openclaw/agents/coder");
   });
 
-  it("can send device-code prompts to an explicit Slack target", async () => {
-    const runtime = createRuntime();
-    runProviderAuth.mockImplementationOnce(async (ctx) => {
-      await ctx.notifications?.deviceCode?.({
-        providerId: "openai",
-        verificationUrl: "https://auth.openai.com/codex/device",
-        userCode: "CODE-12345",
-        expiresInMs: 900_000,
-      });
-      return {
-        profiles: [
-          {
-            profileId: "openai:soylei",
-            credential: {
-              type: "oauth",
-              provider: "openai",
-              access: "access-token",
-              refresh: "refresh-token",
-              expires: Date.now() + 60_000,
-            },
-          },
-        ],
-      };
-    });
-
-    await modelsAuthLoginCommand(
-      {
-        provider: "openai",
-        profileId: "soylei",
-        notifySlack: "user:U0127BGJ3U5",
-        notifySlackAccount: "soylei",
-      },
-      runtime,
-    );
-
-    expect(mocks.ensurePluginRegistryLoaded).toHaveBeenCalledWith({
-      scope: "configured-channels",
-      onlyChannelIds: ["slack"],
-    });
-    expect(mocks.messageCommand).toHaveBeenCalledWith(
-      expect.objectContaining({
-        action: "send",
-        channel: "slack",
-        target: "user:U0127BGJ3U5",
-        accountId: "soylei",
-        message: expect.stringContaining("Code: CODE-12345"),
-      }),
-      expect.any(Object),
-      runtime,
-    );
-    expect(mocks.messageCommand.mock.calls[0]?.[0]?.message).toContain(
-      "Profile: openai:soylei",
-    );
-    expect(runtime.log).toHaveBeenCalledWith("Sent device code to Slack user:U0127BGJ3U5.");
-  });
-
   it("passes requested profile ids through to provider auth methods", async () => {
     const runtime = createRuntime();
 
@@ -912,6 +857,109 @@ describe("modelsAuthLoginCommand", () => {
       expect.objectContaining({
         profileId: "openai:work",
       }),
+    );
+  });
+
+  it("qualifies bare requested profile ids before provider auth methods run", async () => {
+    const runtime = createRuntime();
+
+    await modelsAuthLoginCommand({ provider: "openai", profileId: "work" }, runtime);
+
+    expect(runProviderAuth).toHaveBeenCalledWith(
+      expect.objectContaining({
+        profileId: "openai:work",
+      }),
+    );
+    expect(mocks.upsertAuthProfileWithLock).toHaveBeenCalledWith(
+      expect.objectContaining({
+        profileId: "openai:work",
+      }),
+    );
+  });
+
+  it("keeps deprecated Slack device-code notification compatibility", async () => {
+    const runtime = createRuntime();
+    runProviderAuth.mockImplementationOnce(
+      async (ctx: {
+        notifications?: {
+          deviceCode?: (prompt: {
+            providerId: string;
+            verificationUrl: string;
+            userCode: string;
+            expiresInMs: number;
+          }) => Promise<void>;
+        };
+      }) => {
+        await ctx.notifications?.deviceCode?.({
+          providerId: "openai",
+          verificationUrl: "https://example.test/device",
+          userCode: "ABCD-1234",
+          expiresInMs: 120_000,
+        });
+        return {
+          profiles: [
+            {
+              profileId: "openai:work",
+              credential: {
+                type: "oauth",
+                provider: "openai",
+                access: "access-token",
+                refresh: "refresh-token",
+                expires: Date.now() + 60_000,
+              },
+            },
+          ],
+        };
+      },
+    );
+    mocks.resolvePluginProviders.mockReturnValue([
+      createProvider({
+        id: "openai",
+        label: "OpenAI Codex",
+        auth: [
+          {
+            id: "device-code",
+            label: "Device code",
+            kind: "oauth",
+            run: runProviderAuth as ProviderPlugin["auth"][number]["run"],
+          },
+        ],
+        run: runProviderAuth as ProviderPlugin["auth"][number]["run"],
+      }),
+    ]);
+
+    await modelsAuthLoginCommand(
+      {
+        provider: "openai",
+        method: "device-code",
+        profileId: "work",
+        notifySlack: "user:U123",
+        notifySlackAccount: "team-a",
+      },
+      runtime,
+    );
+
+    expect(mocks.ensurePluginRegistryLoaded).toHaveBeenCalledWith({
+      scope: "configured-channels",
+      onlyChannelIds: ["slack"],
+    });
+    expect(mocks.messageCommand).toHaveBeenCalledWith(
+      expect.objectContaining({
+        action: "send",
+        channel: "slack",
+        target: "user:U123",
+        accountId: "team-a",
+        message: expect.stringContaining("Code: ABCD-1234"),
+      }),
+      { mocked: "deps" },
+      runtime,
+    );
+    expect(mocks.messageCommand).toHaveBeenCalledWith(
+      expect.objectContaining({
+        message: expect.stringContaining("Profile: openai:work"),
+      }),
+      expect.anything(),
+      runtime,
     );
   });
 

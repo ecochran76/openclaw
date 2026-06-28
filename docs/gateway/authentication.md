@@ -262,29 +262,6 @@ If you change auth order or profile pinning for a chat that is already running,
 send `/new` or `/reset` in that chat to start a fresh session. Existing
 sessions can keep their current model/profile selection until reset.
 
-### Shared OAuth profile sync across agents
-
-When multiple agents share a long-lived OAuth profile (for example
-`openai:work`), one agent can refresh to a newer refresh token while sibling
-agents still hold stale copies. That can surface as provider errors such as
-`refresh_token_reused`.
-
-To resync one profile from the canonical source agent (`main` by default):
-
-```bash
-openclaw models auth sync --profile-id openai:work
-```
-
-To sync from a different source agent into selected targets:
-
-```bash
-openclaw models auth sync --profile-id openai:work --from-agent dev-openclaw --to-agents gpod,dev-slack-export
-```
-
-This command is profile-scoped: it copies only the selected profile and preserves unrelated profiles, order overrides, and usage metadata in the target stores.
-Existing agents that are still named `dev-slack-export` can keep using that id
-until the local agent/workspace path is migrated.
-
 ## Troubleshooting
 
 ### "No credentials found"

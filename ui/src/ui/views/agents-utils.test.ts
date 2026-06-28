@@ -104,13 +104,13 @@ describe("auth profile helpers", () => {
   const config = {
     auth: {
       profiles: {
-        "openai-codex:default": {
-          provider: "openai-codex",
+        "openai:default": {
+          provider: "openai",
           mode: "oauth",
           email: "owner@example.com",
         },
-        "openai-codex:work": {
-          provider: "openai-codex",
+        "openai:work": {
+          provider: "openai",
           mode: "oauth",
           email: "work@example.com",
         },
@@ -120,20 +120,20 @@ describe("auth profile helpers", () => {
         },
       },
       order: {
-        "openai-codex": ["openai-codex:default", "openai-codex:work"],
+        openai: ["openai:default", "openai:work"],
       },
     },
   };
 
   it("resolves provider from provider/model selections", () => {
-    expect(resolveModelProvider("openai-codex/gpt-5.4")).toBe("openai-codex");
+    expect(resolveModelProvider("openai/gpt-5.4")).toBe("openai");
     expect(resolveModelProvider("gpt-5.4")).toBeNull();
   });
 
   it("builds provider-scoped auth profile options", () => {
-    expect(buildAuthProfileOptions(config, "openai-codex").map((entry) => entry.id)).toEqual([
-      "openai-codex:default",
-      "openai-codex:work",
+    expect(buildAuthProfileOptions(config, "openai").map((entry) => entry.id)).toEqual([
+      "openai:default",
+      "openai:work",
     ]);
     expect(buildAuthProfileOptions(config, "anthropic").map((entry) => entry.id)).toEqual([
       "anthropic:default",
@@ -141,17 +141,17 @@ describe("auth profile helpers", () => {
   });
 
   it("reads first configured provider order entry as primary profile", () => {
-    expect(resolvePrimaryAuthProfileId(config, "openai-codex")).toBe("openai-codex:default");
+    expect(resolvePrimaryAuthProfileId(config, "openai")).toBe("openai:default");
   });
 
   it("moves chosen profile to the front while preserving remaining provider entries", () => {
     expect(
       buildAuthOrderWithPrimary({
         configForm: config,
-        provider: "openai-codex",
-        primaryProfileId: "openai-codex:work",
+        provider: "openai",
+        primaryProfileId: "openai:work",
       }),
-    ).toEqual(["openai-codex:work", "openai-codex:default"]);
+    ).toEqual(["openai:work", "openai:default"]);
   });
 });
 

@@ -74,10 +74,20 @@ while [[ $# -gt 0 ]]; do
 done
 
 profiles_tests=(
+  src/auto-reply/reply/commands-profiles.test.ts
+  src/agents/auth-profiles/session-override.test.ts
+  src/agents/auth-profiles/profiles.test.ts
+  src/agents/auth-profiles.store-cache.test.ts
+  src/agents/auth-profiles.sqlite-store.test.ts
+  src/commands/doctor-auth-flat-profiles.test.ts
+  src/commands/doctor-auth-oauth-sidecar.test.ts
   src/commands/models/auth.test.ts
   src/commands/models/auth.login-profiles.test.ts
   src/cli/models-cli.test.ts
+  src/infra/provider-usage.policy.test.ts
+  src/infra/provider-usage.cache.test.ts
   src/infra/provider-usage.auth.normalizes-keys.test.ts
+  ui/src/ui/views/agents-utils.test.ts
 )
 
 slack_a2a_tests=(

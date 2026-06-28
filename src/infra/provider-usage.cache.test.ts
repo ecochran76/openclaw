@@ -22,12 +22,12 @@ describe("provider-usage.cache", () => {
     await withTempDir({ prefix: "openclaw-usage-cache-" }, async (agentDir) => {
       await writeCachedProviderUsageSummary({
         agentDir,
-        profileId: "openai-codex:pcg",
+        profileId: "openai:pcg",
         summary: {
           updatedAt: Date.UTC(2026, 2, 27, 12, 0, 0),
           providers: [
             {
-              provider: "openai-codex",
+              provider: "openai",
               displayName: "Codex",
               windows: [{ label: "5h", usedPercent: 72 }],
               plan: "Plus",
@@ -40,12 +40,12 @@ describe("provider-usage.cache", () => {
 
       const cached = await readCachedProfileUsageState({
         agentDir,
-        provider: "openai-codex",
-        profileId: "openai-codex:pcg",
+        provider: "openai",
+        profileId: "openai:pcg",
       });
       expect(cached).toMatchObject({
-        provider: "openai-codex",
-        profileId: "openai-codex:pcg",
+        provider: "openai",
+        profileId: "openai:pcg",
         plan: "Plus",
         windows: [{ label: "5h", usedPercent: 72 }],
       });
@@ -53,18 +53,18 @@ describe("provider-usage.cache", () => {
       expect(
         getCachedProfileUsageState({
           agentDir,
-          provider: "openai-codex",
-          profileId: "openai-codex:pcg",
+          provider: "openai",
+          profileId: "openai:pcg",
         }),
       ).toMatchObject({
-        provider: "openai-codex",
-        profileId: "openai-codex:pcg",
+        provider: "openai",
+        profileId: "openai:pcg",
       });
 
       const summary = await readCachedProviderUsageSummary({
         agentDir,
-        profileId: "openai-codex:pcg",
-        providers: ["openai-codex"],
+        profileId: "openai:pcg",
+        providers: ["openai"],
       });
       expect(summary.providers).toHaveLength(1);
       expect(summary.providers[0]?.windows[0]?.label).toBe("5h");
@@ -92,10 +92,10 @@ describe("provider-usage.cache", () => {
         config: {},
         agentDir,
         cacheAgentDir: agentDir,
-        cacheProfileId: "openai-codex:pcg",
-        profileId: "openai-codex:pcg",
-        providers: ["openai-codex"],
-        auth: [{ provider: "openai-codex", token: "codex-token", accountId: "acc-1" }],
+        cacheProfileId: "openai:pcg",
+        profileId: "openai:pcg",
+        providers: ["openai"],
+        auth: [{ provider: "openai", token: "codex-token", accountId: "acc-1" }],
         fetch: successFetch,
         now: Date.UTC(2026, 2, 27, 12, 0, 0),
       });
@@ -108,10 +108,10 @@ describe("provider-usage.cache", () => {
           config: {},
           agentDir,
           cacheAgentDir: agentDir,
-          cacheProfileId: "openai-codex:pcg",
-          profileId: "openai-codex:pcg",
-          providers: ["openai-codex"],
-          auth: [{ provider: "openai-codex", token: "codex-token", accountId: "acc-1" }],
+          cacheProfileId: "openai:pcg",
+          profileId: "openai:pcg",
+          providers: ["openai"],
+          auth: [{ provider: "openai", token: "codex-token", accountId: "acc-1" }],
           now: Date.UTC(2026, 2, 27, 12, 30, 0),
           fallbackToCache: true,
         });
@@ -120,20 +120,20 @@ describe("provider-usage.cache", () => {
       }
 
       expect(fallback.providers).toHaveLength(1);
-      expect(fallback.providers[0]?.provider).toBe("openai-codex");
+      expect(fallback.providers[0]?.provider).toBe("openai");
       expect(fallback.providers[0]?.windows[0]?.usedPercent).toBe(18);
     });
   });
 
   it("dedupes cached preflight alerts until the usage snapshot refreshes", async () => {
     await withTempDir({ prefix: "openclaw-usage-cache-" }, async (agentDir) => {
-      const profileId = "openai-codex:pcg";
+      const profileId = "openai:pcg";
       const updatedAt = Date.UTC(2026, 2, 27, 12, 0, 0);
       const decision = {
         action: "warn",
         reason: "threshold",
         scope: "default",
-        provider: "openai-codex",
+        provider: "openai",
         profileId,
         selectionSource: "auto",
         matched: {
@@ -153,7 +153,7 @@ describe("provider-usage.cache", () => {
           updatedAt,
           providers: [
             {
-              provider: "openai-codex",
+              provider: "openai",
               displayName: "Codex",
               windows: [{ label: "5h", usedPercent: 85 }],
               plan: "Plus",
@@ -165,7 +165,7 @@ describe("provider-usage.cache", () => {
       await expect(
         shouldSendCachedUsagePolicyAlert({
           agentDir,
-          provider: "openai-codex",
+          provider: "openai",
           profileId,
           surface: "preflightNotice",
           decision,
@@ -174,7 +174,7 @@ describe("provider-usage.cache", () => {
 
       await markCachedUsagePolicyAlertSent({
         agentDir,
-        provider: "openai-codex",
+        provider: "openai",
         profileId,
         surface: "preflightNotice",
         decision,
@@ -183,7 +183,7 @@ describe("provider-usage.cache", () => {
       await expect(
         shouldSendCachedUsagePolicyAlert({
           agentDir,
-          provider: "openai-codex",
+          provider: "openai",
           profileId,
           surface: "preflightNotice",
           decision,
@@ -197,7 +197,7 @@ describe("provider-usage.cache", () => {
           updatedAt: updatedAt + 60_000,
           providers: [
             {
-              provider: "openai-codex",
+              provider: "openai",
               displayName: "Codex",
               windows: [{ label: "5h", usedPercent: 86 }],
               plan: "Plus",
@@ -208,7 +208,7 @@ describe("provider-usage.cache", () => {
 
       const refreshed = await readCachedProfileUsageState({
         agentDir,
-        provider: "openai-codex",
+        provider: "openai",
         profileId,
       });
       expect(refreshed?.lastAlertAt).toBeTruthy();
@@ -216,7 +216,7 @@ describe("provider-usage.cache", () => {
       await expect(
         shouldSendCachedUsagePolicyAlert({
           agentDir,
-          provider: "openai-codex",
+          provider: "openai",
           profileId,
           surface: "preflightNotice",
           decision: {

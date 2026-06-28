@@ -175,10 +175,9 @@ function createAuthStoreWithProfiles(params: {
 const TEST_PRIMARY_PROFILE_ID = "openai:primary@example.test";
 const TEST_SECONDARY_PROFILE_ID = "openai:secondary@example.test";
 
-async function writeMockedAuthStore(agentDir: string, store: AuthProfileStore) {
+function writeMockedAuthStore(_agentDir: string, store: AuthProfileStore) {
   authStoreMocks.state.hasSource = true;
   authStoreMocks.state.store = store;
-  await fs.writeFile(path.join(agentDir, "auth-profiles.json"), JSON.stringify(store), "utf-8");
 }
 
 async function writeUsageCache(params: {

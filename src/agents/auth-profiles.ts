@@ -7,7 +7,6 @@ export type { AuthProfileEligibilityReasonCode } from "./auth-profiles/order.js"
 export { resolveAuthProfileDisplayLabel } from "./auth-profiles/display.js";
 export { formatAuthDoctorHint } from "./auth-profiles/doctor.js";
 export {
-  externalCliDiscoveryExisting,
   externalCliDiscoveryForConfigStatus,
   externalCliDiscoveryForProviderAuth,
   externalCliDiscoveryForProviders,
@@ -40,7 +39,6 @@ export {
   removeProviderAuthProfilesWithLock,
   promoteAuthProfileInOrder,
   setAuthProfileOrder,
-  syncAuthProfile,
   upsertAuthProfile,
   upsertAuthProfileWithLock,
 } from "./auth-profiles/profiles.js";
@@ -91,7 +89,6 @@ export type {
   ProfileUsageStats,
   TokenCredential,
 } from "./auth-profiles/types.js";
-export type { SyncAuthProfileResult } from "./auth-profiles/profiles.js";
 export {
   calculateAuthProfileCooldownMs,
   clearAuthProfileCooldown,

@@ -1,5 +1,5 @@
 // Commander registration for model catalog, status, auth, alias, and fallback commands.
-import type { Command } from "commander";
+import { Option, type Command } from "commander";
 import { formatDocsLink } from "../../packages/terminal-core/src/links.js";
 import { theme } from "../../packages/terminal-core/src/theme.js";
 
@@ -350,16 +350,23 @@ export function registerModelsCli(program: Command) {
     .option("--device-code", "Use the provider device-code auth method", false)
     .option("--profile-id <id>", "Auth profile id override for single-profile login methods")
     .option("--set-default", "Apply the provider's default model recommendation", false)
+    .addOption(
+      new Option(
+        "--notify-slack <target>",
+        "Deprecated: DM device codes to a Slack user target",
+      ).hideHelp(),
+    )
+    .addOption(
+      new Option(
+        "--notify-slack-account <id>",
+        "Deprecated: Slack account id for --notify-slack",
+      ).hideHelp(),
+    )
     .option(
       "--force",
       "Remove existing profiles for the provider before logging in (use when a cached OAuth profile is stuck or you want to switch accounts)",
       false,
     )
-    .option(
-      "--notify-slack <target>",
-      "DM device codes to a Slack user target (for example user:U123)",
-    )
-    .option("--notify-slack-account <id>", "Slack account id for --notify-slack")
     .action(async (opts, command) => {
       if (opts.deviceCode && typeof opts.method === "string" && opts.method !== "device-code") {
         throw new Error(
@@ -464,28 +471,6 @@ export function registerModelsCli(program: Command) {
             method: "device",
             yes: Boolean(opts.yes),
             agent,
-          },
-          defaultRuntime,
-        );
-      });
-    });
-
-  auth
-    .command("sync")
-    .description("Sync an auth profile from one agent to others")
-    .requiredOption("--profile-id <id>", "Auth profile id to sync (e.g. <provider>:work)")
-    .option("--from-agent <id>", "Source agent id (default: main)")
-    .option("--to-agents <ids>", "Comma-separated target agent ids or 'all' (default: all)")
-    .option("--json", "Output JSON", false)
-    .action(async (opts) => {
-      await withModelsRuntime(async ({ defaultRuntime }) => {
-        const { modelsAuthSyncCommand } = await import("../commands/models/auth-sync.js");
-        await modelsAuthSyncCommand(
-          {
-            profileId: opts.profileId as string,
-            fromAgent: opts.fromAgent as string | undefined,
-            toAgents: opts.toAgents as string | undefined,
-            json: Boolean(opts.json),
           },
           defaultRuntime,
         );

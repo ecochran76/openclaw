@@ -9,7 +9,7 @@ export function formatAuthRecoveryHint(params: {
 }): string {
   const provider = params.provider?.trim();
   const profileId = params.authProfileId?.trim();
-  const loginProvider = provider;
+  const loginProvider = provider === "openai-codex" ? "openai" : provider;
 
   if (params.allowChatReauth && supportsChatReauthProvider(provider)) {
     if (profileId) {

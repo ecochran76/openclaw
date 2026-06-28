@@ -45,3 +45,9 @@ State: COMPLETE
 Current State: `docs/dev/plans/0010-2026-05-30-slack-history-reconciliation-receiver.md` completed the durable Slack history reconciliation milestone. OpenClaw now has a Slack history correctness path alongside Socket Mode: dry-run/replay reconciliation, status, watchdog/why-silent operator surfaces, focused tests, and live SoyLei recovery proof are present as of 2026-05-31.
 
 SoyLei is live-patched with reconciliation enabled and `autoRecover: true`.
+
+## P06 | Profile Support Retirement
+
+State: OPEN
+
+Current State: `docs/dev/plans/0014-2026-06-28-profile-support-retirement.md` tracks reducing the `ec-main` profile delta now that upstream OpenClaw owns native auth-profile storage, CLI auth commands, ordering, rotation, and doctor migration. The intended end state is a thin local operator UX/policy layer over upstream profile APIs, not a parallel profile implementation.

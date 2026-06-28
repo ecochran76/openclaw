@@ -3,15 +3,15 @@
  * Snapshots are cloned at boundaries so callers cannot mutate shared state.
  */
 import { cloneAuthProfileStore } from "./clone.js";
-import { resolveAuthStorePath } from "./path-resolve.js";
+import { resolveAuthProfileDatabasePath } from "./sqlite.js";
 import type { AuthProfileStore } from "./types.js";
 
 const runtimeAuthStoreSnapshots = new Map<string, AuthProfileStore>();
 
-// Runtime snapshots are keyed by the resolved auth store path so default-agent
+// Runtime snapshots are keyed by the canonical SQLite store path so default-agent
 // and per-agent stores do not overwrite each other.
 function resolveRuntimeStoreKey(agentDir?: string): string {
-  return resolveAuthStorePath(agentDir);
+  return resolveAuthProfileDatabasePath(agentDir);
 }
 
 /** Reads a cloned runtime auth profile store snapshot for an agent dir. */
