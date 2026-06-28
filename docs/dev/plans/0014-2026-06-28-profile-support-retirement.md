@@ -1,7 +1,8 @@
 # Profile Support Retirement Plan
 
-State: OPEN - source cleanup validated; installed-runtime proof pending
+State: CLOSED - source cleanup landed and installed-runtime proof passed
 Created: 2026-06-28
+Closed: 2026-06-28
 
 ## Current State
 
@@ -147,7 +148,16 @@ Known proof gaps:
 
 - `pnpm check:changed` through the normal remote wrapper did not start because Blacksmith authentication is missing locally (`not authenticated -- run 'blacksmith auth login' first`).
 - The local child `check:changed` path reached the branch-wide typecheck lane and failed on pre-existing drift outside this profile-retirement slice; the touched cache-test type errors observed in that run were fixed and revalidated by the focused cache test plus the full profile gate.
-- Installed-runtime proof is still pending. Per live-patch policy, this source cleanup needs commit/push before running `scripts/patch-live-openclaw.sh --expect-branch ec-main --require-expected-branch`, then `oc main` and chat `/profiles` must be checked against the installed runtime.
+
+Installed-runtime closeout:
+
+- Source cleanup commit: `bdf498ba77` (`Retire duplicate profile runtime support`), pushed to `fork/ec-main`.
+- Source diff: 45 files changed, 881 insertions, 2749 deletions; deleted runtime legacy OAuth sidecar and local `models auth sync` command/tests.
+- Live patch: `scripts/patch-live-openclaw.sh --expect-branch ec-main --require-expected-branch` passed; installed CLI and Gateway report `OpenClaw 2026.6.10 (bdf498b)`.
+- Gateway proof: `openclaw gateway status --deep --require-rpc` passed with `Read probe: ok`, admin capability, Gateway version `2026.6.10`, systemd user service active, and listeners on `127.0.0.1:18789` / `[::1]:18789`.
+- Installed profile proof: `openclaw models auth list --agent main --provider openai --json` returned four SQLite-backed OpenAI profiles from `~/.openclaw/agents/main/agent/openclaw-agent.sqlite`: `openai:ecochran76`, `openai:pcg`, `openai:soylei`, and `openai:work`.
+- Chat command proof: `openclaw gateway call chat.send --expect-final --timeout 90000 --json --params '{"sessionKey":"agent:main:plan-0014-profile-proof","agentId":"main","message":"/profiles","idempotencyKey":"plan-0014-profiles-live-1"}'` accepted the run, and `openclaw gateway call chat.history --timeout 30000 --json --params '{"sessionKey":"agent:main:plan-0014-profile-proof","limit":20}'` showed the assistant command response `Profiles (openai)` listing `openai:soylei`, `openai:ecochran76`, `openai:pcg`, and `openai:work`.
+- Runtime warnings observed but not blocking this plan: legacy config health state conflict at `~/.openclaw/logs/config-health.json`, non-standard service PATH containing the active Node version manager path, `minimal` tool-policy guidance for selected agents, and an escaped `last30days` skill path warning.
 
 Remaining Phase 2 candidates:
 
