@@ -1,4 +1,4 @@
-State: OPEN
+State: CLOSED
 Created: 2026-06-27
 
 # Crabbox Broad Gate And Runtime Warning Cleanup Plan
@@ -128,6 +128,24 @@ the current operator environment:
 
 These are external/authentication blockers rather than rebase failures. Direct
 local `pnpm check:changed` remains intentionally skipped in this Codex worktree.
+
+## 2026-06-27 Closeout
+
+Final branch and runtime state:
+
+- final `HEAD` and `fork/ec-main`: same pushed `ec-main` closeout commit
+- `origin/main`: `7bbd09047bd7ce1ce573e0d434abcf72a76de1f6`
+- `origin/main...HEAD`: `0 336`
+- push: `git push --force-with-lease fork ec-main` succeeded
+- installed CLI: `OpenClaw 2026.6.10 (8bb2ab3)`
+- gateway deep status: read probe `ok`, `admin-capable`
+- `openclaw doctor`: exited 0 after reporting the classified residual warnings
+
+Plan 0013 is closed with the broad changed gate documented as externally
+blocked by missing remote-provider authentication/configuration. Slack
+reliability and Codex auth remain protected by the focused proof from plan 0012;
+no broad-gate evidence contradicted those focused results because no remote
+broad gate could allocate.
 
 ## Scope
 
