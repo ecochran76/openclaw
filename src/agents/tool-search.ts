@@ -896,6 +896,7 @@ export function applyToolSearchCatalog(params: {
   runId?: string;
   catalogRef?: ToolSearchCatalogRef;
   toolHookContext?: HookContext;
+  visibleToolNames?: Iterable<string>;
 }): {
   tools: AnyAgentTool[];
   compacted: boolean;
@@ -904,12 +905,18 @@ export function applyToolSearchCatalog(params: {
   catalogReused: boolean;
 } {
   const config = resolveToolSearchConfig(params.config);
+  const visibleToolNames = new Set(
+    normalizeStringEntries(Array.from(params.visibleToolNames ?? [])),
+  );
+  const uniqueCatalogToolNames = collectUniqueCatalogToolNames(params.tools);
   return applyToolCatalogCompaction({
     ...params,
     enabled: config.enabled,
     isVisibleControlTool: (tool) =>
       TOOL_SEARCH_CONTROL_TOOL_NAMES.has(tool.name) &&
       shouldExposeControlTool(tool.name, config.mode),
+    isVisibleCatalogTool: (tool) =>
+      visibleToolNames.has(tool.name) && uniqueCatalogToolNames.has(tool.name),
   });
 }
 

@@ -222,6 +222,48 @@ describe("createCopilotToolBridge", () => {
     expect(result.sdkTools.map((tool) => tool.name)).toEqual(["tool_search_code"]);
   });
 
+  it("defaults xAI BYOK message-only runs to a compact surface with message visible", async () => {
+    const createOpenClawCodingTools = vi.fn(async (opts: unknown) => {
+      const includeToolSearchControls = Boolean(
+        (opts as { includeToolSearchControls?: boolean }).includeToolSearchControls,
+      );
+      return includeToolSearchControls
+        ? [
+            makeTool({ name: "tool_search" }),
+            makeTool({ name: "tool_describe" }),
+            makeTool({ name: "tool_call" }),
+            makeTool({ name: "message" }),
+            makeTool({ name: "fake_hidden" }),
+          ]
+        : [makeTool({ name: "message" }), makeTool({ name: "fake_hidden" })];
+    });
+
+    const result = await createCopilotToolBridge({
+      agentId: "agent-1",
+      allowModelTools: true,
+      attemptParams: {
+        config: {},
+        runId: "run-xai-message-only",
+        sessionKey: "agent:main:main",
+        sourceReplyDeliveryMode: "message_tool_only",
+      } as never,
+      createOpenClawCodingTools,
+      modelId: "grok-test",
+      modelProvider: "xai",
+      sessionId: "session-1",
+    });
+
+    expect(createOpenClawCodingTools).toHaveBeenCalledWith(
+      expect.objectContaining({ includeToolSearchControls: true }),
+    );
+    expect(result.sourceTools.map((tool) => tool.name)).toEqual([
+      "tool_search",
+      "tool_describe",
+      "tool_call",
+      "message",
+    ]);
+  });
+
   it("keeps tool_search controls visible when a narrow allowlist is active", async () => {
     const createOpenClawCodingTools = vi.fn(async (opts: unknown) => {
       const includeToolSearchControls = Boolean(

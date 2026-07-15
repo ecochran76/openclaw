@@ -194,6 +194,7 @@ export async function createCopilotToolBridge(
     forceMessageTool: shouldForceCopilotMessageTool(attemptParams),
     isRawModelRun: isCopilotRawModelRun(attemptParams),
     modelToolsEnabled: true,
+    modelProvider: input.modelProvider,
     prompt: attemptParams.prompt,
     runId: attemptParams.runId,
     runtimeToolAllowlist: effectiveToolPlan.runtimeToolAllowlist,

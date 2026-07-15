@@ -170,7 +170,7 @@ import { runAgentHarnessBeforeAgentFinalizeHook } from "../../harness/lifecycle-
 import { resolveHeartbeatPromptForSystemPrompt } from "../../heartbeat-system-prompt.js";
 import { resolveImageSanitizationLimits } from "../../image-sanitization.js";
 import {
-  applyLocalModelLeanToolSearchDefaults,
+  applyRuntimeToolSearchDefaults,
   filterLocalModelLeanTools,
   isLocalModelLeanEnabled,
   resolveLocalModelLeanPreserveToolNames,
@@ -250,7 +250,6 @@ import {
   type ToolSearchCatalogToolExecutor,
   type ToolSearchTargetTranscriptProjection,
 } from "../../tool-search.js";
-import type { AnyAgentTool } from "../../tools/common.js";
 import {
   replaceWithEffectiveCronCreatorToolAllowlist,
   type CronCreatorToolAllowlistEntry,
@@ -1248,13 +1247,12 @@ export async function runEmbeddedAttempt(
     });
     const toolsEnabled = supportsModelTools(params.model);
     const codeModeConfig = resolveCodeModeConfig(params.config, sessionAgentId);
-    const toolSearchRuntimeConfig = forceDirectMessageTool
-      ? params.config
-      : applyLocalModelLeanToolSearchDefaults({
-          config: params.config,
-          agentId: sessionAgentId,
-          sessionKey: sandboxSessionKey,
-        });
+    const toolSearchRuntimeConfig = applyRuntimeToolSearchDefaults({
+      config: params.config,
+      agentId: sessionAgentId,
+      sessionKey: sandboxSessionKey,
+      modelProvider: params.provider,
+    });
     const toolSearchConfig = resolveToolSearchConfig(toolSearchRuntimeConfig);
     const codeModeControlsEnabledForRun =
       toolsEnabled &&
@@ -1805,6 +1803,7 @@ export async function runEmbeddedAttempt(
             runId: params.runId,
             catalogRef: toolSearchCatalogRef,
             toolHookContext: catalogToolHookContext,
+            visibleToolNames: directoryRequiredToolNames,
           });
     const projectedToolSearchTools = filterLocalModelLeanTools({
       tools: toolSearch.tools,
@@ -2383,7 +2382,7 @@ export async function runEmbeddedAttempt(
       // Get hook runner early so it's available when creating tools
       const hookRunner = getGlobalHookRunner();
 
-      const { builtInTools, customTools } = splitSdkTools({
+      const { customTools } = splitSdkTools({
         tools: effectiveTools,
         sandboxEnabled: Boolean(sandbox?.enabled),
         toolHookContext: catalogToolHookContext,

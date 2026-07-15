@@ -7,6 +7,7 @@ import type { OpenClawConfig } from "../config/config.js";
 import type { AnyAgentTool } from "./agent-tools.types.js";
 import {
   applyLocalModelLeanToolSearchDefaults,
+  applyRuntimeToolSearchDefaults,
   filterLocalModelLeanTools,
   isLocalModelLeanEnabled,
   resolveLocalModelLeanPreserveToolNames,
@@ -269,5 +270,60 @@ describe("local model lean tool filtering", () => {
     };
 
     expect(applyLocalModelLeanToolSearchDefaults({ config: cfg, agentId: "main" })).toBe(cfg);
+  });
+
+  it("defaults xAI runs to Tool Search controls because xAI enforces a strict tool count limit", () => {
+    const cfg: OpenClawConfig = {
+      agents: {
+        list: [
+          {
+            id: "soylei-primary",
+          },
+        ],
+      },
+    };
+
+    const resolved = applyRuntimeToolSearchDefaults({
+      config: cfg,
+      agentId: "soylei-primary",
+      modelProvider: "xai",
+    });
+
+    expect(resolved).not.toBe(cfg);
+    expect(resolved?.tools?.toolSearch).toEqual({
+      enabled: true,
+      mode: "tools",
+      searchDefaultLimit: 5,
+      maxSearchLimit: 10,
+    });
+  });
+
+  it("defaults xAI runs when no config was loaded", () => {
+    expect(applyRuntimeToolSearchDefaults({ modelProvider: "xai" })).toEqual({
+      tools: {
+        toolSearch: {
+          enabled: true,
+          mode: "tools",
+          searchDefaultLimit: 5,
+          maxSearchLimit: 10,
+        },
+      },
+    });
+  });
+
+  it("preserves explicit Tool Search operator config for xAI runs", () => {
+    const cfg: OpenClawConfig = {
+      tools: {
+        toolSearch: false,
+      },
+    };
+
+    expect(applyRuntimeToolSearchDefaults({ config: cfg, modelProvider: "xai" })).toBe(cfg);
+  });
+
+  it("leaves non-lean non-xAI runs unchanged", () => {
+    const cfg: OpenClawConfig = {};
+
+    expect(applyRuntimeToolSearchDefaults({ config: cfg, modelProvider: "openai" })).toBe(cfg);
   });
 });

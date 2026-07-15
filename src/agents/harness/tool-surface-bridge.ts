@@ -8,7 +8,7 @@ import {
   resolveCodeModeConfig,
 } from "../code-mode.js";
 import {
-  applyLocalModelLeanToolSearchDefaults,
+  applyRuntimeToolSearchDefaults,
   filterLocalModelLeanTools,
   resolveLocalModelLeanPreserveToolNames,
 } from "../local-model-lean.js";
@@ -63,6 +63,7 @@ export function createAgentHarnessToolSurfaceRuntime(params: {
   forceMessageTool?: boolean;
   isRawModelRun?: boolean;
   modelToolsEnabled: boolean;
+  modelProvider?: string;
   prompt?: string;
   runId?: string;
   runtimeToolAllowlist?: readonly string[];
@@ -74,13 +75,12 @@ export function createAgentHarnessToolSurfaceRuntime(params: {
   const forceDirectMessageTool =
     params.forceMessageTool === true || params.sourceReplyDeliveryMode === "message_tool_only";
   const codeModeConfig = resolveCodeModeConfig(params.config, params.agentId);
-  const toolSearchRuntimeConfig = forceDirectMessageTool
-    ? params.config
-    : applyLocalModelLeanToolSearchDefaults({
-        config: params.config,
-        agentId: params.agentId,
-        sessionKey: params.sessionKey,
-      });
+  const toolSearchRuntimeConfig = applyRuntimeToolSearchDefaults({
+    config: params.config,
+    agentId: params.agentId,
+    sessionKey: params.sessionKey,
+    modelProvider: params.modelProvider,
+  });
   const toolSearchConfig = resolveToolSearchConfig(toolSearchRuntimeConfig);
   const toolsAvailable =
     params.modelToolsEnabled &&
@@ -184,6 +184,7 @@ export function createAgentHarnessToolSurfaceRuntime(params: {
             runId: params.runId,
             catalogRef: toolSearchCatalogRef,
             toolHookContext: options.hookContext,
+            visibleToolNames: directoryRequiredToolNames,
           });
     const projectedCompactedTools = filterLocalModelLeanTools({
       tools: compacted.tools,

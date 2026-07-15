@@ -288,6 +288,33 @@ describe("Tool Search", () => {
     expect(compacted.catalogToolCount).toBe(1);
   });
 
+  it("keeps explicitly visible catalog tools on the direct surface", () => {
+    const searchTool = fakeTool(TOOL_SEARCH_RAW_TOOL_NAME, "search");
+    const describeTool = fakeTool(TOOL_DESCRIBE_RAW_TOOL_NAME, "describe");
+    const callTool = fakeTool(TOOL_CALL_RAW_TOOL_NAME, "call");
+    const messageTool = pluginTool("message", "Deliver a reply");
+    const hiddenTool = pluginTool("fake_lookup_visible", "Lookup fake records");
+
+    const compacted = applyToolSearchCatalog({
+      tools: [searchTool, describeTool, callTool, messageTool, hiddenTool],
+      config: {
+        tools: {
+          toolSearch: { enabled: true, mode: "tools" },
+        },
+      } as never,
+      sessionId: "session-visible-tool",
+      visibleToolNames: ["message"],
+    });
+
+    expect(compacted.tools.map((tool) => tool.name)).toEqual([
+      TOOL_SEARCH_RAW_TOOL_NAME,
+      TOOL_DESCRIBE_RAW_TOOL_NAME,
+      TOOL_CALL_RAW_TOOL_NAME,
+      "message",
+    ]);
+    expect(compacted.catalogToolCount).toBe(2);
+  });
+
   it("can expose a compact tool directory while deferring full schemas", async () => {
     const searchTool = fakeTool(TOOL_SEARCH_RAW_TOOL_NAME, "search");
     const describeTool = fakeTool(TOOL_DESCRIBE_RAW_TOOL_NAME, "describe");
