@@ -21,8 +21,9 @@ topology and hide semantic drops inside conflict choices.
 
 ## Fixed Coordinates
 
-- pre-rebase checkpoint: `0b6fe0300302`
-- published checkpoint: `fork/ec-main` at `0b6fe0300302`
+- source/runtime checkpoint: `0b6fe0300302`
+- plan-execution checkpoint: `197a33da957`
+- published checkpoint: `fork/ec-main` at `197a33da957`
 - upstream target: `origin/main` at `b50822aab53e`
 - merge base: `7bbd09047bd7`
 - divergence at preparation: 6,139 upstream-only / 340 downstream-only
@@ -30,8 +31,8 @@ topology and hide semantic drops inside conflict choices.
 - sibling Codex contract: `bdd282f3bbd5`
 
 Before changing ancestry, create and publish
-`backup/ec-main-pre-rebase-20260714-0b6fe03` at the checkpoint. Record the old
-`fork/ec-main` value as the force-with-lease expectation.
+`backup/ec-main-pre-rebase-20260714-197a33d` at the plan-execution checkpoint.
+Record `197a33da957` as the old `fork/ec-main` force-with-lease expectation.
 
 ## Replay Method
 
@@ -178,7 +179,7 @@ same invariant; never delete a gate entry merely to make the wrapper green.
 - verify `git merge-base --is-ancestor origin/main ec-main` succeeds;
 - verify the old checkpoint remains reachable from the published backup ref;
 - force-push only `fork/ec-main`, only with `--force-with-lease` against
-  `0b6fe0300302`;
+  `197a33da957`;
 - quiesce the SoyLei admission-watchdog timer and active oneshot;
 - build/install a tarball with
   `scripts/patch-live-openclaw.sh --expect-branch ec-main --require-expected-branch --patch-external-plugins`;
