@@ -1,7 +1,23 @@
-State: OPEN
+State: CLOSED
 Created: 2026-07-14
 
 # ec-main Pre-Rebase Preparation
+
+## Closeout
+
+Completed on 2026-07-14 at `0b6fe030030` and published to `fork/ec-main`.
+Fresh autoreview found no accepted or actionable findings. The tarball live
+patch built successfully, installed `2026.6.10 (0b6fe03)`, refreshed the
+gateway service, and passed its RPC read probe. A deliberate Codex app-server
+turn (`76bd4139-e845-427f-a866-e89c2acc6d18`) returned the exact requested
+text in 14,132 ms on `openai/gpt-5.5` with the Codex harness and no fallback.
+Both Slack accounts then probed HTTP 200, connected with zero reconnects, and
+reported healthy Socket Mode state; SoyLei reconciliation reported zero
+missing/failed candidates and one recovered candidate. The admission-watchdog
+timer was restored after patching and started a fresh scan at 22:46:57 CDT.
+
+Plan 0016 now owns the upstream replay, post-rebase external-plugin patch,
+latest Codex model transition, and final runtime proof.
 
 ## Current State
 
@@ -137,7 +153,7 @@ State: COMPLETE
 
 ## Phase 5 | Pre-Rebase Validation And Publication
 
-State: OPEN
+State: COMPLETE
 
 Completed source proof:
 

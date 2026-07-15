@@ -250,3 +250,9 @@ This runbook is a dated log of planning-contract and execution events that shoul
   the post-rebase live patch.
 - Opened Plan 0015 for bounded pre-rebase preparation and reserved Plan 0016
   for the full feature-family replay.
+- Published and live-patched `0b6fe030030`; a fresh Codex app-server turn
+  returned the exact requested output with no fallback, and gateway/Slack deep
+  probes remained healthy.
+- Closed Plan 0015 and opened Plan 0016 for a recovery-ref-backed semantic
+  squash replay, family gates, plugin-aware live patch, and latest Codex model
+  transition.

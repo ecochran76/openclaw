@@ -54,4 +54,4 @@ Current State: `docs/dev/plans/0014-2026-06-28-profile-support-retirement.md` is
 
 State: OPEN
 
-Current State: `docs/dev/plans/0015-2026-07-14-ec-main-pre-rebase-preparation.md` owns the clean checkpoint, fresh ancestry/conflict audit, Codex app-server auth preservation, Slack runtime baseline, and pre-rebase proof. A separate Plan 0016 will own the feature-family replay onto `origin/main` and the plugin-aware live patch.
+Current State: Plan 0015 closed after publishing and live-proving the pre-rebase checkpoint. `docs/dev/plans/0016-2026-07-14-ec-main-upstream-family-replay.md` now owns the semantic feature-family replay onto `origin/main`, plugin-aware live patch, and latest Codex model transition.
