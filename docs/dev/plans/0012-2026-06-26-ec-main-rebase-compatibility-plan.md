@@ -1,7 +1,15 @@
-State: OPEN
+State: CLOSED
 Created: 2026-06-26
 
 # ec-main Rebase Compatibility Plan
+
+## Closeout
+
+Closed on 2026-07-14 as superseded historical planning. The planned June 2026
+rebase completed through `2f3374bb96`, and Plan 0013 records the subsequent
+validation, publication, and runtime-warning closeout. Its old SHAs and conflict
+counts are no longer current; Plan 0015 owns the fresh pre-rebase preparation
+and Plan 0016 will own the new upstream replay.
 
 ## Current State
 

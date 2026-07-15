@@ -235,3 +235,18 @@ This runbook is a dated log of planning-contract and execution events that shoul
 
 - Created `docs/dev/plans/0014-2026-06-28-profile-support-retirement.md` after confirming upstream OpenClaw now owns native auth-profile storage, CLI auth commands, ordering, rotation, and doctor migration.
 - Updated `ROADMAP.md`, `docs/dev/local-feature-index.md`, and `docs/dev/local-features/profiles.md` so future profile work aims to retire duplicated `ec-main` storage/CLI ownership and keep only thin operator UX/policy surfaces.
+
+## Turn 22 | 2026-07-14
+
+- Reviewed, validated, committed, and pushed the inherited xAI tool-catalog
+  compaction slice as `1255acf401` before fetching upstream.
+- Fetched `origin/main` at `b50822aab53`; recorded merge base `7bbd09047b`,
+  divergence of 6,139 upstream-only / 339 downstream-only commits, and a
+  165-file endpoint conflict forecast.
+- Audited Codex app-server auth against sibling Codex source and separated
+  fresh inference evidence from inconclusive zero-target model probes.
+- Confirmed installed Slack executable bytes match current `ec-main` while
+  registry metadata remains stale, so the external-plugin update belongs in
+  the post-rebase live patch.
+- Opened Plan 0015 for bounded pre-rebase preparation and reserved Plan 0016
+  for the full feature-family replay.

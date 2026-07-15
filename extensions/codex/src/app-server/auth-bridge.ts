@@ -120,10 +120,12 @@ export function resolveCodexAppServerAuthProfileId(params: {
     ...ordered,
     ...codexProfiles,
   ];
-  return candidates.find((profileId, index) => {
-    const trimmed = profileId.trim();
-    return trimmed && candidates.findIndex((candidate) => candidate.trim() === trimmed) === index;
-  })?.trim();
+  return candidates
+    .find((profileId, index) => {
+      const trimmed = profileId.trim();
+      return trimmed && candidates.findIndex((candidate) => candidate.trim() === trimmed) === index;
+    })
+    ?.trim();
 }
 
 export function resolveCodexAppServerAuthProfileIdForAgent(params: {
@@ -272,10 +274,7 @@ export async function resolveCodexAppServerAuthAccountCacheKey(params: {
       profileId,
       agentDir,
     });
-    const accessToken = normalizeCodexAccessToken(resolved?.apiKey).token;
-    return accessToken
-      ? `${resolveChatgptAccountId(profileId, credential)}:${fingerprintTokenAuthProfileCacheKey(accessToken)}`
-      : resolveChatgptAccountId(profileId, credential);
+    return resolveNormalizedTokenAuthProfileCacheKey(profileId, credential, resolved?.apiKey);
   }
   if (credential.type === "oauth") {
     const resolved = await resolveApiKeyForProfile({
@@ -283,10 +282,7 @@ export async function resolveCodexAppServerAuthAccountCacheKey(params: {
       profileId,
       agentDir,
     });
-    const accessToken = normalizeCodexAccessToken(resolved?.apiKey).token;
-    return accessToken
-      ? `${resolveChatgptAccountId(profileId, credential)}:${fingerprintTokenAuthProfileCacheKey(accessToken)}`
-      : resolveChatgptAccountId(profileId, credential);
+    return resolveNormalizedTokenAuthProfileCacheKey(profileId, credential, resolved?.apiKey);
   }
   return resolveChatgptAccountId(profileId, credential);
 }
@@ -691,9 +687,9 @@ async function resolveLoginParamsForCredential(
       profileId,
       agentDir: params.agentDir,
     });
-    const accessToken = normalizeCodexAccessToken(resolved?.apiKey).token;
-    return accessToken
-      ? buildChatgptAuthTokensParams(profileId, credential, accessToken)
+    const normalized = normalizeCodexAccessToken(resolved?.apiKey);
+    return normalized.token
+      ? buildChatgptAuthTokensParams(profileId, credential, normalized.token, normalized.accountId)
       : undefined;
   }
   if (credential.type !== "oauth") {
@@ -1026,13 +1022,26 @@ function buildChatgptAuthTokensParams(
   profileId: string,
   credential: AuthProfileCredential,
   accessToken: string,
+  accountId?: string,
 ): CodexLoginAccountParams {
   return {
     type: "chatgptAuthTokens",
     accessToken,
-    chatgptAccountId: resolveChatgptAccountId(profileId, credential),
+    chatgptAccountId: accountId ?? resolveChatgptAccountId(profileId, credential),
     chatgptPlanType: resolveChatgptPlanType(credential),
   };
+}
+
+function resolveNormalizedTokenAuthProfileCacheKey(
+  profileId: string,
+  credential: AuthProfileCredential,
+  value: string | undefined,
+): string {
+  const normalized = normalizeCodexAccessToken(value);
+  const accountId = normalized.accountId ?? resolveChatgptAccountId(profileId, credential);
+  return normalized.token
+    ? `${accountId}:${fingerprintTokenAuthProfileCacheKey(normalized.token)}`
+    : accountId;
 }
 
 function normalizeCodexAccessToken(value: string | undefined): {
@@ -1047,25 +1056,30 @@ function normalizeCodexAccessToken(value: string | undefined): {
     return { token: trimmed };
   }
   try {
-    const parsed = JSON.parse(trimmed) as {
-      token?: unknown;
-      accessToken?: unknown;
-      accountId?: unknown;
-    };
-    const token =
-      typeof parsed.token === "string" && parsed.token.trim()
-        ? parsed.token.trim()
-        : typeof parsed.accessToken === "string" && parsed.accessToken.trim()
-          ? parsed.accessToken.trim()
-          : undefined;
-    const accountId =
-      typeof parsed.accountId === "string" && parsed.accountId.trim()
-        ? parsed.accountId.trim()
+    const parsed = JSON.parse(trimmed) as Record<string, unknown>;
+    const tokens =
+      parsed.tokens && typeof parsed.tokens === "object"
+        ? (parsed.tokens as Record<string, unknown>)
         : undefined;
+    const token =
+      readTrimmedString(parsed.token) ??
+      readTrimmedString(parsed.access_token) ??
+      readTrimmedString(parsed.accessToken) ??
+      readTrimmedString(tokens?.access_token) ??
+      readTrimmedString(tokens?.accessToken);
+    const accountId =
+      readTrimmedString(parsed.account_id) ??
+      readTrimmedString(parsed.accountId) ??
+      readTrimmedString(tokens?.account_id) ??
+      readTrimmedString(tokens?.accountId);
     return { token, accountId };
   } catch {
     return { token: trimmed };
   }
+}
+
+function readTrimmedString(value: unknown): string | undefined {
+  return typeof value === "string" && value.trim() ? value.trim() : undefined;
 }
 
 function resolveChatgptPlanType(credential: AuthProfileCredential): string | null {

@@ -104,7 +104,29 @@ slack_a2a_tests=(
 slack_responsiveness_tests=(
   src/auto-reply/reply/dispatch-from-config.test.ts
   src/auto-reply/reply/commands-turn-status.test.ts
+  src/auto-reply/reply/commands-turns-nudge.test.ts
+  src/auto-reply/reply/commands-why-silent.test.ts
+  src/auto-reply/reply/delivery-observer.test.ts
+  src/auto-reply/reply/dispatch-final-delivery.test.ts
+  src/auto-reply/reply/pending-final-delivery.test.ts
+  src/auto-reply/reply/reply-turn-admission.test.ts
   src/auto-reply/turn-tracker.test.ts
+  src/channels/account-snapshot-fields.test.ts
+  src/commands/channels/slack-watchdog-scan.test.ts
+  src/commands/channels/why-silent.test.ts
+  src/gateway/channel-health-monitor.test.ts
+  src/gateway/channel-health-policy.test.ts
+  extensions/slack/src/accounts.test.ts
+  extensions/slack/src/streaming.test.ts
+  extensions/slack/src/monitor/admission-ledger.test.ts
+  extensions/slack/src/monitor/message-handler/dispatch.preview-fallback.test.ts
+  extensions/slack/src/monitor/message-handler/dispatch.streaming.test.ts
+  extensions/slack/src/monitor/message-handler/preview-finalize.test.ts
+  extensions/slack/src/monitor/provider.interop.test.ts
+  extensions/slack/src/monitor/provider.reconnect-loop.test.ts
+  extensions/slack/src/monitor/provider.reconnect.test.ts
+  extensions/slack/src/monitor/reconciliation.test.ts
+  extensions/slack/src/monitor/watchdog-scan.test.ts
 )
 
 automation_tests=(

@@ -4,11 +4,9 @@ This roadmap is the top-level index for serialized `ec-main` plans. Detailed act
 
 ## P01 | Plugin Survivability
 
-State: OPEN
+State: COMPLETE
 
-Current State: `ec-main` carries local feature families that must survive frequent rebases onto upstream OpenClaw. The current active plan is `docs/dev/plans/0001-2026-04-20-plugin-survivability-roadmap.md`; Phases 1 and 2 are implemented.
-
-The next implementation slice is the automation command/status seam.
+Current State: `docs/dev/plans/0001-2026-04-20-plugin-survivability-roadmap.md` is closed with all five phases implemented. The surviving feature families and their focused rebase gates are indexed in `docs/dev/local-feature-index.md`; P07 owns the current upstream replay.
 
 ## P02 | OpenClaw Agent Skill Catalog
 
@@ -48,6 +46,12 @@ SoyLei is live-patched with reconciliation enabled and `autoRecover: true`.
 
 ## P06 | Profile Support Retirement
 
+State: COMPLETE
+
+Current State: `docs/dev/plans/0014-2026-06-28-profile-support-retirement.md` is closed after reducing the profile delta to a thin local operator UX/policy layer over upstream native auth-profile storage, CLI auth commands, ordering, rotation, and doctor migration.
+
+## P07 | ec-main Upstream Refresh
+
 State: OPEN
 
-Current State: `docs/dev/plans/0014-2026-06-28-profile-support-retirement.md` tracks reducing the `ec-main` profile delta now that upstream OpenClaw owns native auth-profile storage, CLI auth commands, ordering, rotation, and doctor migration. The intended end state is a thin local operator UX/policy layer over upstream profile APIs, not a parallel profile implementation.
+Current State: `docs/dev/plans/0015-2026-07-14-ec-main-pre-rebase-preparation.md` owns the clean checkpoint, fresh ancestry/conflict audit, Codex app-server auth preservation, Slack runtime baseline, and pre-rebase proof. A separate Plan 0016 will own the feature-family replay onto `origin/main` and the plugin-aware live patch.

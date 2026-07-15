@@ -576,6 +576,39 @@ describe("bridgeCodexAppServerStartOptions", () => {
     }
   });
 
+  it("normalizes wrapped token identity for app-server cache keys", async () => {
+    const agentDir = await fs.mkdtemp(path.join(os.tmpdir(), "openclaw-codex-app-server-"));
+    try {
+      upsertAuthProfile({
+        agentDir,
+        profileId: "openai:work",
+        credential: {
+          type: "token",
+          provider: "openai",
+          tokenRef: { source: "env", provider: "default", id: "OPENAI_CODEX_TEST_TOKEN" },
+          email: "stored@example.test",
+        },
+      });
+      vi.stubEnv(
+        "OPENAI_CODEX_TEST_TOKEN",
+        JSON.stringify({
+          tokens: { access_token: "wrapped-ref-token", account_id: "wrapper-account" },
+        }),
+      );
+
+      const cacheKey = await resolveCodexAppServerAuthAccountCacheKey({
+        agentDir,
+        authProfileId: "openai:work",
+      });
+
+      expect(cacheKey).toMatch(/^wrapper-account:token:sha256:[a-f0-9]{64}$/);
+      expect(cacheKey).not.toContain("wrapped-ref-token");
+      expect(cacheKey).not.toContain("stored@example.test");
+    } finally {
+      await fs.rm(agentDir, { recursive: true, force: true });
+    }
+  });
+
   it("fingerprints OAuth auth-profile access token rotations", async () => {
     const agentDir = await fs.mkdtemp(path.join(os.tmpdir(), "openclaw-codex-app-server-"));
     try {
@@ -625,6 +658,38 @@ describe("bridgeCodexAppServerStartOptions", () => {
     }
   });
 
+  it("normalizes wrapped OAuth identity for app-server cache keys", async () => {
+    const agentDir = await fs.mkdtemp(path.join(os.tmpdir(), "openclaw-codex-app-server-"));
+    providerRuntimeMocks.formatProviderAuthProfileApiKeyWithPlugin.mockResolvedValueOnce(
+      JSON.stringify({ accessToken: "wrapped-access-token", accountId: "wrapper-account" }),
+    );
+    try {
+      upsertAuthProfile({
+        agentDir,
+        profileId: "openai:work",
+        credential: {
+          type: "oauth",
+          provider: "openai",
+          access: "stored-access-token",
+          refresh: "refresh-token",
+          expires: Date.now() + 24 * 60 * 60_000,
+          accountId: "stored-account",
+        },
+      });
+
+      const cacheKey = await resolveCodexAppServerAuthAccountCacheKey({
+        agentDir,
+        authProfileId: "openai:work",
+      });
+
+      expect(cacheKey).toMatch(/^wrapper-account:token:sha256:[a-f0-9]{64}$/);
+      expect(cacheKey).not.toContain("wrapped-access-token");
+      expect(cacheKey).not.toContain("stored-account");
+    } finally {
+      await fs.rm(agentDir, { recursive: true, force: true });
+    }
+  });
+
   it("applies an OpenAI Codex OAuth profile through app-server login", async () => {
     const agentDir = await fs.mkdtemp(path.join(os.tmpdir(), "openclaw-codex-app-server-"));
     const request = vi.fn(async () => ({ type: "chatgptAuthTokens" }));
@@ -653,6 +718,117 @@ describe("bridgeCodexAppServerStartOptions", () => {
         type: "chatgptAuthTokens",
         accessToken: "access-token",
         chatgptAccountId: "account-123",
+        chatgptPlanType: null,
+      });
+    } finally {
+      await fs.rm(agentDir, { recursive: true, force: true });
+    }
+  });
+
+  it("unwraps OpenAI Codex OAuth credentials before app-server login", async () => {
+    const agentDir = await fs.mkdtemp(path.join(os.tmpdir(), "openclaw-codex-app-server-"));
+    const request = vi.fn(async () => ({ type: "chatgptAuthTokens" }));
+    providerRuntimeMocks.formatProviderAuthProfileApiKeyWithPlugin.mockResolvedValueOnce(
+      JSON.stringify({
+        access_token: "wrapped-access-token",
+        account_id: "wrapper-account",
+      }),
+    );
+    try {
+      upsertAuthProfile({
+        agentDir,
+        profileId: "openai:work",
+        credential: {
+          type: "oauth",
+          provider: "openai",
+          access: "stored-access-token",
+          refresh: "refresh-token",
+          expires: Date.now() + 24 * 60 * 60_000,
+          accountId: "stored-account",
+        },
+      });
+
+      await applyCodexAppServerAuthProfile({
+        client: { request } as never,
+        agentDir,
+        authProfileId: "openai:work",
+      });
+
+      expect(request).toHaveBeenCalledWith("account/login/start", {
+        type: "chatgptAuthTokens",
+        accessToken: "wrapped-access-token",
+        chatgptAccountId: "wrapper-account",
+        chatgptPlanType: null,
+      });
+    } finally {
+      await fs.rm(agentDir, { recursive: true, force: true });
+    }
+  });
+
+  it("unwraps nested token credentials before app-server login", async () => {
+    const agentDir = await fs.mkdtemp(path.join(os.tmpdir(), "openclaw-codex-app-server-"));
+    const request = vi.fn(async () => ({ type: "chatgptAuthTokens" }));
+    vi.stubEnv(
+      "OPENAI_CODEX_TEST_TOKEN",
+      JSON.stringify({
+        tokens: { accessToken: "wrapped-ref-token", accountId: "wrapper-account" },
+      }),
+    );
+    try {
+      upsertAuthProfile({
+        agentDir,
+        profileId: "openai:work",
+        credential: {
+          type: "token",
+          provider: "openai",
+          tokenRef: { source: "env", provider: "default", id: "OPENAI_CODEX_TEST_TOKEN" },
+          email: "stored@example.test",
+        },
+      });
+
+      await applyCodexAppServerAuthProfile({
+        client: { request } as never,
+        agentDir,
+        authProfileId: "openai:work",
+      });
+
+      expect(request).toHaveBeenCalledWith("account/login/start", {
+        type: "chatgptAuthTokens",
+        accessToken: "wrapped-ref-token",
+        chatgptAccountId: "wrapper-account",
+        chatgptPlanType: null,
+      });
+    } finally {
+      await fs.rm(agentDir, { recursive: true, force: true });
+    }
+  });
+
+  it("keeps malformed JSON-like token credentials as opaque tokens", async () => {
+    const agentDir = await fs.mkdtemp(path.join(os.tmpdir(), "openclaw-codex-app-server-"));
+    const request = vi.fn(async () => ({ type: "chatgptAuthTokens" }));
+    vi.stubEnv("OPENAI_CODEX_TEST_TOKEN", "{opaque-token");
+    try {
+      upsertAuthProfile({
+        agentDir,
+        profileId: "openai:work",
+        credential: {
+          type: "token",
+          provider: "openai",
+          tokenRef: { source: "env", provider: "default", id: "OPENAI_CODEX_TEST_TOKEN" },
+          email: "stored@example.test",
+        },
+      });
+
+      await applyCodexAppServerAuthProfile({
+        client: { request } as never,
+        agentDir,
+        authProfileId: "openai:work",
+      });
+
+      expect(request).toHaveBeenCalledWith("account/login/start", {
+        type: "chatgptAuthTokens",
+        accessToken: "{opaque-token",
+        chatgptAccountId: "stored@example.test",
         chatgptPlanType: null,
       });
     } finally {
