@@ -44,6 +44,19 @@ describe("resolveSlackInstallationIdentity", () => {
     ).toEqual({ kind: "degraded", reason: "auth_test_failed" });
   });
 
+  it("preserves degraded enterprise startup after auth.test failure", () => {
+    expect(
+      resolveSlackInstallationIdentity({
+        enterpriseOrgInstall: true,
+        authError: new Error("timeout"),
+      }),
+    ).toEqual({
+      kind: "degraded",
+      reason: "auth_test_failed",
+      enterpriseOrgInstall: true,
+    });
+  });
+
   it("preserves workspace startup when auth.test omits app_id", () => {
     expect(
       resolveSlackInstallationIdentity({

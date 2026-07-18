@@ -19,6 +19,8 @@ const dispatchPluginInteractiveHandlerMock = vi.hoisted(() =>
 );
 const resolvePluginConversationBindingApprovalMock = vi.hoisted(() => vi.fn());
 const buildPluginBindingResolvedTextMock = vi.hoisted(() => vi.fn(() => "Binding updated."));
+const parseA2APermissionApprovalCustomIdMock = vi.hoisted(() => vi.fn());
+const resolvePendingA2APermissionApprovalMock = vi.hoisted(() => vi.fn());
 type ApprovalResolveMockResult = {
   applied: boolean;
   approval:
@@ -127,6 +129,9 @@ vi.mock("../conversation.runtime.js", () => {
   return {
     buildPluginBindingResolvedText: (...args: unknown[]) =>
       (buildPluginBindingResolvedTextMock as (...innerArgs: unknown[]) => string)(...args),
+    buildA2APermissionApprovalResolvedText: () => "A2A permission updated.",
+    parseA2APermissionApprovalCustomId: (value: string) =>
+      parseA2APermissionApprovalCustomIdMock(value),
     parsePluginBindingApprovalCustomId,
     resolvePluginConversationBindingApproval: (...args: unknown[]) =>
       (
@@ -134,6 +139,8 @@ vi.mock("../conversation.runtime.js", () => {
           ...innerArgs: unknown[]
         ) => Promise<unknown>
       )(...args),
+    resolvePendingA2APermissionApproval: (...args: unknown[]) =>
+      resolvePendingA2APermissionApprovalMock(...args),
   };
 });
 
@@ -420,6 +427,9 @@ describe("registerSlackInteractionEvents", () => {
     resolvePluginConversationBindingApprovalMock.mockResolvedValue({ status: "expired" });
     buildPluginBindingResolvedTextMock.mockClear();
     buildPluginBindingResolvedTextMock.mockReturnValue("Binding updated.");
+    parseA2APermissionApprovalCustomIdMock.mockReset();
+    parseA2APermissionApprovalCustomIdMock.mockReturnValue(null);
+    resolvePendingA2APermissionApprovalMock.mockReset();
     resolveApprovalOverGatewayMock.mockClear();
     resolveApprovalOverGatewayMock.mockResolvedValue({
       applied: true,
@@ -1199,6 +1209,40 @@ describe("registerSlackInteractionEvents", () => {
       response_type: "ephemeral",
     });
     expect(enqueueSystemEventMock).not.toHaveBeenCalled();
+  });
+
+  it("rejects A2A permission approvals from actors outside the Slack approval allowlist", async () => {
+    parseA2APermissionApprovalCustomIdMock.mockReturnValue({
+      approvalId: "a2a-approval-123",
+      decision: "approve",
+    });
+    const { ctx, getHandler } = createContext({
+      cfg: { channels: { slack: { allowFrom: ["UOWNER"] } } },
+    });
+    registerSlackInteractionEvents({ ctx: ctx as never });
+    const respond = vi.fn().mockResolvedValue(undefined);
+
+    await getHandler()({
+      ack: vi.fn().mockResolvedValue(undefined),
+      respond,
+      body: {
+        user: { id: "UOTHER" },
+        channel: { id: "C1" },
+        container: { channel_id: "C1", message_ts: "100.200" },
+        message: { ts: "100.200", text: "Approve A2A?", blocks: [] },
+      },
+      action: {
+        type: "button",
+        action_id: "openclaw:reply_button",
+        value: "a2aapproval:a2a-approval-123:a",
+      },
+    });
+
+    expect(resolvePendingA2APermissionApprovalMock).not.toHaveBeenCalled();
+    expect(respond).toHaveBeenCalledWith({
+      text: "You are not authorized to approve this request.",
+      response_type: "ephemeral",
+    });
   });
 
   it("resolves typed exec approvals from Slack-private action data", async () => {

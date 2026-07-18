@@ -12,6 +12,7 @@ import {
 import type { ResolvedSlackAccount } from "../accounts.js";
 import type { SlackSendIdentity } from "../send.js";
 import type { SlackMessageEvent } from "../types.js";
+import { recordSlackAdmission } from "./admission-ledger.js";
 import { stripSlackMentionsForCommandDetection } from "./commands.js";
 import type { SlackMonitorContext } from "./context.js";
 import type { SlackEventScope } from "./event-scope.js";
@@ -23,6 +24,7 @@ import {
   buildSlackDebounceKey,
   buildTopLevelSlackConversationKey,
 } from "./message-handler/debounce-key.js";
+import { clearPrePipelineReactions } from "./message-handler/reactions.js";
 import { createSlackThreadTsResolver } from "./thread-resolution.js";
 
 const loadSlackMessagePipeline = createLazyRuntimeModule(
@@ -32,13 +34,15 @@ const loadSlackMessagePipeline = createLazyRuntimeModule(
 export type SlackMessageHandler = (
   message: SlackMessageEvent,
   opts: {
-    source: "message" | "app_mention";
+    source: "message" | "app_mention" | "history_reconcile";
     wasMentioned?: boolean;
     relayIdentity?: SlackSendIdentity;
     /** Non-serializable listener scope for a validated enterprise event. */
     eventScope?: SlackEventScope;
     /** Wait until any inbound debounce flush and dispatch has completed. */
     awaitDispatch?: boolean;
+    /** The event adapter already owns the shared channel/timestamp claim. */
+    claimAlreadyHeld?: boolean;
   },
 ) => Promise<void>;
 
@@ -192,10 +196,13 @@ export function createSlackMessageHandler(params: {
                   .filter(Boolean)
                   .join("\n");
           const combinedMentioned = entries.some((entry) => Boolean(entry.opts.wasMentioned));
-          const syntheticMessage: SlackMessageEvent = {
-            ...last.message,
-            text: combinedText,
-          };
+          const syntheticMessage: SlackMessageEvent =
+            entries.length === 1
+              ? last.message
+              : {
+                  ...last.message,
+                  text: combinedText,
+                };
           const seenMessageKey = buildSeenMessageKey(
             last.message.channel,
             last.message.ts,
@@ -259,6 +266,26 @@ export function createSlackMessageHandler(params: {
               }
             })();
             if (!prepared) {
+              await Promise.all(
+                entries.map(async (entry) => {
+                  const recorded = await recordSlackAdmission({
+                    accountId: ctx.accountId,
+                    message: entry.message,
+                    source: entry.opts.source,
+                    outcome: "dropped",
+                    reason: "pipeline-not-prepared",
+                    logger: ctx.logger,
+                  });
+                  if (recorded) {
+                    ctx.trackTelemetry?.("admissionsRecorded");
+                  }
+                  await clearPrePipelineReactions({
+                    ctx,
+                    accountId: ctx.accountId,
+                    message: entry.message,
+                  });
+                }),
+              );
               return;
             }
             if (entries.length > 1) {
@@ -269,6 +296,25 @@ export function createSlackMessageHandler(params: {
                 prepared.ctxPayload.MessageSidLast = ids[ids.length - 1];
               }
             }
+            for (const _entry of entries) {
+              ctx.trackTelemetry?.("preparedForDispatch");
+            }
+            await Promise.all(
+              entries.map(async (entry) => {
+                const recorded = await recordSlackAdmission({
+                  accountId: ctx.accountId,
+                  message: entry.message,
+                  source: entry.opts.source,
+                  outcome: "accepted",
+                  routeAgentId: prepared.route.agentId,
+                  sessionKey: prepared.route.sessionKey,
+                  logger: ctx.logger,
+                });
+                if (recorded) {
+                  ctx.trackTelemetry?.("admissionsRecorded");
+                }
+              }),
+            );
             try {
               await dispatchPreparedSlackMessage(prepared);
               await recordSlackInboundMessageDeliveries({
@@ -277,6 +323,9 @@ export function createSlackMessageHandler(params: {
                 messages: entries.map((entry) => entry.message),
               });
             } catch (error) {
+              for (const _entry of entries) {
+                ctx.trackTelemetry?.("dispatchFailures");
+              }
               if (!isRetryableSlackInboundError(error)) {
                 await recordSlackInboundMessageDeliveries({
                   accountId: ctx.accountId,
@@ -412,9 +461,12 @@ export function createSlackMessageHandler(params: {
     ) {
       return undefined;
     }
-    const wasSeen = seenMessageKey
-      ? ctx.markMessageSeen(message.channel, message.ts, opts.eventScope)
-      : false;
+    // Live ingress and history reconciliation share one atomic in-process claim. Durable
+    // admission snapshots can lag an in-flight live dispatch, so bypassing this claim can replay it.
+    const wasSeen =
+      seenMessageKey && !opts.claimAlreadyHeld
+        ? ctx.markMessageSeen(message.channel, message.ts, opts.eventScope)
+        : false;
     if (seenMessageKey && opts.source === "message" && !wasSeen) {
       // Prime exactly one fallback app_mention allowance immediately so a near-simultaneous
       // app_mention is not dropped while message handling is still in-flight.
@@ -441,7 +493,10 @@ export function createSlackMessageHandler(params: {
       teamId,
     );
     const canDebounce =
-      !opts.eventScope && debounceMs > 0 && shouldDebounceSlackMessage(resolvedMessage, ctx.cfg);
+      opts.source !== "history_reconcile" &&
+      !opts.eventScope &&
+      debounceMs > 0 &&
+      shouldDebounceSlackMessage(resolvedMessage, ctx.cfg);
     if (!canDebounce && conversationKey) {
       const pendingKeys = pendingTopLevelDebounceKeys.get(conversationKey);
       if (pendingKeys && pendingKeys.size > 0) {

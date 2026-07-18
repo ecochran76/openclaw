@@ -4,10 +4,15 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 const enqueueMock = vi.fn(async (_entry: unknown) => {});
 const flushKeyMock = vi.fn(async (_key: string) => {});
 const onFlushCallbacks: Array<(entries: Array<Record<string, unknown>>) => Promise<void>> = [];
-const prepareSlackMessageMock = vi.fn(async () => ({ ctxPayload: {} }));
+const prepareSlackMessageMock = vi.fn(async () => ({
+  ctxPayload: {},
+  route: { agentId: "main", sessionKey: "agent:main:main" },
+}));
 const dispatchPreparedSlackMessageMock = vi.fn(async () => {});
 const hasSlackInboundMessageDeliveryMock = vi.fn(async () => false);
 const recordSlackInboundMessageDeliveriesMock = vi.fn(async () => {});
+const recordSlackAdmissionMock = vi.fn(async () => true);
+const clearPrePipelineReactionsMock = vi.fn(async () => {});
 const resolveThreadTsMock = vi.fn(async ({ message }: { message: Record<string, unknown> }) => ({
   ...message,
 }));
@@ -51,6 +56,18 @@ vi.mock("./inbound-delivery-state.js", () => ({
   recordSlackInboundMessageDeliveries: recordSlackInboundMessageDeliveriesMock,
 }));
 
+vi.mock("./admission-ledger.js", () => ({
+  recordSlackAdmission: recordSlackAdmissionMock,
+}));
+
+vi.mock("./message-handler/reactions.js", async (importOriginal) => {
+  const actual = await importOriginal<typeof import("./message-handler/reactions.js")>();
+  return {
+    ...actual,
+    clearPrePipelineReactions: clearPrePipelineReactionsMock,
+  };
+});
+
 function createContext(overrides?: {
   markMessageSeen?: (channel: string | undefined, ts: string | undefined) => boolean;
   rememberSlackChannelType?: (
@@ -58,6 +75,7 @@ function createContext(overrides?: {
     channelType: string | null | undefined,
   ) => void;
   releaseSeenMessage?: (channel: string | undefined, ts: string | undefined) => void;
+  trackTelemetry?: (counter: string) => void;
 }) {
   return {
     cfg: {},
@@ -74,6 +92,7 @@ function createContext(overrides?: {
     ) => overrides?.rememberSlackChannelType?.(channel, channelType),
     releaseSeenMessage: (channel: string | undefined, ts: string | undefined) =>
       overrides?.releaseSeenMessage?.(channel, ts),
+    trackTelemetry: overrides?.trackTelemetry,
   } as Parameters<typeof createSlackMessageHandler>[0]["ctx"];
 }
 
@@ -86,12 +105,13 @@ function createHandlerWithTracker(overrides?: {
   releaseSeenMessage?: (channel: string | undefined, ts: string | undefined) => void;
 }) {
   const trackEvent = vi.fn();
+  const trackTelemetry = vi.fn();
   const handler = createSlackMessageHandler({
-    ctx: createContext(overrides),
+    ctx: createContext({ ...overrides, trackTelemetry }),
     account: { accountId: "default" } as Parameters<typeof createSlackMessageHandler>[0]["account"],
     trackEvent,
   });
-  return { handler, trackEvent };
+  return { handler, trackEvent, trackTelemetry };
 }
 
 async function handleDirectMessage(
@@ -118,6 +138,8 @@ describe("createSlackMessageHandler", () => {
     hasSlackInboundMessageDeliveryMock.mockReset();
     hasSlackInboundMessageDeliveryMock.mockResolvedValue(false);
     recordSlackInboundMessageDeliveriesMock.mockClear();
+    recordSlackAdmissionMock.mockClear();
+    clearPrePipelineReactionsMock.mockClear();
     resolveThreadTsMock.mockClear();
   });
 
@@ -149,6 +171,24 @@ describe("createSlackMessageHandler", () => {
     const { handler, trackEvent } = createHandlerWithTracker({ markMessageSeen: () => true });
 
     await handleDirectMessage(handler);
+
+    expect(trackEvent).not.toHaveBeenCalled();
+    expect(resolveThreadTsMock).not.toHaveBeenCalled();
+    expect(enqueueMock).not.toHaveBeenCalled();
+  });
+
+  it("does not reconcile a message already claimed by live ingress", async () => {
+    const { handler, trackEvent } = createHandlerWithTracker({ markMessageSeen: () => true });
+
+    await handler(
+      {
+        type: "message",
+        channel: "D1",
+        ts: "123.456",
+        text: "hello",
+      } as never,
+      { source: "history_reconcile", awaitDispatch: true },
+    );
 
     expect(trackEvent).not.toHaveBeenCalled();
     expect(resolveThreadTsMock).not.toHaveBeenCalled();
@@ -270,7 +310,7 @@ describe("createSlackMessageHandler", () => {
   });
 
   it("waits for debounced dispatch completion when requested by relay delivery", async () => {
-    const { handler } = createHandlerWithTracker();
+    const { handler, trackTelemetry } = createHandlerWithTracker();
     const handled = handler(
       {
         type: "message",
@@ -294,11 +334,54 @@ describe("createSlackMessageHandler", () => {
     await onFlushCallbacks[0]?.([entry]);
     await expect(handled).resolves.toBeUndefined();
     expect(dispatchPreparedSlackMessageMock).toHaveBeenCalledTimes(1);
+    expect(recordSlackAdmissionMock).toHaveBeenCalledWith(
+      expect.objectContaining({
+        accountId: "default",
+        outcome: "accepted",
+        routeAgentId: "main",
+        sessionKey: "agent:main:main",
+      }),
+    );
+    expect(trackTelemetry).toHaveBeenCalledWith("preparedForDispatch");
+    expect(trackTelemetry).toHaveBeenCalledWith("admissionsRecorded");
+  });
+
+  it("records policy drops and clears pre-pipeline reactions", async () => {
+    prepareSlackMessageMock.mockResolvedValueOnce(null);
+    const { handler, trackTelemetry } = createHandlerWithTracker();
+    const handled = handler(
+      {
+        type: "message",
+        channel: "C111",
+        user: "U111",
+        ts: "1709000000.000550",
+        text: "rejected message",
+      } as never,
+      { source: "message", awaitDispatch: true },
+    );
+
+    await vi.waitFor(() => expect(enqueueMock).toHaveBeenCalledTimes(1));
+    const entry = enqueueMock.mock.calls[0]?.[0] as Record<string, unknown>;
+    await onFlushCallbacks[0]?.([entry]);
+    await expect(handled).resolves.toBeUndefined();
+
+    expect(recordSlackAdmissionMock).toHaveBeenCalledWith(
+      expect.objectContaining({
+        accountId: "default",
+        outcome: "dropped",
+        reason: "pipeline-not-prepared",
+      }),
+    );
+    expect(clearPrePipelineReactionsMock).toHaveBeenCalledWith(
+      expect.objectContaining({ accountId: "default" }),
+    );
+    expect(trackTelemetry).toHaveBeenCalledWith("admissionsRecorded");
+    expect(dispatchPreparedSlackMessageMock).not.toHaveBeenCalled();
   });
 
   it("propagates debounced dispatch failures to relay delivery", async () => {
     dispatchPreparedSlackMessageMock.mockRejectedValueOnce(new Error("dispatch failed"));
-    const { handler } = createHandlerWithTracker();
+    const { handler, trackTelemetry } = createHandlerWithTracker();
     const handled = handler(
       {
         type: "message",
@@ -315,6 +398,7 @@ describe("createSlackMessageHandler", () => {
     const handledFailure = expect(handled).rejects.toThrow("dispatch failed");
     const flushFailure = expect(onFlushCallbacks[0]?.([entry])).rejects.toThrow("dispatch failed");
     await Promise.all([handledFailure, flushFailure]);
+    expect(trackTelemetry).toHaveBeenCalledWith("dispatchFailures");
   });
 
   it("retries native session initialization conflicts through the delivery gates", async () => {

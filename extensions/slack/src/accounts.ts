@@ -156,7 +156,7 @@ export function mergeSlackAccountConfig(
     channelConfig: cfg.channels?.slack as SlackAccountConfig,
     accounts: cfg.channels?.slack?.accounts as Record<string, Partial<SlackAccountConfig>>,
     accountId,
-    nestedObjectKeys: ["botLoopProtection", "relay"],
+    nestedObjectKeys: ["botLoopProtection", "relay", "reconciliation", "socketMode"],
   });
   const streaming = mergeSlackStreamingConfig(
     (cfg.channels?.slack as Record<string, unknown> | undefined)?.streaming,

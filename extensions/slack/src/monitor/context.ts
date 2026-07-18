@@ -32,6 +32,7 @@ import { resolveSessionKey } from "./config.runtime.js";
 import type { SlackInstallationIdentity } from "./enterprise-install.js";
 import type { SlackEventScope } from "./event-scope.js";
 import { isSlackChannelAllowedByPolicy } from "./policy.js";
+import type { SlackStatusCounter } from "./provider-support.js";
 
 export { normalizeSlackChannelType, resolveSlackChatType } from "./channel-type.js";
 
@@ -153,6 +154,7 @@ export type SlackMonitorContext = {
   typingReaction: string;
   mediaMaxBytes: number;
   removeAckAfterReply: boolean;
+  trackTelemetry?: (counter: SlackStatusCounter) => void;
 
   logger: ReturnType<typeof getChildLogger>;
   markMessageSeen: (
@@ -261,7 +263,9 @@ export function createSlackMonitorContext(params: {
   typingReaction: string;
   mediaMaxBytes: number;
   removeAckAfterReply: boolean;
+  trackTelemetry?: SlackMonitorContext["trackTelemetry"];
 }): SlackMonitorContext {
+  let context: SlackMonitorContext;
   const channelHistories = new Map<string, HistoryEntry[]>();
   const logger = getChildLogger({ module: "slack-auto-reply" });
 
@@ -727,20 +731,24 @@ export function createSlackMonitorContext(params: {
           ? raw.team.id
           : "";
 
-    if (params.apiAppId && incomingApiAppId && incomingApiAppId !== params.apiAppId) {
+    if (context.apiAppId && incomingApiAppId && incomingApiAppId !== context.apiAppId) {
       logVerbose(
-        `slack: drop event with api_app_id=${incomingApiAppId} (expected ${params.apiAppId})`,
+        `slack: drop event with api_app_id=${incomingApiAppId} (expected ${context.apiAppId})`,
       );
+      params.trackTelemetry?.("droppedAppMismatches");
+      params.trackTelemetry?.("droppedEvents");
       return true;
     }
-    if (params.teamId && incomingTeamId && incomingTeamId !== params.teamId) {
-      logVerbose(`slack: drop event with team_id=${incomingTeamId} (expected ${params.teamId})`);
+    if (context.teamId && incomingTeamId && incomingTeamId !== context.teamId) {
+      logVerbose(`slack: drop event with team_id=${incomingTeamId} (expected ${context.teamId})`);
+      params.trackTelemetry?.("droppedTeamMismatches");
+      params.trackTelemetry?.("droppedEvents");
       return true;
     }
     return false;
   };
 
-  return {
+  context = {
     cfg: params.cfg,
     accountId: params.accountId,
     botToken: params.botToken,
@@ -783,6 +791,7 @@ export function createSlackMonitorContext(params: {
     typingReaction: params.typingReaction,
     mediaMaxBytes: params.mediaMaxBytes,
     removeAckAfterReply: params.removeAckAfterReply,
+    trackTelemetry: params.trackTelemetry,
     logger,
     markMessageSeen,
     releaseSeenMessage,
@@ -798,5 +807,6 @@ export function createSlackMonitorContext(params: {
     saveSlackAssistantThreadContext,
     setSlackAssistantSuggestedPrompts,
   };
+  return context;
 }
 /* oxlint-disable max-lines -- TODO: split this grandfathered oversized file. */

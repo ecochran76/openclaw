@@ -35,8 +35,11 @@ import {
 import { resolveSlackChannelConfig } from "../channel-config.js";
 import type { SlackMonitorContext } from "../context.js";
 import {
+  buildA2APermissionApprovalResolvedText,
   buildPluginBindingResolvedText,
+  parseA2APermissionApprovalCustomId,
   parsePluginBindingApprovalCustomId,
+  resolvePendingA2APermissionApproval,
   resolvePluginConversationBindingApproval,
 } from "../conversation.runtime.js";
 import { escapeSlackMrkdwn } from "../mrkdwn.js";
@@ -607,6 +610,67 @@ async function handleSlackPluginBindingApproval(params: {
   return true;
 }
 
+function buildSlackResolvedTextBlocks(text: string): (Block | KnownBlock)[] {
+  return [
+    {
+      type: "section",
+      text: {
+        type: "mrkdwn",
+        text,
+      },
+    },
+  ];
+}
+
+async function handleSlackA2APermissionApproval(params: {
+  ctx: SlackMonitorContext;
+  parsed: ParsedSlackBlockAction;
+  pluginInteractionData: string;
+  respond?: SlackBlockActionRespond;
+}): Promise<boolean> {
+  const approvalAction = parseA2APermissionApprovalCustomId(params.pluginInteractionData);
+  if (!approvalAction) {
+    return false;
+  }
+  if (
+    !isSlackApprovalAuthorizedSender({
+      cfg: params.ctx.cfg,
+      accountId: params.ctx.accountId,
+      senderId: params.parsed.userId,
+    })
+  ) {
+    params.ctx.runtime.log?.(
+      `slack:interaction drop a2a approval user=${params.parsed.userId} (not authorized)`,
+    );
+    await respondEphemeral(params.respond, "You are not authorized to approve this request.");
+    return true;
+  }
+  const resolved = await resolvePendingA2APermissionApproval({
+    approvalId: approvalAction.approvalId,
+    decision: approvalAction.decision,
+    actorId: params.parsed.userId,
+  });
+  const resolvedText = buildA2APermissionApprovalResolvedText(resolved);
+  params.ctx.runtime.log?.(
+    `slack:a2a-approval approvalId=${approvalAction.approvalId} decision=${approvalAction.decision} actor=${params.parsed.userId} status=${resolved.status}`,
+  );
+  if (resolved.status !== "error") {
+    try {
+      await updateSlackInteractionMessage({
+        ctx: params.ctx,
+        channelId: params.parsed.channelId,
+        messageTs: params.parsed.messageTs,
+        text: resolvedText,
+        blocks: buildSlackResolvedTextBlocks(resolvedText),
+      });
+    } catch {
+      // Best-effort cleanup only; continue with follow-up feedback.
+    }
+  }
+  await respondEphemeral(params.respond, resolvedText);
+  return true;
+}
+
 async function handleSlackApprovalInteraction(params: {
   ctx: SlackMonitorContext;
   parsed: ParsedSlackBlockAction;
@@ -1102,6 +1166,15 @@ async function handleSlackBlockAction(params: {
       respond,
     });
     if (handledBindingApproval) {
+      return;
+    }
+    const handledA2AApproval = await handleSlackA2APermissionApproval({
+      ctx: params.ctx,
+      parsed,
+      pluginInteractionData,
+      respond,
+    });
+    if (handledA2AApproval) {
       return;
     }
   } else if (pluginInteractionData) {

@@ -102,7 +102,7 @@ export function createSlackThreadTsResolver(params: {
   return {
     resolve: async (request: {
       message: SlackMessageEvent;
-      source: "message" | "app_mention";
+      source: "message" | "app_mention" | "history_reconcile";
     }): Promise<SlackMessageEvent> => {
       const { message } = request;
       if (!message.parent_user_id || message.thread_ts || !message.ts) {

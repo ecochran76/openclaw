@@ -145,6 +145,8 @@ export type SlackSocketModeConfig = {
   serverPingTimeout?: number;
   /** Enable Slack SDK ping/pong transport logging. Socket Mode only. */
   pingPongLoggingEnabled?: boolean;
+  /** Number of concurrent Socket Mode receiver connections. Default: 1, max: 10. */
+  connectionCount?: number;
 };
 
 export type SlackRelayConfig = {
@@ -154,6 +156,21 @@ export type SlackRelayConfig = {
   authToken?: SecretInput;
   /** Gateway destination id registered with openclaw-slack-router. */
   gatewayId?: string;
+};
+
+export type SlackReconciliationConfig = {
+  /** Enable Slack Web API history reconciliation for this account. Default: false. */
+  enabled?: boolean;
+  /** Poll interval in milliseconds. Default: 60000. */
+  intervalMs?: number;
+  /** Overlap/lookback window in milliseconds. Default: 600000. */
+  lookbackMs?: number;
+  /** Maximum channel/root messages to inspect per cycle. Default: 200. */
+  maxMessagesPerCycle?: number;
+  /** Maximum thread roots to inspect per cycle. Default: 50. */
+  maxThreadRootsPerCycle?: number;
+  /** If true, replay eligible missing messages through the Slack inbound path. Default: false. */
+  autoRecover?: boolean;
 };
 
 export type SlackAccountConfig = {
@@ -171,6 +188,8 @@ export type SlackAccountConfig = {
   socketMode?: SlackSocketModeConfig;
   /** Relay-delivered Slack event source. Used when mode is "relay". */
   relay?: SlackRelayConfig;
+  /** Slack Web API history reconciliation. Opt-in correctness backstop. */
+  reconciliation?: SlackReconciliationConfig;
   /** Slack signing secret (required for HTTP mode). */
   signingSecret?: SecretInput;
   /** Slack Events API webhook path (default: /slack/events). */
@@ -253,6 +272,8 @@ export type SlackAccountConfig = {
    * Legacy key: channels.slack.dm.allowFrom.
    */
   allowFrom?: Array<string | number>;
+  /** Compatibility no-op for stale doctor/plugin metadata; Slack routes groups via channels.*.users. */
+  groupAllowFrom?: Array<string | number>;
   /** Default delivery target for CLI --deliver when no explicit --reply-to is provided. */
   defaultTo?: string;
   dm?: SlackDmConfig;

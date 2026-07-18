@@ -4,6 +4,7 @@ import type { ChannelRuntimeSurface } from "openclaw/plugin-sdk/channel-contract
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import {
   flush,
+  getSlackClient,
   getSlackHandlerOrThrow,
   getSlackTestState,
   resetSlackTestState,
@@ -101,6 +102,121 @@ describe("slack allowlist log formatting", () => {
 });
 
 describe("slack startup user allowlist resolution", () => {
+  it("accumulates provider and raw socket telemetry with setStatus-only publishing", async () => {
+    const status: Record<string, unknown> = {};
+    const monitor = startSlackMonitor(monitorSlackProvider, {
+      setStatus: (patch) => Object.assign(status, patch),
+    });
+    try {
+      const handler = await getSlackHandlerOrThrow("message");
+      await flush();
+      await handler({
+        event: {
+          type: "message",
+          subtype: "message_changed",
+          channel: "C123",
+          user: "bot-user",
+          message: { user: "bot-user" },
+        },
+      });
+
+      const receiver = slackTestState.socketReceivers[0] as {
+        client: { on: ReturnType<typeof vi.fn> };
+      };
+      const emit = (event: string, ...args: unknown[]) => {
+        const listener = receiver.client.on.mock.calls.find(([name]) => name === event)?.[1];
+        if (typeof listener !== "function") {
+          throw new Error(`missing ${event} listener`);
+        }
+        listener(...args);
+      };
+      emit("ws_message", Buffer.from("{}"), false);
+      emit("slack_event", { type: "events_api" });
+
+      expect(status.slackTelemetry).toEqual({
+        droppedSelfBotEvents: 1,
+        droppedEvents: 1,
+        messageEvents: 1,
+        rawSocketEnvelopes: 1,
+        rawSlackEvents: 1,
+      });
+    } finally {
+      await stopSlackMonitor(monitor);
+    }
+  });
+
+  it("starts configured concurrent Socket Mode receivers and reports connection status", async () => {
+    resetSlackTestState({
+      channels: {
+        slack: {
+          enabled: true,
+          socketMode: {
+            connectionCount: 2,
+            clientPingTimeout: 20_000,
+            serverPingTimeout: 45_000,
+            pingPongLoggingEnabled: true,
+          },
+          dm: { enabled: true, policy: "open", allowFrom: ["*"] },
+          groupPolicy: "open",
+        },
+      },
+    });
+    const status: Record<string, unknown> = {};
+    const monitor = startSlackMonitor(monitorSlackProvider, {
+      setStatus: (patch) => Object.assign(status, patch),
+      getStatus: () => status,
+    });
+    try {
+      await getSlackHandlerOrThrow("message");
+      await flush();
+
+      expect(slackTestState.socketReceivers).toHaveLength(2);
+      expect(status.socketConnectionCount).toBe(2);
+      expect(status.socketModeSettings).toEqual({
+        clientPingTimeout: 20_000,
+        connectionCount: 2,
+        serverPingTimeout: 45_000,
+        pingPongLoggingEnabled: true,
+      });
+      expect(Object.keys(status.socketConnections as Record<string, unknown>).sort()).toEqual([
+        "primary",
+        "socket-2",
+      ]);
+    } finally {
+      await stopSlackMonitor(monitor);
+    }
+  });
+
+  it("defers history reconciliation when auth metadata is unavailable", async () => {
+    resetSlackTestState({
+      channels: {
+        slack: {
+          enabled: true,
+          channels: {
+            C123: { enabled: true, requireMention: true },
+          },
+          reconciliation: {
+            enabled: true,
+            intervalMs: 60_000,
+          },
+        },
+      },
+    });
+    const client = getSlackClient();
+    client.auth.test.mockRejectedValue(new Error("auth unavailable"));
+
+    const monitor = startSlackMonitor(monitorSlackProvider);
+    try {
+      await getSlackHandlerOrThrow("message");
+      await flush();
+      await flush();
+
+      expect(client.conversations.history).not.toHaveBeenCalled();
+    } finally {
+      await stopSlackMonitor(monitor);
+    }
+  });
+
   it("registers the native approval runtime for plugin-only Slack approvals", async () => {
     resetSlackTestState({
       channels: {
@@ -141,6 +257,38 @@ describe("slack startup user allowlist resolution", () => {
           }),
         }),
       );
+    } finally {
+      await stopSlackMonitor(monitor);
+    }
+  });
+
+  it("does not register native approvals for a degraded enterprise installation", async () => {
+    resetSlackTestState({
+      channels: {
+        slack: {
+          enabled: true,
+          enterpriseOrgInstall: true,
+          dmPolicy: "disabled",
+          groupPolicy: "open",
+        },
+      },
+      approvals: {
+        plugin: {
+          enabled: true,
+          mode: "targets",
+          targets: [{ channel: "slack", to: "U123OWNER" }],
+        },
+      },
+    });
+    getSlackClient().auth.test.mockRejectedValueOnce(new Error("auth unavailable"));
+    const { channelRuntime, register } = createRuntimeContextCapture();
+
+    const monitor = startSlackMonitor(monitorSlackProvider, { channelRuntime });
+    try {
+      await getSlackHandlerOrThrow("message");
+      await flush();
+
+      expect(register).not.toHaveBeenCalled();
     } finally {
       await stopSlackMonitor(monitor);
     }

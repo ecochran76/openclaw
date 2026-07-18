@@ -84,6 +84,7 @@ import { resolveSlackMessageContent } from "./prepare-content.js";
 import { resolveSlackDmHistoryContext, resolveSlackDmHistoryLimit } from "./prepare-dm-history.js";
 import { resolveSlackRoutingContext } from "./prepare-routing.js";
 import { resolveSlackThreadContextData } from "./prepare-thread-context.js";
+import { startPrePipelineAck, startPrePipelineTypingReaction } from "./reactions.js";
 import { isSlackSubteamMentionForBot, normalizeSlackId } from "./subteam-mentions.js";
 import { resolveSlackTimestampMs } from "./timestamp.js";
 import type { PreparedSlackMessage } from "./types.js";
@@ -407,7 +408,7 @@ async function resolveSlackExplicitMentionState(params: {
   messageText: string;
   mentionedUserIds: readonly string[];
   hasSubteamMention: boolean;
-  source: "message" | "app_mention";
+  source: "message" | "app_mention" | "history_reconcile";
   eventScope?: SlackEventScope;
 }): Promise<SlackExplicitMentionState> {
   const normalizedBotUserId = normalizeSlackId(params.ctx.botUserId);
@@ -641,7 +642,7 @@ export async function prepareSlackMessage(params: {
   account: ResolvedSlackAccount;
   message: SlackMessageEvent;
   opts: {
-    source: "message" | "app_mention";
+    source: "message" | "app_mention" | "history_reconcile";
     wasMentioned?: boolean;
     relayIdentity?: SlackSendIdentity;
     eventScope?: SlackEventScope;
@@ -1255,6 +1256,11 @@ export async function prepareSlackMessage(params: {
     return null;
   }
 
+  // Reactions are observable Slack writes. Start them only after sender, command,
+  // bot, and mention policy have admitted this message.
+  startPrePipelineTypingReaction({ ctx, accountId: account.accountId, message, opts });
+  startPrePipelineAck({ ctx, accountId: account.accountId, message, opts });
+
   const chatType = resolveSlackChatType(conversation.resolvedChannelType);
   const inboundEventKind = classifyChannelInboundEvent({
     conversation: { kind: chatType },
@@ -1318,8 +1324,12 @@ export async function prepareSlackMessage(params: {
     !isRoomEvent &&
     statusReactionsExplicitlyEnabled &&
     shouldSendAckReaction;
-  const ackReactionPromise =
-    !statusReactionsWillHandle && shouldSendAckReaction && ackReactionMessageTs && ackReactionValue
+  const ackReactionPromise = message.__openclawPrePipelineAckStarted
+    ? (message.__openclawPrePipelineAckPromise ?? Promise.resolve(true))
+    : !statusReactionsWillHandle &&
+        shouldSendAckReaction &&
+        ackReactionMessageTs &&
+        ackReactionValue
       ? reactSlackMessage(message.channel, ackReactionMessageTs, ackReactionValue, {
           token: ctx.botToken,
           client: slackClient,
@@ -1545,6 +1555,13 @@ export async function prepareSlackMessage(params: {
         authorized: commandAuthorized,
       },
     },
+    command: hasControlCommandInMessage
+      ? {
+          kind: "text-slash",
+          authorized: commandAuthorized,
+          body: commandBody,
+        }
+      : undefined,
     media: inboundMedia,
     supplemental: {
       thread: {

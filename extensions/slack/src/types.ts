@@ -40,6 +40,7 @@ export type SlackMessageEvent = {
   username?: string;
   text?: string;
   ts?: string;
+  client_msg_id?: string;
   thread_ts?: string;
   event_ts?: string;
   parent_user_id?: string;
@@ -54,6 +55,10 @@ export type SlackMessageEvent = {
    * parent thread timestamp could not be recovered.
    */
   _ambiguousThreadReply?: boolean;
+  __openclawPrePipelineAckStarted?: boolean;
+  __openclawPrePipelineAckPromise?: Promise<boolean>;
+  __openclawPrePipelineTypingStarted?: boolean;
+  __openclawPrePipelineTypingPromise?: Promise<boolean>;
 };
 
 export type SlackAppMentionEvent = {

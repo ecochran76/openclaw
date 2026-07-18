@@ -2,7 +2,6 @@
 import type { OpenClawConfig, SlackAccountConfig } from "openclaw/plugin-sdk/config-contracts";
 import { normalizeOptionalString } from "openclaw/plugin-sdk/string-coerce-runtime";
 import { resolveDefaultSlackAccountId } from "../accounts.js";
-import { formatSlackError } from "../errors.js";
 
 export type SlackInstallationIdentity =
   | {
@@ -19,6 +18,8 @@ export type SlackInstallationIdentity =
   | {
       kind: "degraded";
       reason: "auth_test_failed";
+      /** Keep org-wide ingress closed until auth.test hydrates its trusted scope. */
+      enterpriseOrgInstall?: true;
     };
 
 export type SlackAuthTestIdentity = {
@@ -192,12 +193,11 @@ export function resolveSlackInstallationIdentity(params: {
 }): SlackInstallationIdentity {
   const auth = params.auth;
   if (!auth) {
-    if (params.enterpriseOrgInstall) {
-      throw new Error(
-        `Slack enterpriseOrgInstall=true requires a successful auth.test (${formatSlackError(params.authError)})`,
-      );
-    }
-    return { kind: "degraded", reason: "auth_test_failed" };
+    return {
+      kind: "degraded",
+      reason: "auth_test_failed",
+      ...(params.enterpriseOrgInstall ? { enterpriseOrgInstall: true as const } : {}),
+    };
   }
 
   const isEnterpriseInstall = auth.is_enterprise_install === true;

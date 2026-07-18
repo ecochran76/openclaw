@@ -79,19 +79,46 @@ type MessageCase = {
 
 function createHandlers(eventName: RegisteredEventName, overrides?: SlackSystemEventTestOverrides) {
   const harness = createSlackSystemEventTestHarness(overrides);
+  const seen = new Set<string>();
+  harness.ctx.markMessageSeen = (channelId, ts) => {
+    const key = `${channelId ?? ""}:${ts ?? ""}`;
+    if (seen.has(key)) {
+      return true;
+    }
+    seen.add(key);
+    return false;
+  };
+  harness.ctx.releaseSeenMessage = (channelId, ts) => {
+    seen.delete(`${channelId ?? ""}:${ts ?? ""}`);
+  };
   const handleSlackMessage = vi.fn(async () => {});
+  const trackTelemetry = vi.fn();
   registerSlackMessageEvents({
     ctx: harness.ctx,
     handleSlackMessage,
+    trackTelemetry,
   });
   return {
     handler: harness.getHandler(eventName) as MessageHandler | null,
     handleSlackMessage,
+    trackTelemetry,
   };
 }
 
 function createEnterpriseHandlers(eventName: RegisteredEventName) {
   const harness = createSlackSystemEventTestHarness({ dmPolicy: "open" });
+  const seen = new Set<string>();
+  harness.ctx.markMessageSeen = (channelId, ts) => {
+    const key = `${channelId ?? ""}:${ts ?? ""}`;
+    if (seen.has(key)) {
+      return true;
+    }
+    seen.add(key);
+    return false;
+  };
+  harness.ctx.releaseSeenMessage = (channelId, ts) => {
+    seen.delete(`${channelId ?? ""}:${ts ?? ""}`);
+  };
   harness.ctx.installationIdentity = {
     kind: "enterprise",
     apiAppId: "A_TEST",
@@ -224,12 +251,15 @@ async function invokeRegisteredHandler(input: {
   event: Record<string, unknown>;
   body?: unknown;
 }) {
-  const { handler, handleSlackMessage } = createHandlers(input.eventName, input.overrides);
+  const { handler, handleSlackMessage, trackTelemetry } = createHandlers(
+    input.eventName,
+    input.overrides,
+  );
   await requireMessageHandler(handler)({
     event: input.event,
     body: input.body ?? {},
   });
-  return { handleSlackMessage };
+  return { handleSlackMessage, trackTelemetry };
 }
 
 async function runMessageCase(input: MessageCase = {}): Promise<void> {
@@ -359,6 +389,37 @@ describe("registerSlackMessageEvents", () => {
     expect(inboundLogLines()).toEqual([]);
   });
 
+  it.each(["message", "app_mention"] as const)(
+    "keeps %s ingress closed while enterprise identity is degraded",
+    async (eventName) => {
+      const harness = createSlackSystemEventTestHarness({ dmPolicy: "open" });
+      harness.ctx.installationIdentity = {
+        kind: "degraded",
+        reason: "auth_test_failed",
+        enterpriseOrgInstall: true,
+      };
+      const handleSlackMessage = vi.fn(async () => {});
+      registerSlackMessageEvents({ ctx: harness.ctx, handleSlackMessage });
+      const event =
+        eventName === "app_mention"
+          ? makeAppMentionEvent({ channel: "C123", channelType: "channel" })
+          : {
+              ...makeAppMentionEvent({ channel: "C123", channelType: "channel" }),
+              type: "message",
+            };
+
+      await requireMessageHandler(harness.getHandler(eventName) as MessageHandler | null)({
+        event,
+        body: {},
+        context: {},
+        client: {},
+      });
+
+      expect(handleSlackMessage).not.toHaveBeenCalled();
+      expect(inboundLogLines()).toEqual([]);
+    },
+  );
+
   it("drops unsupported enterprise message subtypes before system events or dispatch", async () => {
     const { handler, handleSlackMessage } = createEnterpriseHandlers("message");
     await handler({
@@ -410,7 +471,7 @@ describe("registerSlackMessageEvents", () => {
   });
 
   it("passes regular message events to the message handler", async () => {
-    const { handleSlackMessage } = await invokeRegisteredHandler({
+    const { handleSlackMessage, trackTelemetry } = await invokeRegisteredHandler({
       eventName: "message",
       overrides: { dmPolicy: "open" },
       event: {
@@ -423,6 +484,7 @@ describe("registerSlackMessageEvents", () => {
     });
 
     expect(handleSlackMessage).toHaveBeenCalledTimes(1);
+    expect(trackTelemetry).toHaveBeenCalledWith("messageEvents");
     expect(messageQueueMock).not.toHaveBeenCalled();
   });
 
@@ -440,7 +502,7 @@ describe("registerSlackMessageEvents", () => {
     expect(call?.[0]?.subtype).toBe("thread_broadcast");
     expect(call?.[0]?.channel).toBe("C1");
     expect(call?.[0]?.user).toBe("U1");
-    expect(call?.[1]).toEqual({ source: "message" });
+    expect(call?.[1]).toEqual({ source: "message", claimAlreadyHeld: true });
     expect(messageQueueMock).not.toHaveBeenCalled();
   });
 
@@ -664,7 +726,7 @@ describe("registerSlackMessageEvents", () => {
   });
 
   it("skips app_mention events for DM channel ids even with contradictory channel_type", async () => {
-    const { handleSlackMessage } = await invokeRegisteredHandler({
+    const { handleSlackMessage, trackTelemetry } = await invokeRegisteredHandler({
       eventName: "app_mention",
       overrides: { dmPolicy: "open" },
       event: makeAppMentionEvent({ channel: "D123", channelType: "channel" }),
@@ -676,16 +738,81 @@ describe("registerSlackMessageEvents", () => {
   });
 
   it("routes app_mention events from channels to the message handler", async () => {
-    const { handleSlackMessage } = await invokeRegisteredHandler({
+    const { handleSlackMessage, trackTelemetry } = await invokeRegisteredHandler({
       eventName: "app_mention",
       overrides: { dmPolicy: "open" },
       event: makeAppMentionEvent({ channel: "C123", channelType: "channel", ts: "123.789" }),
     });
 
     expect(handleSlackMessage).toHaveBeenCalledTimes(1);
+    expect(trackTelemetry).toHaveBeenCalledWith("messageEvents");
     expect(inboundLogLines()).toEqual([
       "Inbound app_mention slack:T_TEST:channel:C123:user:U1 -> bot:U_BOT (channel, 14 chars)",
     ]);
+  });
+
+  it("claims message and app_mention duplicates before pre-pipeline work", async () => {
+    const harness = createSlackSystemEventTestHarness({ dmPolicy: "open", channelType: "channel" });
+    const seen = new Set<string>();
+    harness.ctx.markMessageSeen = (channelId, ts) => {
+      const key = `${channelId ?? ""}:${ts ?? ""}`;
+      if (seen.has(key)) {
+        return true;
+      }
+      seen.add(key);
+      return false;
+    };
+    harness.ctx.releaseSeenMessage = () => {};
+    const handleSlackMessage = vi.fn(async () => {});
+    registerSlackMessageEvents({ ctx: harness.ctx, handleSlackMessage });
+    const message = makeAppMentionEvent({ channel: "C123", channelType: "channel", ts: "123.789" });
+
+    await requireMessageHandler(harness.getHandler("message") as MessageHandler | null)({
+      event: { ...message, type: "message" },
+      body: {},
+    });
+    await requireMessageHandler(harness.getHandler("app_mention") as MessageHandler | null)({
+      event: message,
+      body: {},
+    });
+
+    expect(handleSlackMessage).toHaveBeenCalledOnce();
+  });
+
+  it("preserves trusted app_mention activation when bot identity is unavailable", async () => {
+    const harness = createSlackSystemEventTestHarness({ dmPolicy: "open", channelType: "channel" });
+    harness.ctx.botUserId = "";
+    const seen = new Set<string>();
+    harness.ctx.markMessageSeen = (channelId, ts) => {
+      const key = `${channelId ?? ""}:${ts ?? ""}`;
+      if (seen.has(key)) return true;
+      seen.add(key);
+      return false;
+    };
+    harness.ctx.releaseSeenMessage = vi.fn();
+    const handleSlackMessage = vi.fn(async () => {});
+    registerSlackMessageEvents({ ctx: harness.ctx, handleSlackMessage });
+    const mention = makeAppMentionEvent({ channel: "C123", channelType: "channel", ts: "123.790" });
+
+    await requireMessageHandler(harness.getHandler("message") as MessageHandler | null)({
+      event: { ...mention, type: "message" },
+      body: {},
+    });
+    await requireMessageHandler(harness.getHandler("app_mention") as MessageHandler | null)({
+      event: mention,
+      body: {},
+    });
+
+    expect(handleSlackMessage).toHaveBeenCalledTimes(2);
+    expect(handleSlackMessage).toHaveBeenLastCalledWith(
+      expect.anything(),
+      expect.objectContaining({
+        source: "app_mention",
+        wasMentioned: true,
+        claimAlreadyHeld: false,
+      }),
+    );
+    expect(harness.ctx.releaseSeenMessage).not.toHaveBeenCalled();
   });
 
   it("logs channel app_mention receipts with zero chars when text is absent", async () => {

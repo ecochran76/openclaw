@@ -109,6 +109,57 @@ describe("projectSafeChannelAccountSnapshotFields", () => {
       lastMessageAt: null,
       lastEventAt: 345,
       lastTransportActivityAt: 456,
+      lastSocketConnectedAt: 567,
+      lastSocketDisconnectedAt: 678,
+      lastSocketReconnectAt: 789,
+      lastSocketEnvelopeAt: 890,
+      lastSlackEventAt: 901,
+      socketActiveState: "active",
+      socketActiveStateAvailable: true,
+      socketConnectionCount: 2,
+      socketModeSettings: {
+        clientPingTimeout: 15_000,
+        connectionCount: 2,
+        serverPingTimeout: 30_000,
+        pingPongLoggingEnabled: false,
+        token: "ignored",
+      },
+      socketConnections: {
+        primary: {
+          connected: true,
+          healthState: "healthy",
+          lastSocketConnectedAt: 777,
+          token: "socket-secret",
+          headers: { authorization: "Bearer nested-secret" },
+          credentials: { password: "nested-password" },
+        },
+      },
+      lastSocketDisconnectReason: {
+        at: 902,
+        reason: "refresh_requested",
+        kind: "refresh",
+        expectedRefresh: true,
+      },
+      lastSocketError: { at: 912, error: "socket failed" },
+      slackTelemetry: {
+        rawSlackEvents: 2,
+        dispatchFailures: 1,
+        ignored: "secret",
+      },
+      reconciliationStatus: {
+        enabled: true,
+        lastScanAt: 999,
+        missingCandidates: 1,
+        statePath: "/Users/example/.openclaw/slack/reconciliation/work.json",
+        recentCandidates: [
+          {
+            channel: "C123",
+            ts: "1.000000",
+            status: "missing-admission",
+            reason: "eligible-missing-admission",
+          },
+        ],
+      },
       channelAccessToken: "line-token",
       channelSecret: "line-secret", // pragma: allowlist secret
       probe: { ok: true, token: "probe-secret" },
@@ -122,6 +173,51 @@ describe("projectSafeChannelAccountSnapshotFields", () => {
       lastMessageAt: null,
       lastEventAt: 345,
       lastTransportActivityAt: 456,
+      lastSocketConnectedAt: 567,
+      lastSocketDisconnectedAt: 678,
+      lastSocketReconnectAt: 789,
+      lastSocketEnvelopeAt: 890,
+      lastSlackEventAt: 901,
+      socketActiveState: "active",
+      socketActiveStateAvailable: true,
+      socketConnectionCount: 2,
+      socketModeSettings: {
+        clientPingTimeout: 15_000,
+        connectionCount: 2,
+        serverPingTimeout: 30_000,
+        pingPongLoggingEnabled: false,
+      },
+      socketConnections: {
+        primary: {
+          connected: true,
+          healthState: "healthy",
+          lastSocketConnectedAt: 777,
+        },
+      },
+      lastSocketDisconnectReason: {
+        at: 902,
+        reason: "refresh_requested",
+        kind: "refresh",
+        expectedRefresh: true,
+      },
+      lastSocketError: { at: 912, error: "socket failed" },
+      slackTelemetry: {
+        rawSlackEvents: 2,
+        dispatchFailures: 1,
+      },
+      reconciliationStatus: {
+        enabled: true,
+        lastScanAt: 999,
+        missingCandidates: 1,
+        recentCandidates: [
+          {
+            channel: "C123",
+            ts: "1.000000",
+            status: "missing-admission",
+            reason: "eligible-missing-admission",
+          },
+        ],
+      },
     });
   });
 

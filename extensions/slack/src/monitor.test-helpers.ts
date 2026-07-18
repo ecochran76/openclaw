@@ -4,6 +4,7 @@ import { resolveGlobalDedupeCache } from "openclaw/plugin-sdk/dedupe-runtime";
 import type { RuntimeEnv } from "openclaw/plugin-sdk/runtime-env";
 import { vi } from "vitest";
 import type { Mock } from "vitest";
+import type { SlackMessageEvent } from "./types.js";
 
 type SlackHandler = (args: unknown) => Promise<void>;
 type SlackMiddleware = (args: { next: () => Promise<void> } & Record<string, unknown>) => unknown;
@@ -14,6 +15,8 @@ type SlackProviderMonitor = (params: {
   config?: Record<string, unknown>;
   channelRuntime?: ChannelRuntimeSurface;
   runtime?: RuntimeEnv;
+  setStatus?: (next: Record<string, unknown>) => void;
+  getStatus?: () => Record<string, unknown>;
 }) => Promise<unknown>;
 
 type SlackTestState = {
@@ -32,6 +35,7 @@ type SlackTestState = {
     (params: { entries: string[] }) => Promise<Array<{ input: string; resolved: boolean }>>
   >;
   socketModeLogger?: { error: (...args: unknown[]) => void };
+  socketReceivers: unknown[];
 };
 
 const slackTestState: SlackTestState = vi.hoisted(() => ({
@@ -48,6 +52,7 @@ const slackTestState: SlackTestState = vi.hoisted(() => ({
   upsertPairingRequestMock: vi.fn(),
   resolveSlackUserAllowlistMock: vi.fn(),
   socketModeLogger: undefined,
+  socketReceivers: [],
 }));
 
 const slackInboundDeliveryTestCache = resolveGlobalDedupeCache(
@@ -155,6 +160,8 @@ export function startSlackMonitor(
     appToken?: string;
     channelRuntime?: ChannelRuntimeSurface;
     runtime?: RuntimeEnv;
+    setStatus?: (next: Record<string, unknown>) => void;
+    getStatus?: () => Record<string, unknown>;
   },
 ) {
   const controller = new AbortController();
@@ -165,6 +172,8 @@ export function startSlackMonitor(
     config: slackTestState.config,
     channelRuntime: opts?.channelRuntime,
     runtime: opts?.runtime,
+    setStatus: opts?.setStatus,
+    getStatus: opts?.getStatus,
   });
   return { controller, run };
 }
@@ -195,7 +204,24 @@ async function runSlackEventOnce(
 ) {
   const { controller, run } = startSlackMonitor(monitorSlackProvider, opts);
   const handler = await getSlackHandlerOrThrow(name);
+  // Default auth.test mocks resolve immediately, but monitor startup intentionally
+  // hydrates Slack identity in the background. Let that continuation settle before
+  // exercising identity-dependent event behavior.
+  await vi.waitFor(() => {
+    if (getSlackClient().auth.test.mock.calls.length === 0) {
+      throw new Error("Slack auth metadata hydration has not started");
+    }
+  });
+  await flush();
   await handler(args);
+  const event =
+    args && typeof args === "object" && !Array.isArray(args)
+      ? (args as { event?: SlackMessageEvent }).event
+      : undefined;
+  await Promise.all([
+    event?.__openclawPrePipelineAckPromise?.catch(() => false),
+    event?.__openclawPrePipelineTypingPromise?.catch(() => false),
+  ]);
   await stopSlackMonitor({ controller, run });
 }
 
@@ -225,6 +251,7 @@ export function resetSlackTestState(config: Record<string, unknown> = defaultSla
   slackInboundDeliveryTestCache.clear();
   slackTestState.config = config;
   slackTestState.socketModeLogger = undefined;
+  slackTestState.socketReceivers.length = 0;
   slackTestState.appStartMock.mockReset().mockResolvedValue(undefined);
   slackTestState.appStopMock.mockReset().mockResolvedValue(undefined);
   slackTestState.sendMock.mockReset().mockResolvedValue(undefined);
@@ -378,6 +405,7 @@ vi.mock("@slack/bolt", () => {
 
     constructor(args: { logger?: { error: (...args: unknown[]) => void } }) {
       slackTestState.socketModeLogger = args.logger;
+      slackTestState.socketReceivers.push(this);
     }
   }
   return {

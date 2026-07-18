@@ -17,6 +17,7 @@ import { normalizeSlackChannelType } from "../channel-type.js";
 import type { SlackMonitorContext } from "../context.js";
 import { resolveSlackEventScope, type SlackEventScope } from "../event-scope.js";
 import type { SlackMessageHandler } from "../message-handler.js";
+import type { SlackStatusCounter } from "../provider-support.js";
 import type { SlackMessageChangedEvent } from "../types.js";
 import { resolveSlackMessageSubtypeHandler } from "./message-subtype-handlers.js";
 import { authorizeAndResolveSlackSystemEventContext } from "./system-event-context.js";
@@ -163,14 +164,24 @@ function resolveAssistantMessageChangedInbound(params: {
 export function registerSlackMessageEvents(params: {
   ctx: SlackMonitorContext;
   handleSlackMessage: SlackMessageHandler;
+  trackTelemetry?: (counter: SlackStatusCounter) => void;
 }) {
-  const { ctx, handleSlackMessage } = params;
+  const { ctx, handleSlackMessage, trackTelemetry } = params;
 
   const resolveEventScope = (args: {
     body: unknown;
     context: AllMiddlewareArgs["context"];
     client: AllMiddlewareArgs["client"];
   }): SlackEventScope | null | undefined => {
+    if (
+      ctx.installationIdentity.kind === "degraded" &&
+      ctx.installationIdentity.enterpriseOrgInstall === true
+    ) {
+      // Enterprise events are not workspace-safe until auth.test establishes the
+      // expected app and enterprise IDs used by resolveSlackEventScope.
+      logVerbose("slack: drop event (enterprise_identity_not_hydrated)");
+      return null;
+    }
     const resolved = resolveSlackEventScope({
       identity: ctx.installationIdentity,
       body: args.body,
@@ -206,6 +217,7 @@ export function registerSlackMessageEvents(params: {
       }
 
       const message = event as SlackMessageEvent;
+      trackTelemetry?.("messageEvents");
       // Subtype handlers do not enter the regular message pipeline. Observe any explicit
       // type here so edits and deletes share the same authoritative conversation cache.
       ctx.rememberSlackChannelType(message.channel, message.channel_type, eventScope);
@@ -239,6 +251,8 @@ export function registerSlackMessageEvents(params: {
           ctx,
         })
       ) {
+        trackTelemetry?.("droppedSelfBotEvents");
+        trackTelemetry?.("droppedEvents");
         return;
       }
 
@@ -262,10 +276,15 @@ export function registerSlackMessageEvents(params: {
         return;
       }
 
-      await handleSlackMessage(message, {
+      const opts = {
         source: "message",
+        claimAlreadyHeld: true,
         ...(eventScope ? { eventScope, awaitDispatch: true } : {}),
-      });
+      } as const;
+      if (ctx.markMessageSeen(message.channel, message.ts, eventScope)) {
+        return;
+      }
+      await handleSlackMessage(message, opts);
     } catch (err) {
       ctx.runtime.error?.(danger(`slack handler failed: ${formatErrorMessage(err)}`));
     }
@@ -298,6 +317,7 @@ export function registerSlackMessageEvents(params: {
         }
 
         const mention = event as SlackAppMentionEvent;
+        trackTelemetry?.("messageEvents");
         if (eventScope && isBotAuthoredEnterpriseEvent(mention)) {
           logVerbose("slack: drop enterprise bot-authored app_mention");
           return;
@@ -325,11 +345,22 @@ export function registerSlackMessageEvents(params: {
           }),
         );
 
-        await handleSlackMessage(mention as unknown as SlackMessageEvent, {
+        const message = mention as unknown as SlackMessageEvent;
+        const duplicateClaim = ctx.markMessageSeen(message.channel, message.ts, eventScope);
+        if (duplicateClaim) {
+          if (ctx.botUserId) {
+            return;
+          }
+        }
+        const opts = {
           source: "app_mention",
           wasMentioned: true,
+          // When identity is degraded, retain the message-event claim and let the
+          // downstream handler atomically consume its one app_mention retry allowance.
+          claimAlreadyHeld: !duplicateClaim,
           ...(eventScope ? { eventScope, awaitDispatch: true } : {}),
-        });
+        } as const;
+        await handleSlackMessage(message, opts);
       } catch (err) {
         ctx.runtime.error?.(danger(`slack mention handler failed: ${formatErrorMessage(err)}`));
       }

@@ -10,20 +10,25 @@ import { registerSlackMessageEvents } from "./events/messages.js";
 import { registerSlackPinEvents } from "./events/pins.js";
 import { registerSlackReactionEvents } from "./events/reactions.js";
 import type { SlackMessageHandler } from "./message-handler.js";
+import type { SlackStatusCounter } from "./provider-support.js";
 
 export function registerSlackMonitorEvents(params: {
   ctx: SlackMonitorContext;
   account: ResolvedSlackAccount;
   handleSlackMessage: SlackMessageHandler;
+  enterpriseOrgInstall: boolean;
   appHomeSlashCommandName?: string;
   /** Called on each inbound event to update liveness tracking. */
   trackEvent?: () => void;
+  /** Called for compact Slack receiver/admission counters. */
+  trackTelemetry?: (counter: SlackStatusCounter) => void;
 }) {
   registerSlackMessageEvents({
     ctx: params.ctx,
     handleSlackMessage: params.handleSlackMessage,
+    trackTelemetry: params.trackTelemetry,
   });
-  if (params.ctx.installationIdentity.kind === "enterprise") {
+  if (params.enterpriseOrgInstall) {
     return;
   }
   registerSlackReactionEvents({ ctx: params.ctx, trackEvent: params.trackEvent });

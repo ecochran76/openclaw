@@ -129,11 +129,13 @@ describe("slack config schema", () => {
         clientPingTimeout: 15_000,
         serverPingTimeout: 45_000,
         pingPongLoggingEnabled: true,
+        connectionCount: 2,
       },
       accounts: {
         ops: {
           socketMode: {
             clientPingTimeout: 20_000,
+            connectionCount: 10,
           },
         },
       },
@@ -178,6 +180,46 @@ describe("slack config schema", () => {
         },
       },
       "socketMode.clientPingTimeout",
+    );
+    expectSlackConfigIssue(
+      {
+        socketMode: {
+          connectionCount: 11,
+        },
+      },
+      "socketMode.connectionCount",
+    );
+  });
+
+  it("accepts account-level Slack history reconciliation controls", () => {
+    expectSlackConfigValid({
+      accounts: {
+        ops: {
+          reconciliation: {
+            enabled: true,
+            intervalMs: 60_000,
+            lookbackMs: 600_000,
+            maxMessagesPerCycle: 200,
+            maxThreadRootsPerCycle: 50,
+            autoRecover: false,
+          },
+        },
+      },
+    });
+  });
+
+  it("rejects invalid Slack history reconciliation controls", () => {
+    expectSlackConfigIssue(
+      {
+        accounts: {
+          ops: {
+            reconciliation: {
+              intervalMs: 0,
+            },
+          },
+        },
+      },
+      "accounts.ops.reconciliation.intervalMs",
     );
   });
 

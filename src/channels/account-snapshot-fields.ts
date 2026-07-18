@@ -58,6 +58,242 @@ function readNullableNumber(
   return readNumber(record, key);
 }
 
+function readTimedError(
+  record: Record<string, unknown>,
+  key: string,
+): string | { at: number; error?: string } | null | undefined {
+  const value = record[key];
+  if (value === null || typeof value === "string") {
+    return value;
+  }
+  if (!isRecord(value)) {
+    return undefined;
+  }
+  const at = readNumber(value, "at");
+  if (at === undefined) {
+    return undefined;
+  }
+  const error = normalizeOptionalString(value.error);
+  return error ? { at, error } : { at };
+}
+
+function readNumberRecord(
+  record: Record<string, unknown>,
+  key: string,
+): Record<string, number> | undefined {
+  const value = record[key];
+  if (!isRecord(value)) {
+    return undefined;
+  }
+  const out: Record<string, number> = {};
+  for (const [entryKey, raw] of Object.entries(value)) {
+    if (typeof raw === "number" && Number.isFinite(raw)) {
+      out[entryKey] = Math.max(0, Math.trunc(raw));
+    }
+  }
+  return Object.keys(out).length > 0 ? out : undefined;
+}
+
+function readStringUnion<T extends readonly string[]>(
+  record: Record<string, unknown>,
+  key: string,
+  allowed: T,
+): T[number] | undefined {
+  const value = record[key];
+  return typeof value === "string" && (allowed as readonly string[]).includes(value)
+    ? value
+    : undefined;
+}
+
+function readSocketConnections(
+  record: Record<string, unknown>,
+): ChannelAccountSnapshot["socketConnections"] | undefined {
+  const value = record.socketConnections;
+  if (!isRecord(value)) {
+    return undefined;
+  }
+  const out: Record<string, Record<string, unknown>> = {};
+  for (const [entryKey, raw] of Object.entries(value)) {
+    if (!isRecord(raw)) {
+      continue;
+    }
+    const healthState = normalizeOptionalString(raw.healthState);
+    const connection = {
+      ...(readBoolean(raw, "connected") !== undefined
+        ? { connected: readBoolean(raw, "connected") }
+        : {}),
+      ...(healthState ? { healthState } : {}),
+      ...(readNullableNumber(raw, "lastSocketConnectedAt") !== undefined
+        ? { lastSocketConnectedAt: readNullableNumber(raw, "lastSocketConnectedAt") }
+        : {}),
+      ...(readNullableNumber(raw, "lastSocketDisconnectedAt") !== undefined
+        ? { lastSocketDisconnectedAt: readNullableNumber(raw, "lastSocketDisconnectedAt") }
+        : {}),
+      ...(readNullableNumber(raw, "lastSocketReconnectAt") !== undefined
+        ? { lastSocketReconnectAt: readNullableNumber(raw, "lastSocketReconnectAt") }
+        : {}),
+      ...(readStringUnion(raw, "socketActiveState", ["active", "inactive", "unknown"] as const)
+        ? {
+            socketActiveState: readStringUnion(raw, "socketActiveState", [
+              "active",
+              "inactive",
+              "unknown",
+            ] as const),
+          }
+        : {}),
+      ...(readBoolean(raw, "socketActiveStateAvailable") !== undefined
+        ? { socketActiveStateAvailable: readBoolean(raw, "socketActiveStateAvailable") }
+        : {}),
+      ...(readSocketDisconnectReason(raw) !== undefined
+        ? { lastSocketDisconnectReason: readSocketDisconnectReason(raw) }
+        : {}),
+      ...(readTimedError(raw, "lastSocketError") !== undefined
+        ? { lastSocketError: readTimedError(raw, "lastSocketError") }
+        : {}),
+      ...(readTimedError(raw, "lastDisconnect") !== undefined
+        ? { lastDisconnect: readTimedError(raw, "lastDisconnect") }
+        : {}),
+    };
+    if (Object.keys(connection).length > 0) {
+      out[entryKey] = connection;
+    }
+  }
+  return Object.keys(out).length > 0 ? out : undefined;
+}
+
+function readReconciliationStatus(
+  record: Record<string, unknown>,
+): Record<string, unknown> | undefined {
+  const value = record.reconciliationStatus;
+  if (!isRecord(value)) {
+    return undefined;
+  }
+  const out: Record<string, unknown> = {};
+  for (const key of ["enabled", "autoRecover"] as const) {
+    if (typeof value[key] === "boolean") {
+      out[key] = value[key];
+    }
+  }
+  for (const key of [
+    "intervalMs",
+    "lookbackMs",
+    "lastScanAt",
+    "missingCandidates",
+    "recoveredCandidates",
+    "failedCandidates",
+  ] as const) {
+    const numberValue = readNumber(value, key);
+    if (numberValue !== undefined) {
+      out[key] = numberValue;
+    }
+  }
+  const latestCheckpointTs = normalizeOptionalString(value.latestCheckpointTs);
+  if (latestCheckpointTs) {
+    out.latestCheckpointTs = latestCheckpointTs;
+  }
+  if (isRecord(value.lastApiError)) {
+    const at = readNumber(value.lastApiError, "at");
+    const code = normalizeOptionalString(value.lastApiError.code);
+    const channel = normalizeOptionalString(value.lastApiError.channel);
+    if (at !== undefined && code) {
+      out.lastApiError = {
+        at,
+        code,
+        ...(channel ? { channel } : {}),
+      };
+    }
+  }
+  if (Array.isArray(value.recentCandidates)) {
+    const recentCandidates = value.recentCandidates
+      .map((candidate) => {
+        if (!isRecord(candidate)) {
+          return undefined;
+        }
+        const channel = normalizeOptionalString(candidate.channel);
+        const ts = normalizeOptionalString(candidate.ts);
+        const status = normalizeOptionalString(candidate.status);
+        const reason = normalizeOptionalString(candidate.reason);
+        if (!channel || !ts || !status || !reason) {
+          return undefined;
+        }
+        return {
+          channel,
+          ts,
+          status,
+          reason,
+          ...(normalizeOptionalString(candidate.threadTs)
+            ? { threadTs: normalizeOptionalString(candidate.threadTs) }
+            : {}),
+          ...(normalizeOptionalString(candidate.user)
+            ? { user: normalizeOptionalString(candidate.user) }
+            : {}),
+          ...(normalizeOptionalString(candidate.clientMsgId)
+            ? { clientMsgId: normalizeOptionalString(candidate.clientMsgId) }
+            : {}),
+          ...(normalizeOptionalString(candidate.lastSeenAt)
+            ? { lastSeenAt: normalizeOptionalString(candidate.lastSeenAt) }
+            : {}),
+        };
+      })
+      .filter((candidate): candidate is NonNullable<typeof candidate> => Boolean(candidate))
+      .slice(0, 20);
+    if (recentCandidates.length > 0) {
+      out.recentCandidates = recentCandidates;
+    }
+  }
+  return Object.keys(out).length > 0 ? out : undefined;
+}
+
+function readSocketDisconnectReason(
+  record: Record<string, unknown>,
+): { at: number; reason?: string; kind?: string; expectedRefresh?: boolean } | null | undefined {
+  const value = record.lastSocketDisconnectReason;
+  if (value === null) {
+    return null;
+  }
+  if (!isRecord(value)) {
+    return undefined;
+  }
+  const at = readNumber(value, "at");
+  if (at === undefined) {
+    return undefined;
+  }
+  return {
+    at,
+    ...(normalizeOptionalString(value.reason)
+      ? { reason: normalizeOptionalString(value.reason) }
+      : {}),
+    ...(normalizeOptionalString(value.kind) ? { kind: normalizeOptionalString(value.kind) } : {}),
+    ...(readBoolean(value, "expectedRefresh") !== undefined
+      ? { expectedRefresh: readBoolean(value, "expectedRefresh") }
+      : {}),
+  };
+}
+
+function readSocketModeSettings(
+  record: Record<string, unknown>,
+): ChannelAccountSnapshot["socketModeSettings"] | undefined {
+  const value = record.socketModeSettings;
+  if (!isRecord(value)) {
+    return undefined;
+  }
+  const clientPingTimeout = readNumber(value, "clientPingTimeout");
+  const connectionCount = readNumber(value, "connectionCount");
+  if (clientPingTimeout === undefined || connectionCount === undefined) {
+    return undefined;
+  }
+  return {
+    clientPingTimeout,
+    connectionCount,
+    ...(readNumber(value, "serverPingTimeout") !== undefined
+      ? { serverPingTimeout: readNumber(value, "serverPingTimeout") }
+      : {}),
+    ...(readBoolean(value, "pingPongLoggingEnabled") !== undefined
+      ? { pingPongLoggingEnabled: readBoolean(value, "pingPongLoggingEnabled") }
+      : {}),
+  };
+}
+
 function readStringArray(record: Record<string, unknown>, key: string): string[] | undefined {
   const value = record[key];
   if (!Array.isArray(value)) {
@@ -238,6 +474,54 @@ export function projectSafeChannelAccountSnapshotFields(
       : {}),
     ...(readNullableNumber(record, "lastConnectedAt") !== undefined
       ? { lastConnectedAt: readNullableNumber(record, "lastConnectedAt") }
+      : {}),
+    ...(readNullableNumber(record, "lastSocketConnectedAt") !== undefined
+      ? { lastSocketConnectedAt: readNullableNumber(record, "lastSocketConnectedAt") }
+      : {}),
+    ...(readNullableNumber(record, "lastSocketDisconnectedAt") !== undefined
+      ? { lastSocketDisconnectedAt: readNullableNumber(record, "lastSocketDisconnectedAt") }
+      : {}),
+    ...(readNullableNumber(record, "lastSocketReconnectAt") !== undefined
+      ? { lastSocketReconnectAt: readNullableNumber(record, "lastSocketReconnectAt") }
+      : {}),
+    ...(readNullableNumber(record, "lastSocketEnvelopeAt") !== undefined
+      ? { lastSocketEnvelopeAt: readNullableNumber(record, "lastSocketEnvelopeAt") }
+      : {}),
+    ...(readNullableNumber(record, "lastSlackEventAt") !== undefined
+      ? { lastSlackEventAt: readNullableNumber(record, "lastSlackEventAt") }
+      : {}),
+    ...(readStringUnion(record, "socketActiveState", ["active", "inactive", "unknown"] as const)
+      ? {
+          socketActiveState: readStringUnion(record, "socketActiveState", [
+            "active",
+            "inactive",
+            "unknown",
+          ] as const),
+        }
+      : {}),
+    ...(readBoolean(record, "socketActiveStateAvailable") !== undefined
+      ? { socketActiveStateAvailable: readBoolean(record, "socketActiveStateAvailable") }
+      : {}),
+    ...(readNumber(record, "socketConnectionCount") !== undefined
+      ? { socketConnectionCount: readNumber(record, "socketConnectionCount") }
+      : {}),
+    ...(readSocketModeSettings(record) !== undefined
+      ? { socketModeSettings: readSocketModeSettings(record) }
+      : {}),
+    ...(readSocketConnections(record) !== undefined
+      ? { socketConnections: readSocketConnections(record) }
+      : {}),
+    ...(readSocketDisconnectReason(record) !== undefined
+      ? { lastSocketDisconnectReason: readSocketDisconnectReason(record) }
+      : {}),
+    ...(readTimedError(record, "lastSocketError") !== undefined
+      ? { lastSocketError: readTimedError(record, "lastSocketError") }
+      : {}),
+    ...(readNumberRecord(record, "slackTelemetry") !== undefined
+      ? { slackTelemetry: readNumberRecord(record, "slackTelemetry") }
+      : {}),
+    ...(readReconciliationStatus(record) !== undefined
+      ? { reconciliationStatus: readReconciliationStatus(record) }
       : {}),
     ...(readNumber(record, "lastInboundAt") !== undefined
       ? { lastInboundAt: readNumber(record, "lastInboundAt") }

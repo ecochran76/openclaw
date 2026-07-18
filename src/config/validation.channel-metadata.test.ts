@@ -737,7 +737,7 @@ describe("validateConfigObjectRawWithPlugins channel metadata", () => {
 });
 
 describe("validateConfigObjectRawWithPlugins plugin config defaults", () => {
-  it("does not inject plugin AJV defaults in raw mode for plugin-owned config", () => {
+  it("validates enabled plugin config when omitted without applying schema defaults", () => {
     setupPluginSchemaWithRequiredDefault();
 
     const result = validateConfigObjectRawWithPlugins({
@@ -750,9 +750,14 @@ describe("validateConfigObjectRawWithPlugins plugin config defaults", () => {
       },
     });
 
-    expect(result.ok).toBe(true);
-    if (result.ok) {
-      expect(result.config.plugins?.entries?.opik?.config).toBeUndefined();
+    expect(result.ok).toBe(false);
+    if (!result.ok) {
+      expect(result.issues).toContainEqual(
+        expect.objectContaining({
+          path: "plugins.entries.opik.config.workspace",
+          message: expect.stringContaining("must have required property 'workspace'"),
+        }),
+      );
     }
   });
 });

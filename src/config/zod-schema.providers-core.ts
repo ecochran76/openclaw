@@ -929,6 +929,18 @@ const SlackSocketModeSchema = z
     clientPingTimeout: z.number().int().positive().optional(),
     serverPingTimeout: z.number().int().positive().optional(),
     pingPongLoggingEnabled: z.boolean().optional(),
+    connectionCount: z.number().int().min(1).max(10).optional(),
+  })
+  .strict();
+
+const SlackReconciliationSchema = z
+  .object({
+    enabled: z.boolean().optional(),
+    intervalMs: z.number().int().positive().optional(),
+    lookbackMs: z.number().int().positive().optional(),
+    maxMessagesPerCycle: z.number().int().positive().optional(),
+    maxThreadRootsPerCycle: z.number().int().positive().optional(),
+    autoRecover: z.boolean().optional(),
   })
   .strict();
 
@@ -946,6 +958,7 @@ const SlackAccountSchema = z
     mode: z.enum(["socket", "http", "relay"]).optional(),
     enterpriseOrgInstall: z.boolean().optional(),
     socketMode: SlackSocketModeSchema.optional(),
+    reconciliation: SlackReconciliationSchema.optional(),
     relay: SlackRelaySchema.optional(),
     signingSecret: SecretInputSchema.optional().register(sensitive),
     webhookPath: z.string().optional(),

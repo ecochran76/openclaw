@@ -570,6 +570,7 @@ export async function dispatchPreparedSlackMessage(prepared: PreparedSlackMessag
     enabled: statusReactionsEnabled,
     adapter: slackStatusAdapter,
     initialEmoji: prepared.ackReactionValue || "eyes",
+    initialActive: message.__openclawPrePipelineAckStarted === true,
     emojis: cfg.messages?.statusReactions?.emojis,
     timing: cfg.messages?.statusReactions?.timing,
     onError: (err) => {
@@ -622,7 +623,7 @@ export async function dispatchPreparedSlackMessage(prepared: PreparedSlackMessag
           loadingMessages: SLACK_THREAD_LOADING_MESSAGES,
           eventScope: prepared.eventScope,
         });
-        if (typingReaction && message.ts) {
+        if (typingReaction && message.ts && message.__openclawPrePipelineTypingStarted !== true) {
           await reactSlackMessage(message.channel, message.ts, typingReaction, {
             token: ctx.botToken,
             client: slackClient,
@@ -643,6 +644,7 @@ export async function dispatchPreparedSlackMessage(prepared: PreparedSlackMessag
           eventScope: prepared.eventScope,
         });
         if (typingReaction && message.ts) {
+          await message.__openclawPrePipelineTypingPromise?.catch(() => false);
           await removeSlackReaction(message.channel, message.ts, typingReaction, {
             token: ctx.botToken,
             client: slackClient,
