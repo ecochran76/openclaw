@@ -2,6 +2,7 @@
 import { normalizeLegacyOnboardAuthChoice } from "../commands/auth-choice-legacy.js";
 import type { OpenClawConfig } from "../config/types.openclaw.js";
 import { resolveManifestProviderAuthChoice } from "./provider-auth-choices.js";
+import { resolveOpenAICodexPreferredProviderForAuthChoice } from "./provider-openai-codex-auth-choice.js";
 
 function normalizeLegacyAuthChoice(choice: string, env?: NodeJS.ProcessEnv): string {
   return normalizeLegacyOnboardAuthChoice(choice, { env }) ?? choice;
@@ -37,8 +38,8 @@ export async function resolvePreferredProviderForAuthChoice(params: {
     return pluginResolved.provider.id;
   }
 
-  if (choice === "custom-api-key") {
-    return "custom";
-  }
-  return undefined;
+  return (
+    resolveOpenAICodexPreferredProviderForAuthChoice(choice) ??
+    (choice === "custom-api-key" ? "custom" : undefined)
+  );
 }

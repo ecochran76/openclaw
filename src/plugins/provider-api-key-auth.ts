@@ -1,7 +1,12 @@
 /** Builds API-key provider auth methods that write profiles and config updates. */
 import { normalizeOptionalString } from "@openclaw/normalization-core/string-coerce";
 import { normalizeUniqueStringEntries } from "@openclaw/normalization-core/string-normalization";
+import {
+  normalizeRequestedProfileId,
+  resolveAuthProfileProviderId,
+} from "../agents/auth-profiles/profile-id.js";
 import { upsertAuthProfileWithLock } from "../agents/auth-profiles/profiles.js";
+import { resolveProviderIdForAuth } from "../agents/provider-auth-aliases.js";
 import { resolveAgentModelPrimaryValue } from "../config/model-input.js";
 import type { OpenClawConfig } from "../config/types.openclaw.js";
 import type { SecretInput } from "../config/types.secrets.js";
@@ -54,12 +59,39 @@ function resolveProfileIds(params: {
   providerId: string;
   profileId?: string;
   profileIds?: string[];
+  requestedProfileId?: string;
+  allowProfile?: boolean;
+  config?: OpenClawConfig;
+  expectedProviders?: string[];
 }) {
   const explicit = normalizeUniqueStringEntries(params.profileIds ?? []);
-  if (explicit.length > 0) {
-    return explicit;
+  const requestedProfileId =
+    params.allowProfile === false
+      ? undefined
+      : normalizeRequestedProfileId(params.providerId, params.requestedProfileId);
+  const profileIds =
+    explicit.length > 0
+      ? explicit
+      : requestedProfileId
+        ? [requestedProfileId]
+        : [resolveProfileId(params)];
+  const expectedProviders = new Set(
+    (params.expectedProviders ?? [params.providerId]).map((provider) =>
+      resolveProviderIdForAuth(provider, { config: params.config }),
+    ),
+  );
+  for (const profileId of profileIds) {
+    const profileProvider = resolveAuthProfileProviderId(profileId);
+    const actualProvider = profileProvider
+      ? resolveProviderIdForAuth(profileProvider, { config: params.config })
+      : "";
+    if (!actualProvider || !expectedProviders.has(actualProvider)) {
+      throw new Error(
+        `Auth profile "${profileId}" is for provider "${profileProvider || "unknown"}", not "${params.providerId}".`,
+      );
+    }
   }
-  return [resolveProfileId(params)];
+  return profileIds;
 }
 
 async function upsertAuthProfileWithLockOrThrow(params: UpsertAuthProfileParams): Promise<void> {
@@ -158,7 +190,11 @@ export function createProviderApiKeyAuthMethod(
         throw new Error(`Missing API key input for provider "${params.providerId}".`);
       }
       const credentialInput = capturedSecretInput ?? "";
-      const profileIds = resolveProfileIds(params);
+      const profileIds = resolveProfileIds({
+        ...params,
+        requestedProfileId: ctx.profileId,
+        config: ctx.config,
+      });
 
       return {
         profiles: profileIds.map((profileId) => ({
@@ -181,8 +217,16 @@ export function createProviderApiKeyAuthMethod(
     },
     runNonInteractive: async (ctx) => {
       const opts = ctx.opts as Record<string, unknown> | undefined;
+      const profileIds = resolveProfileIds({
+        ...params,
+        requestedProfileId: ctx.profileId,
+        config: ctx.config,
+      });
+      const resolutionProfileId =
+        params.allowProfile === false || profileIds.length !== 1 ? undefined : profileIds[0];
       const resolved = await ctx.resolveApiKey({
         provider: params.providerId,
+        ...(resolutionProfileId ? { profileId: resolutionProfileId } : {}),
         flagValue: resolveStringOption(opts, params.optionKey),
         flagName: params.flagName,
         envVar: params.envVar,
@@ -191,8 +235,6 @@ export function createProviderApiKeyAuthMethod(
       if (!resolved) {
         return null;
       }
-
-      const profileIds = resolveProfileIds(params);
       if (resolved.source !== "profile") {
         for (const profileId of profileIds) {
           const credential = ctx.toApiKeyCredential({

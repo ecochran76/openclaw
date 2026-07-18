@@ -421,7 +421,7 @@ export function describeOpenAIProviderRuntimeContract(load: ProviderRuntimeContr
       baseUrl: "https://chatgpt.com/backend-api/codex",
     } as const;
     const requireProviderContractProvider = installRuntimeHooks([
-      { providerIds: ["openai", "openai"], pluginId: "openai", name: "OpenAI", load },
+      { providerIds: ["openai"], pluginId: "openai", name: "OpenAI", load },
     ]);
 
     it("owns openai gpt-5.4 forward-compat resolution", () => {
@@ -538,7 +538,7 @@ export function describeOpenAIProviderRuntimeContract(load: ProviderRuntimeContr
       );
     });
 
-    it("owns refresh fallback for accountId extraction failures", async () => {
+    it("retains refreshed OAuth credentials when the new token omits account metadata", async () => {
       const provider = requireProviderContractProvider("openai");
       const credential = {
         type: "oauth" as const,
@@ -546,13 +546,21 @@ export function describeOpenAIProviderRuntimeContract(load: ProviderRuntimeContr
         access: "cached-access-token",
         refresh: "refresh-token",
         expires: Date.now() - 60_000,
+        accountId: "acc-1",
       };
 
-      refreshOpenAICodexTokenMock.mockRejectedValueOnce(
-        new Error("Failed to extract accountId from token"),
-      );
+      refreshOpenAICodexTokenMock.mockResolvedValueOnce({
+        access: "refreshed-access-token",
+        refresh: "rotated-refresh-token",
+        expires: Date.now() + 60_000,
+      });
 
-      await expect(provider.refreshOAuth?.(credential)).resolves.toEqual(credential);
+      await expect(provider.refreshOAuth?.(credential)).resolves.toEqual({
+        ...credential,
+        access: "refreshed-access-token",
+        refresh: "rotated-refresh-token",
+        expires: expect.any(Number),
+      });
     });
 
     it("owns forward-compat codex models", () => {
@@ -706,6 +714,21 @@ export function describeOpenAIProviderRuntimeContract(load: ProviderRuntimeContr
         windows: [{ label: "3h", usedPercent: 12, resetAt: 1_705_000_000 }],
         plan: "Plus",
       });
+    });
+
+    it("owns OAuth auth-profile formatting", () => {
+      const provider = requireProviderContractProvider("openai");
+
+      expect(
+        provider.formatApiKey?.({
+          type: "oauth",
+          provider: "openai",
+          access: "codex-token",
+          refresh: "refresh-token",
+          expires: Date.now() + 60_000,
+          accountId: "acc-1",
+        }),
+      ).toBe('{"token":"codex-token","accountId":"acc-1"}');
     });
   });
 }

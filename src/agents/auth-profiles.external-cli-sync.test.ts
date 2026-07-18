@@ -265,7 +265,7 @@ describe("external cli oauth resolution", () => {
     });
   });
 
-  it("does not use codex as a runtime bootstrap source anymore", () => {
+  it("does not use codex as a runtime overlay source", () => {
     mocks.readCodexCliCredentialsCached.mockReturnValue(
       makeOAuthCredential({
         provider: "openai",
@@ -278,6 +278,31 @@ describe("external cli oauth resolution", () => {
       store: makeStore(),
       profileId: OPENAI_CODEX_DEFAULT_PROFILE_ID,
       credential: makeOAuthCredential({ provider: "openai" }),
+    });
+
+    expect(credential).toBeNull();
+  });
+
+  it("ignores expired external cli credentials as bootstrap sources", () => {
+    mocks.readCodexCliCredentialsCached.mockReturnValue(
+      makeOAuthCredential({
+        provider: "openai",
+        access: "expired-codex-access-token",
+        refresh: "expired-codex-refresh-token",
+        expires: Date.now() - 5_000,
+      }),
+    );
+
+    const credential = readExternalCliBootstrapCredential({
+      store: makeStore(),
+      profileId: OPENAI_CODEX_DEFAULT_PROFILE_ID,
+      credential: makeOAuthCredential({
+        provider: "openai",
+        access: "local-access-token",
+        refresh: "local-refresh-token",
+        expires: Date.now() - 10_000,
+      }),
+      allowInlineOAuthTokenMaterial: true,
     });
 
     expect(credential).toBeNull();

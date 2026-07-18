@@ -10,7 +10,7 @@ import { expectDefined } from "@openclaw/normalization-core";
 import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it, vi } from "vitest";
 import { FILE_LOCK_TIMEOUT_ERROR_CODE, resetFileLockStateForTest } from "../../infra/file-lock.js";
 import { closeOpenClawAgentDatabasesForTest } from "../../state/openclaw-agent-db.js";
-import { captureEnv, setTestEnvValue } from "../../test-utils/env.js";
+import { captureEnv, deleteTestEnvValue, setTestEnvValue } from "../../test-utils/env.js";
 import { OAuthRefreshFailureError } from "./oauth-refresh-failure.js";
 import { buildRefreshContentionError } from "./oauth-refresh-lock-errors.js";
 import {
@@ -18,6 +18,7 @@ import {
   createExpiredOauthStore,
   readAuthProfileStoreForTest,
 } from "./oauth-test-utils.js";
+import { loadPersistedAuthProfileState } from "./state.js";
 import {
   clearRuntimeAuthProfileStoreSnapshots,
   ensureAuthProfileStore,
@@ -97,6 +98,10 @@ async function readPersistedStore(agentDir: string): Promise<AuthProfileStore> {
   return readAuthProfileStoreForTest(agentDir);
 }
 
+async function readPersistedState(agentDir: string): Promise<Pick<AuthProfileStore, "usageStats">> {
+  return loadPersistedAuthProfileState(agentDir);
+}
+
 function mockRotatedOpenAICodexRefresh() {
   refreshProviderOAuthCredentialWithPluginMock.mockResolvedValueOnce({
     type: "oauth",
@@ -160,6 +165,8 @@ describe("resolveApiKeyForProfile openai refresh fallback", () => {
   });
 
   beforeEach(async () => {
+    deleteTestEnvValue("OPENAI_API_KEY");
+    deleteTestEnvValue("OPENAI_OAUTH_TOKEN");
     resetFileLockStateForTest();
     getOAuthApiKeyMock.mockReset();
     getOAuthApiKeyMock.mockImplementation(async () => {
@@ -1169,6 +1176,34 @@ describe("resolveApiKeyForProfile openai refresh fallback", () => {
         refresh: "retried-refresh-token",
       },
     );
+  });
+
+  it("marks refresh_token_reused as auth_permanent when no fresher token is recoverable", async () => {
+    const profileId = "openai-codex:default";
+    saveAuthProfileStore(
+      createExpiredOauthStore({
+        profileId,
+        provider: "openai-codex",
+      }),
+      agentDir,
+    );
+    getOAuthApiKeyMock.mockImplementationOnce(async () => {
+      throw new Error(
+        '401 {"error":{"message":"Your refresh token has already been used to generate a new access token.","code":"refresh_token_reused"}}',
+      );
+    });
+
+    await expect(
+      resolveApiKeyForProfile({
+        store: ensureAuthProfileStore(agentDir),
+        profileId,
+        agentDir,
+      }),
+    ).rejects.toThrow(/OAuth token refresh failed for openai-codex/);
+
+    const state = await readPersistedState(agentDir);
+    expect(state.usageStats?.[profileId]?.disabledReason).toBe("auth_permanent");
+    expect(state.usageStats?.[profileId]?.disabledUntil).toBeGreaterThan(Date.now());
   });
 
   it("keeps throwing for non-codex providers on the same refresh error", async () => {

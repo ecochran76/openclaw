@@ -4,9 +4,9 @@
  * safely bootstrap local auth profiles, and returns runtime/persisted overlays.
  */
 import { normalizeProviderId } from "@openclaw/model-catalog-core/provider-id";
+import { buildOpenAICodexExternalCliSyncProvider } from "../../plugins/provider-openai-codex-cli-profile.js";
 import {
   readClaudeCliCredentialsCached,
-  readCodexCliCredentialsCached,
   readMiniMaxCliCredentialsCached,
 } from "../cli-credentials.js";
 import {
@@ -14,8 +14,8 @@ import {
   EXTERNAL_CLI_SYNC_TTL_MS,
   MINIMAX_CLI_PROFILE_ID,
   OPENAI_CODEX_DEFAULT_PROFILE_ID,
+  log,
 } from "./constants.js";
-import { log } from "./constants.js";
 import { isSafeToCopyOAuthIdentity } from "./oauth-identity.js";
 import {
   areOAuthCredentialsEquivalent,
@@ -35,6 +35,7 @@ type ExternalCliAuthProfileOptions = {
   allowKeychainPrompt?: boolean;
   providerIds?: Iterable<string>;
   profileIds?: Iterable<string>;
+  runtimeOverlayOnly?: boolean;
 };
 
 type ExternalCliSyncProvider = {
@@ -51,6 +52,7 @@ type ExternalCliSyncProvider = {
   // CLI state must not replace or shadow it. Codex requires this to
   // avoid clobbering a locally refreshed token with stale CLI state.
   bootstrapOnly?: boolean;
+  runtimeOverlay?: boolean;
 };
 
 // Keep this gate aligned with the canonical identity-copy rule in oauth.ts.
@@ -70,18 +72,6 @@ function isSafeToUseExternalCliCredential(
 
 const EXTERNAL_CLI_SYNC_PROVIDERS: ExternalCliSyncProvider[] = [
   {
-    profileId: OPENAI_CODEX_DEFAULT_PROFILE_ID,
-    profileAliases: ["openai:default"],
-    provider: "openai",
-    aliases: ["openai", "codex", "codex-cli", "codex-app-server"],
-    readCredentials: (options) =>
-      readCodexCliCredentialsCached({
-        ttlMs: EXTERNAL_CLI_SYNC_TTL_MS,
-        allowKeychainPrompt: options?.allowKeychainPrompt,
-      }),
-    bootstrapOnly: true,
-  },
-  {
     profileId: CLAUDE_CLI_PROFILE_ID,
     provider: "claude-cli",
     readCredentials: (options) => {
@@ -100,6 +90,11 @@ const EXTERNAL_CLI_SYNC_PROVIDERS: ExternalCliSyncProvider[] = [
     provider: "minimax-portal",
     aliases: ["minimax", "minimax-cli"],
     readCredentials: () => readMiniMaxCliCredentialsCached({ ttlMs: EXTERNAL_CLI_SYNC_TTL_MS }),
+  },
+  {
+    ...buildOpenAICodexExternalCliSyncProvider(EXTERNAL_CLI_SYNC_TTL_MS),
+    bootstrapOnly: true,
+    runtimeOverlay: false,
   },
 ];
 
@@ -199,10 +194,11 @@ export function readExternalCliBootstrapCredential(params: {
   ) {
     return null;
   }
-  return normalizeExternalCliCredentialProvider(
-    provider.readCredentials({ allowKeychainPrompt: params.allowKeychainPrompt }),
-    params.credential.provider,
-  );
+  const credential = provider.readCredentials({ allowKeychainPrompt: params.allowKeychainPrompt });
+  if (!hasUsableOAuthCredential(credential ?? undefined)) {
+    return null;
+  }
+  return normalizeExternalCliCredentialProvider(credential, params.credential.provider);
 }
 
 function normalizeProviderScope(values: Iterable<string> | undefined): Set<string> | undefined {
@@ -319,7 +315,14 @@ export function resolveExternalCliAuthProfiles(
 ): ExternalCliResolvedProfile[] {
   const profiles: ExternalCliResolvedProfile[] = [];
   const now = Date.now();
+  const hasExplicitScope = options?.providerIds !== undefined || options?.profileIds !== undefined;
   for (const providerConfig of EXTERNAL_CLI_SYNC_PROVIDERS) {
+    if (
+      providerConfig.runtimeOverlay === false &&
+      (options?.runtimeOverlayOnly === true || !hasExplicitScope)
+    ) {
+      continue;
+    }
     if (!isExternalCliProviderInScope({ providerConfig, store, options })) {
       continue;
     }

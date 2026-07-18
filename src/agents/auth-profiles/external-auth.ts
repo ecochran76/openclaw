@@ -12,9 +12,10 @@ import * as externalCliSync from "./external-cli-sync.js";
 import {
   areOAuthCredentialsEquivalent,
   overlayRuntimeExternalOAuthProfiles,
+  shouldPersistRuntimeExternalOAuthProfile,
   type RuntimeExternalOAuthProfile,
 } from "./oauth-shared.js";
-import type { AuthProfileStore } from "./types.js";
+import type { AuthProfileStore, OAuthCredential } from "./types.js";
 
 type ExternalAuthProfileMap = Map<string, ProviderExternalAuthProfile>;
 type ResolveExternalAuthProfiles = typeof resolveExternalAuthProfilesWithPlugins;
@@ -76,6 +77,7 @@ function resolveExternalAuthProfileMap(params: {
       allowKeychainPrompt: params.externalCli?.allowKeychainPrompt,
       providerIds: params.externalCli?.externalCliProviderIds,
       profileIds: params.externalCli?.externalCliProfileIds,
+      runtimeOverlayOnly: true,
     }) ?? [];
   for (const profile of cliProfiles) {
     resolved.set(profile.profileId, {
@@ -144,6 +146,33 @@ export function overlayExternalAuthProfiles(
   });
   return overlayRuntimeExternalOAuthProfiles(store, profiles, {
     runtimeExternalProfileIdsAuthoritative: !hasScopedExternalCliOverlay(params),
+  });
+}
+
+export function shouldPersistExternalAuthProfile(params: {
+  store: AuthProfileStore;
+  profileId: string;
+  credential: OAuthCredential;
+  agentDir?: string;
+  env?: NodeJS.ProcessEnv;
+  config?: OpenClawConfig;
+  externalCliProviderIds?: Iterable<string>;
+  externalCliProfileIds?: Iterable<string>;
+}): boolean {
+  const profiles = listRuntimeExternalAuthProfiles({
+    store: params.store,
+    agentDir: params.agentDir,
+    env: params.env,
+    externalCli: {
+      config: params.config,
+      externalCliProviderIds: params.externalCliProviderIds,
+      externalCliProfileIds: params.externalCliProfileIds,
+    },
+  });
+  return shouldPersistRuntimeExternalOAuthProfile({
+    profileId: params.profileId,
+    credential: params.credential,
+    profiles,
   });
 }
 

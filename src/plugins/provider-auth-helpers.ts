@@ -4,6 +4,7 @@ import path from "node:path";
 import { uniqueStrings } from "@openclaw/normalization-core/string-normalization";
 import { resolveDefaultAgentDir } from "../agents/agent-scope-config.js";
 import { buildAuthProfileId } from "../agents/auth-profiles/identity.js";
+import { resolveAuthProfileProviderId } from "../agents/auth-profiles/profile-id.js";
 import { upsertAuthProfile, upsertAuthProfileWithLock } from "../agents/auth-profiles/profiles.js";
 import { resolveProviderIdForAuth } from "../agents/provider-auth-aliases.js";
 import { resolveStateDir } from "../config/paths.js";
@@ -33,9 +34,28 @@ export type ApiKeyStorageOptions = {
 
 export type WriteOAuthCredentialsOptions = {
   syncSiblingAgents?: boolean;
+  config?: OpenClawConfig;
+  profileId?: string;
   profileName?: string;
   displayName?: string;
 };
+
+function assertProfileIdMatchesProvider(params: {
+  provider: string;
+  profileId: string;
+  config?: OpenClawConfig;
+}): void {
+  const profileProvider = resolveAuthProfileProviderId(params.profileId);
+  const expectedProvider = resolveProviderIdForAuth(params.provider, { config: params.config });
+  const actualProvider = profileProvider
+    ? resolveProviderIdForAuth(profileProvider, { config: params.config })
+    : "";
+  if (!actualProvider || actualProvider !== expectedProvider) {
+    throw new Error(
+      `Auth profile "${params.profileId}" is for provider "${profileProvider || "unknown"}", not "${params.provider}".`,
+    );
+  }
+}
 
 function buildEnvSecretRef(id: string): SecretRef {
   return { source: "env", provider: DEFAULT_SECRET_PROVIDER_ALIAS, id };
@@ -126,6 +146,13 @@ export function upsertApiKeyProfile(params: {
   metadata?: Record<string, string>;
 }): string {
   const profileId = params.profileId ?? buildAuthProfileId({ providerId: params.provider });
+  if (params.profileId) {
+    assertProfileIdMatchesProvider({
+      provider: params.provider,
+      profileId,
+      config: params.options?.config,
+    });
+  }
   upsertAuthProfile({
     profileId,
     credential: buildApiKeyCredential(
@@ -290,10 +317,20 @@ export async function writeOAuthCredentials(
 ): Promise<string> {
   const email =
     typeof creds.email === "string" && creds.email.trim() ? creds.email.trim() : "default";
-  const profileId = buildAuthProfileId({
-    providerId: provider,
-    profileName: options?.profileName ?? email,
-  });
+  const explicitProfileId = options?.profileId?.trim();
+  const profileId =
+    explicitProfileId ||
+    buildAuthProfileId({
+      providerId: provider,
+      profileName: options?.profileName ?? email,
+    });
+  if (explicitProfileId) {
+    assertProfileIdMatchesProvider({
+      provider,
+      profileId,
+      config: options?.config,
+    });
+  }
   const resolvedAgentDir = path.resolve(resolveAuthAgentDir(agentDir));
   const targetAgentDirs = options?.syncSiblingAgents
     ? resolveSiblingAgentDirs(resolvedAgentDir)

@@ -29,6 +29,13 @@ export type OAuthCredentials = {
 };
 
 /** API-key credential with optional secret reference indirection. */
+export type OAuthCredentialRef = {
+  source: "openclaw-credentials";
+  provider: "openai-codex";
+  id: string;
+};
+
+/** API-key credential with optional secret reference indirection. */
 export type ApiKeyCredential = {
   type: "api_key";
   provider: string;
@@ -64,7 +71,7 @@ export type TokenCredential = {
 export type OAuthCredential = OAuthCredentials & {
   type: "oauth";
   provider: string;
-  oauthRef?: LegacyOAuthRef;
+  oauthRef?: OAuthCredentialRef | LegacyOAuthRef;
   clientId?: string;
   /**
    * OAuth refresh tokens are not portable by default. Provider-owned flows may

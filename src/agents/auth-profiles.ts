@@ -10,6 +10,7 @@ export type {
 } from "./auth-profiles/credential-state.js";
 export type { AuthProfileEligibilityReasonCode } from "./auth-profiles/order.js";
 export { resolveAuthProfileDisplayLabel } from "./auth-profiles/display.js";
+export { normalizeRequestedProfileId } from "./auth-profiles/profile-id.js";
 export { formatAuthDoctorHint } from "./auth-profiles/doctor.js";
 export {
   externalCliDiscoveryForConfigStatus,

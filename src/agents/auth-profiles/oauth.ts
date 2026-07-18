@@ -44,6 +44,7 @@ import {
   resolvePersistedAuthProfileOwnerAgentDir,
 } from "./store.js";
 import type { AuthProfileCredential, AuthProfileStore, OAuthCredential } from "./types.js";
+import { markAuthProfileFailure } from "./usage.js";
 
 function listOAuthProviderIds(): string[] {
   if (typeof getOAuthProviders !== "function") {
@@ -197,7 +198,9 @@ async function refreshOAuthCredential(
     return await refreshChutesTokens({ credential });
   }
 
-  const oauthProvider = resolveOAuthProvider(credential.provider);
+  const oauthProvider = resolveOAuthProvider(
+    credential.provider === "openai-codex" ? "openai" : credential.provider,
+  );
   if (!oauthProvider || typeof getOAuthApiKey !== "function") {
     return null;
   }
@@ -490,6 +493,24 @@ export async function resolveApiKeyForProfile(
         // keep original error
       }
     }
+    if (isRefreshTokenReusedError(surfacedCause)) {
+      try {
+        await markAuthProfileFailure({
+          store: refreshedStore,
+          profileId,
+          reason: "auth_permanent",
+          cfg,
+          agentDir: params.agentDir,
+        });
+      } catch (markError) {
+        log.debug("failed to mark OAuth refresh-token-reuse auth profile failure", {
+          provider: cred.provider,
+          profileId,
+          agentDir: params.agentDir,
+          error: formatErrorMessage(markError),
+        });
+      }
+    }
 
     const message = extractErrorMessage(surfacedCause);
     const hint = await formatAuthDoctorHint({
@@ -498,11 +519,17 @@ export async function resolveApiKeyForProfile(
       provider: cred.provider,
       profileId,
     });
+    log.error("OAuth token refresh failed", {
+      provider: cred.provider,
+      profileId,
+      agentDir: params.agentDir,
+      message,
+    });
     throw new OAuthRefreshFailureError({
       provider: cred.provider,
       profileId,
       message:
-        `OAuth token refresh failed for ${cred.provider}: ${message}. ` +
+        `OAuth token refresh failed for ${cred.provider} (${profileId}): ${message}. ` +
         "Please try again or re-authenticate." +
         (hint ? `\n\n${hint}` : ""),
       cause: error,
