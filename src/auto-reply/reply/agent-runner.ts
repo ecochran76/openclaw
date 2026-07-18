@@ -1629,6 +1629,9 @@ export async function runReplyAgent(params: {
         },
       }),
     );
+    if (memoryFlushResult.outcome !== "skipped" && opts?.memoryFlushOccurredRef) {
+      opts.memoryFlushOccurredRef.value = true;
+    }
     activeSessionEntry = memoryFlushResult.sessionEntry;
 
     if (replyOperation.result?.kind === "aborted") {

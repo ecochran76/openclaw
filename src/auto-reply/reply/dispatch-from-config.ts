@@ -95,6 +95,7 @@ import {
   takeCommandSessionMetadataChanges,
   type CommandSessionMetadataChange,
 } from "./command-session-metadata.js";
+import { createDeliveryObserver, type DeliveryObserver } from "./delivery-observer.js";
 import {
   DispatchReplyOperationAbortedError,
   isDispatchReplyOperationAbortedError,
@@ -948,6 +949,40 @@ async function dispatchReplyFromConfigInner(
     suppressHookUserDelivery,
     suppressHookReplyLifecycle,
   } = sourceReplyPolicy;
+  const memoryFlushOccurredRef = { value: false };
+  let deliveryObserver!: DeliveryObserver;
+  deliveryObserver = createDeliveryObserver({
+    sessionKey,
+    visibleChannel: deliveryChannel,
+    trackedSessionId: sessionStoreEntry.entry?.sessionId?.trim(),
+    threadId: ctx.MessageThreadId,
+    deliveryTarget: shouldRouteToOriginating ? "originating_channel" : "same_channel",
+    didMemoryFlushDuringTurn: () => memoryFlushOccurredRef.value,
+    onSendWatcherPayload: async (payload) => {
+      if (suppressDelivery) {
+        // Delivery suppression owns every automatic source-channel notice too.
+        // Treat it as handled so the watcher does not retry a forbidden send.
+        return true;
+      }
+      let delivered: boolean;
+      if (shouldRouteToOriginating) {
+        const routed = await routeReplyToOriginating(payload, { kind: "block" });
+        delivered = routed ? isRoutedReplyDelivered(routed) : false;
+      } else {
+        const outcome = captureReplyDispatchDeliveryOutcome(payload);
+        markInboundDedupeReplayUnsafe();
+        const queued = dispatcher.sendBlockReply(payload);
+        delivered =
+          queued && outcome.isTracked() ? (await outcome.promise) === "delivered" : queued;
+      }
+      if (delivered) {
+        // Watcher notices describe the current turn; they are not agent progress
+        // and must not postpone the independent stall clock.
+        deliveryObserver.updateActiveTurn({ markVisible: true });
+      }
+      return delivered;
+    },
+  });
   const reasoningPayloadsEnabled = params.replyOptions?.reasoningPayloadsEnabled === true;
   const commentaryPayloadsEnabled = params.replyOptions?.commentaryPayloadsEnabled === true;
   const attachSourceReplyDeliveryMode = (
@@ -1442,6 +1477,21 @@ async function dispatchReplyFromConfigInner(
       throwIfFinalDeliveryAborted();
       const normalizedPayload = await normalizeReplyMediaPayload(ttsPayload);
       throwIfFinalDeliveryAborted();
+      deliveryObserver.updateActiveTurn({
+        phase: "delivery_prepare",
+        deliveryState: "pending",
+        markProgress: true,
+      });
+      const visibility = deliveryObserver.classifyPayloadVisibility(normalizedPayload);
+      if (visibility.visibility === "visible") {
+        deliveryObserver.markReplyProduced();
+        deliveryObserver.recordDeliveryAttempt();
+      } else if (
+        visibility.visibility === "suppressed" &&
+        !deliveryObserver.hasVisibleDeliveryOutcome()
+      ) {
+        deliveryObserver.recordSuppressedReply(visibility.suppressionReason);
+      }
       const result = await routeReplyToOriginating(normalizedPayload, {
         abortSignal,
         kind: "final",
@@ -1458,6 +1508,11 @@ async function dispatchReplyFromConfigInner(
             metadata: sourceReplyTranscriptMirror,
             cfg,
           });
+          if (visibility.visibility === "visible") {
+            deliveryObserver.recordDeliverySuccess("final_sent");
+          }
+        } else if (visibility.visibility === "visible") {
+          deliveryObserver.recordDeliveryFailure(result.error ?? "route-reply failed");
         }
         return {
           queuedFinal: result.ok,
@@ -1521,6 +1576,25 @@ async function dispatchReplyFromConfigInner(
       const queuedFinal = dispatcher.sendFinalReply(normalizedPayload);
       const dispatcherOutcome =
         queuedFinal && deliveryOutcome.isTracked() ? deliveryOutcome.promise : undefined;
+      const observedDispatcherOutcome =
+        dispatcherOutcome && visibility.visibility === "visible"
+          ? dispatcherOutcome.then((outcome) => {
+              if (outcome === "delivered") {
+                deliveryObserver.recordDeliverySuccess("final_sent");
+              } else {
+                deliveryObserver.recordDeliveryFailure(`dispatcher final reply ${outcome}`);
+              }
+              return outcome;
+            })
+          : dispatcherOutcome;
+      if (visibility.visibility === "visible") {
+        if (!queuedFinal) {
+          deliveryObserver.recordDeliveryFailure("dispatcher rejected final reply");
+        } else if (!observedDispatcherOutcome) {
+          // Custom dispatchers without the core outcome tracker retain queue-admission semantics.
+          deliveryObserver.recordDeliverySuccess("final_sent");
+        }
+      }
       if (queuedFinal && deliveredTranscriptMirror && finalOutcomeBefore) {
         // The common settle owner runs this after successful delivery or
         // cancellation. Keeping reconciliation out of the reply operation lets a
@@ -1537,7 +1611,9 @@ async function dispatchReplyFromConfigInner(
       return {
         queuedFinal,
         routedFinalCount: 0,
-        ...(queuedFinal && dispatcherOutcome ? { dispatcherOutcome } : {}),
+        ...(queuedFinal && observedDispatcherOutcome
+          ? { dispatcherOutcome: observedDispatcherOutcome }
+          : {}),
       };
     };
 
@@ -1988,6 +2064,7 @@ async function dispatchReplyFromConfigInner(
               return result;
             }
             await options?.onVisible?.(...args);
+            deliveryObserver.updateActiveTurn({ markVisible: true, markProgress: true });
           }
           return undefined;
         } finally {
@@ -2078,6 +2155,7 @@ async function dispatchReplyFromConfigInner(
     const replyConfig = withFullRuntimeReplyConfig(
       params.configOverride ? (applyMergePatch(cfg, params.configOverride) as OpenClawConfig) : cfg,
     );
+    const effectiveReplyOptions = getReplyOptions();
     recordAgentDispatchStarted();
     const replyResult = await runWithDispatchLifecycleAdmission(
       async () =>
@@ -2088,7 +2166,7 @@ async function dispatchReplyFromConfigInner(
               replyResolver(
                 ctx,
                 {
-                  ...getReplyOptions(),
+                  ...effectiveReplyOptions,
                   sourceReplyDeliveryMode,
                   sessionPromptSourceReplyDeliveryMode: sessionStableSourceReplyDeliveryMode,
                   ...({
@@ -2096,6 +2174,7 @@ async function dispatchReplyFromConfigInner(
                     onSessionPrepared: notePreparedSession,
                   } satisfies InternalReplyResolverOptions),
                   onObservedReplyDelivery: markObservedReplyDelivery,
+                  memoryFlushOccurredRef,
                   suppressToolErrorWarnings,
                   shouldSuppressToolErrorWarnings,
                   typingPolicy: typing.typingPolicy,
@@ -2151,6 +2230,19 @@ async function dispatchReplyFromConfigInner(
                     requiresToolSummaryVisibility: true,
                     waitForDirectBlockReplyDelivery: true,
                   }),
+                  onAgentRunStart: (runId: string) => {
+                    deliveryObserver.startRun(runId);
+                    return effectiveReplyOptions.onAgentRunStart?.(runId);
+                  },
+                  onStartupProgress: async (progressCtx) => {
+                    getDispatchReplyOperation()?.recordActivity();
+                    markProgress();
+                    deliveryObserver.updateActiveTurn({
+                      markProgress: true,
+                      markVisible: shouldForwardProgressCallback(),
+                    });
+                    await effectiveReplyOptions.onStartupProgress?.(progressCtx);
+                  },
                   onToolResult: (payload: ReplyPayload) => {
                     getDispatchReplyOperation()?.recordActivity();
                     markProgress();
@@ -2253,6 +2345,13 @@ async function dispatchReplyFromConfigInner(
                         const hasMedia =
                           resolveSendableOutboundReplyParts(deliveryPayload).hasMedia;
                         if (!hasMedia && !hasExecApprovalPayload(deliveryPayload)) {
+                          const visibility =
+                            deliveryObserver.classifyPayloadVisibility(deliveryPayload);
+                          if (visibility.visibility === "visible") {
+                            deliveryObserver.recordSuppressedReply("silent");
+                          } else if (visibility.visibility === "suppressed") {
+                            deliveryObserver.recordSuppressedReply(visibility.suppressionReason);
+                          }
                           return;
                         }
                       }
@@ -2783,9 +2882,51 @@ async function dispatchReplyFromConfigInner(
       }
     }
 
-    await waitForPendingDirectBlockReplyDelivery(getDispatchAbortSignal());
+    const terminalDeliveryAbortSignal = getDispatchAbortSignal();
+    await waitForPendingDirectBlockReplyDelivery(terminalDeliveryAbortSignal);
+    // Slack turn attribution and its failure notice need the real transport result, not queue
+    // admission. Other channels have no active delivery observer here, and awaiting their queue
+    // would hold the session lifecycle fence while a same-session follow-up waits behind it.
+    if (deliveryChannel === "slack") {
+      await runWithDispatchAbortSignal(terminalDeliveryAbortSignal, () =>
+        Promise.all(finalDeliveries.map((delivery) => delivery.outcome)),
+      );
+    }
+    throwIfDispatchOperationAborted();
+    const undeliveredReplyNotice = deliveryObserver.buildUndeliveredReplyNotice();
+    if (undeliveredReplyNotice) {
+      const noticePayload = { text: undeliveredReplyNotice } satisfies ReplyPayload;
+      const routedNotice = await routeReplyToOriginating(noticePayload, {
+        abortSignal: terminalDeliveryAbortSignal,
+        kind: "final",
+      });
+      throwIfDispatchOperationAborted();
+      let noticeDelivered: boolean;
+      if (routedNotice) {
+        noticeDelivered = isRoutedReplyDelivered(routedNotice);
+      } else {
+        throwIfDispatchOperationAborted();
+        const noticeOutcome = captureReplyDispatchDeliveryOutcome(noticePayload);
+        const noticeQueued = dispatcher.sendFinalReply(noticePayload);
+        noticeDelivered =
+          noticeQueued && noticeOutcome.isTracked()
+            ? (await runWithDispatchAbortSignal(
+                terminalDeliveryAbortSignal,
+                () => noticeOutcome.promise,
+              )) === "delivered"
+            : noticeQueued;
+      }
+      if (noticeDelivered) {
+        queuedFinal = true;
+        if (routedNotice) {
+          routedFinalCount += 1;
+        }
+        deliveryObserver.markNoticeDelivered();
+      }
+    }
     const counts = dispatcher.getQueuedCounts();
     counts.final += routedFinalCount;
+    deliveryObserver.finishRun({ status: "done", phase: "done" });
     commitInboundDedupeIfClaimed();
     recordAgentDispatchCompleted("completed");
     recordProcessed(
@@ -2818,6 +2959,11 @@ async function dispatchReplyFromConfigInner(
       }
     }
     recordAgentDispatchCompleted("error", { error: String(err) });
+    deliveryObserver.finishRun({
+      status: "error",
+      phase: "error",
+      error: formatErrorMessage(err),
+    });
     recordProcessed("error", { error: String(err) });
     markIdle("message_error");
     failDispatchReplyOperation(err);

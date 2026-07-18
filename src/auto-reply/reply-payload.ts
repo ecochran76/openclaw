@@ -6,6 +6,7 @@ import type {
   MessagePresentation,
   ReplyPayloadDelivery,
 } from "../interactive/payload.js";
+import { resolveGlobalSingleton } from "../shared/global-singleton.js";
 
 /** Channel-agnostic assistant reply payload. */
 export type ReplyPayload = {
@@ -252,21 +253,54 @@ export type ReplyPayloadMetadata = {
   nonTerminalToolErrorWarning?: boolean;
 };
 
-const replyPayloadMetadata = new WeakMap<object, ReplyPayloadMetadata>();
+// Reply producers and dispatch can load in separate runtime chunks. Frozen or
+// proxy payloads cannot carry the symbol property, so their fallback store must
+// have one process-wide owner shared by every module copy.
+const replyPayloadMetadata = resolveGlobalSingleton(
+  Symbol.for("openclaw.replyPayloadMetadata.store"),
+  () => new WeakMap<object, ReplyPayloadMetadata>(),
+);
+const replyPayloadMetadataKey = Symbol.for("openclaw.replyPayloadMetadata");
+
+function readAttachedReplyPayloadMetadata(payload: object): ReplyPayloadMetadata | undefined {
+  try {
+    return Reflect.get(payload, replyPayloadMetadataKey) as ReplyPayloadMetadata | undefined;
+  } catch {
+    return undefined;
+  }
+}
+
+function attachReplyPayloadMetadata(payload: object, metadata: ReplyPayloadMetadata): void {
+  try {
+    if (!Object.isExtensible(payload)) {
+      return;
+    }
+    Object.defineProperty(payload, replyPayloadMetadataKey, {
+      configurable: true,
+      value: metadata,
+    });
+  } catch {
+    // WeakMap metadata remains authoritative when proxy reflection rejects attachment.
+  }
+}
 
 /** Adds internal metadata to a reply payload object. */
 export function setReplyPayloadMetadata<T extends object>(
   payload: T,
   metadata: ReplyPayloadMetadata,
 ): T {
-  const previous = replyPayloadMetadata.get(payload);
-  replyPayloadMetadata.set(payload, { ...previous, ...metadata });
+  // Runtime chunks can load separate module instances. The Symbol.for value is
+  // the cross-copy authority; the WeakMap only covers non-extensible/proxy payloads.
+  const previous = readAttachedReplyPayloadMetadata(payload) ?? replyPayloadMetadata.get(payload);
+  const next = { ...previous, ...metadata };
+  replyPayloadMetadata.set(payload, next);
+  attachReplyPayloadMetadata(payload, next);
   return payload;
 }
 
 /** Reads internal metadata attached to a reply payload object. */
 export function getReplyPayloadMetadata(payload: object): ReplyPayloadMetadata | undefined {
-  return replyPayloadMetadata.get(payload);
+  return readAttachedReplyPayloadMetadata(payload) ?? replyPayloadMetadata.get(payload);
 }
 
 /** Returns true when a payload is the synthesized warning for a non-terminal tool error. */

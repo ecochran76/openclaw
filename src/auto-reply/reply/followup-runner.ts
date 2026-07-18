@@ -436,8 +436,17 @@ export function createFollowupRunner(params: {
     payloads: ReplyPayload[],
     queued: FollowupRun,
     resolvedRun: { provider: string; modelId: string },
-    options: { kind?: ReplyDispatchKind; mirror?: boolean; runId?: string } = {},
+    options: {
+      kind?: ReplyDispatchKind;
+      mirror?: boolean;
+      runId?: string;
+      abortSignal?: AbortSignal;
+    } = {},
   ): Promise<boolean> => {
+    const isDeliveryAborted = () => options.abortSignal?.aborted === true;
+    if (isDeliveryAborted()) {
+      return false;
+    }
     // Check if we should route to originating channel.
     const { originatingChannel, originatingTo } = queued;
     const runtimeConfig = resolveQueuedReplyRuntimeConfig(queued.run.config);
@@ -473,7 +482,7 @@ export function createFollowupRunner(params: {
     let routedAnyCrossChannelPayloadToOrigin = false;
     const replyKind = options.kind ?? "final";
     const sendDispatcherPayload = async (payload: ReplyPayload): Promise<boolean> => {
-      if (!opts?.onBlockReply) {
+      if (isDeliveryAborted() || !opts?.onBlockReply) {
         return false;
       }
       if (deliveryPlan.isSilentPayload(payload)) {
@@ -483,6 +492,9 @@ export function createFollowupRunner(params: {
       return true;
     };
     for (const payload of sendablePayloads) {
+      if (isDeliveryAborted()) {
+        return deliveredAnyPayload;
+      }
       const providerRoute = deliveryPlan.resolveFollowupRoute({
         payload,
         originatingChannel,
@@ -507,6 +519,9 @@ export function createFollowupRunner(params: {
                 ? "dispatcher"
                 : undefined;
       await typingSignals.signalTextDelta(payload.text);
+      if (isDeliveryAborted()) {
+        return deliveredAnyPayload;
+      }
 
       // Route to originating channel if set, otherwise fall back to dispatcher.
       if (deliveryRoute === "origin" && isRoutableChannel(originatingChannel) && originatingTo) {
@@ -529,7 +544,11 @@ export function createFollowupRunner(params: {
           mirror: hasTranscriptOwner ? false : options.mirror,
           replyKind,
           runId: options.runId,
+          abortSignal: options.abortSignal,
         });
+        if (isDeliveryAborted()) {
+          return deliveredAnyPayload;
+        }
         if (!result.ok) {
           const errorMsg = result.error ?? "unknown error";
           logVerbose(`followup queue: route-reply failed: ${errorMsg}`);
@@ -565,6 +584,7 @@ export function createFollowupRunner(params: {
       }
     }
     if (
+      !isDeliveryAborted() &&
       crossChannelRouteFailureNeedsNotice &&
       !routedAnyCrossChannelPayloadToOrigin &&
       opts?.onBlockReply
@@ -752,16 +772,27 @@ export function createFollowupRunner(params: {
           channel: queued.originatingChannel ?? run.messageProvider,
           chatType: run.chatType ?? activeSessionEntry?.chatType,
         }) === "deny";
+      const sourceAbortSignal = resolveFollowupAbortSignal(effectiveQueued);
       const progressOpts = sendPolicyDenied ? undefined : opts;
       const preserveProgressCallbackStartOrder =
         progressOpts?.preserveProgressCallbackStartOrder === true;
       // Carry the admission-time policy through every queued delivery path; direct origin routing
       // bypasses the outer dispatcher that normally enforces sendPolicy.
+      const sendAbortBoundPayloads: typeof sendFollowupPayloads = async (
+        payloads,
+        queuedRun,
+        resolvedRun,
+        options = {},
+      ) =>
+        sendFollowupPayloads(payloads, queuedRun, resolvedRun, {
+          ...options,
+          abortSignal: sourceAbortSignal,
+        });
       const sendRunPayloads: typeof sendFollowupPayloads = async (...args) => {
         if (sendPolicyDenied) {
           return false;
         }
-        return sendFollowupPayloads(...args);
+        return sendAbortBoundPayloads(...args);
       };
       // Admission already loads the latest entry under the lifecycle fence.
       const goalContextSessionEntry = admission.sessionEntry ?? activeSessionEntry;
@@ -1691,7 +1722,7 @@ export function createFollowupRunner(params: {
           await opts?.onObservedReplyDelivery?.();
           return false;
         }
-        await sendFollowupPayloads(
+        await sendAbortBoundPayloads(
           [buildStrandedReplyDeliveryFailurePayload()],
           effectiveQueued,
           {
@@ -1775,7 +1806,7 @@ export function createFollowupRunner(params: {
             { position: "front" },
           );
         if (!retryEnqueued) {
-          await sendFollowupPayloads(
+          await sendAbortBoundPayloads(
             [buildStrandedReplyDeliveryFailurePayload()],
             effectiveQueued,
             {
@@ -2007,7 +2038,7 @@ export function createFollowupRunner(params: {
             getReplyPayloadMetadata(payload)?.deliverDespiteSourceReplySuppression === true,
         );
         if (suppressionDeliverablePayloads.length > 0) {
-          await sendFollowupPayloads(
+          await sendAbortBoundPayloads(
             suppressionDeliverablePayloads,
             effectiveQueued,
             {

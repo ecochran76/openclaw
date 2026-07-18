@@ -2942,6 +2942,122 @@ describe("createFollowupRunner runtime config", () => {
     expect(call.abortSignal).toBe(fallbackCall.abortSignal);
   });
 
+  it("delivers marked failure notices through message-tool-only suppression while active", async () => {
+    const failureNotice = setReplyPayloadMetadataForTest(
+      { text: "Temporary provider failure", isError: true },
+      { deliverDespiteSourceReplySuppression: true },
+    );
+    runEmbeddedAgentMock.mockResolvedValueOnce({ payloads: [failureNotice], meta: {} });
+    const runner = createFollowupRunner({
+      typing: createMockTypingController(),
+      typingMode: "instant",
+      sessionKey: "main",
+      defaultModel: "openai/gpt-5.4",
+    });
+
+    await runner(
+      createQueuedRun({
+        originatingChannel: "telegram",
+        originatingTo: "chat-1",
+        run: {
+          provider: "openai",
+          model: "gpt-5.4",
+          messageProvider: "telegram",
+          sourceReplyDeliveryMode: "message_tool_only",
+        },
+      }),
+    );
+
+    expect(routeReplyMock).toHaveBeenCalledOnce();
+    expect(requireMockCallArg(routeReplyMock, 0).payload).toEqual(failureNotice);
+  });
+
+  it("suppresses a marked failure notice when its source aborts before delivery", async () => {
+    const sourceAbortController = new AbortController();
+    const failureNotice = setReplyPayloadMetadataForTest(
+      { text: "Temporary provider failure", isError: true },
+      { deliverDespiteSourceReplySuppression: true },
+    );
+    runEmbeddedAgentMock.mockImplementationOnce(async () => {
+      sourceAbortController.abort();
+      return { payloads: [failureNotice], meta: {} };
+    });
+    const runner = createFollowupRunner({
+      typing: createMockTypingController(),
+      typingMode: "instant",
+      sessionKey: "main",
+      defaultModel: "openai/gpt-5.4",
+    });
+
+    await runner(
+      createQueuedRun({
+        abortSignal: sourceAbortController.signal,
+        originatingChannel: "telegram",
+        originatingTo: "chat-1",
+        run: {
+          provider: "openai",
+          model: "gpt-5.4",
+          messageProvider: "telegram",
+          sourceReplyDeliveryMode: "message_tool_only",
+        },
+      }),
+    );
+
+    expect(routeReplyMock).not.toHaveBeenCalled();
+  });
+
+  it("binds marked failure-notice routing to source abort during delivery", async () => {
+    const sourceAbortController = new AbortController();
+    const failureNotice = setReplyPayloadMetadataForTest(
+      { text: "Temporary provider failure", isError: true },
+      { deliverDespiteSourceReplySuppression: true },
+    );
+    runEmbeddedAgentMock.mockResolvedValueOnce({ payloads: [failureNotice], meta: {} });
+    let releaseRoute: () => void = () => undefined;
+    let markRouteStarted: () => void = () => undefined;
+    const routeStarted = new Promise<void>((resolve) => {
+      markRouteStarted = resolve;
+    });
+    routeReplyMock.mockImplementationOnce(
+      async () =>
+        await new Promise<{ ok: false; error: string }>((resolve) => {
+          releaseRoute = () => resolve({ ok: false, error: "aborted" });
+          markRouteStarted();
+        }),
+    );
+    const onBlockReply = vi.fn(async () => {});
+    const runner = createFollowupRunner({
+      opts: { onBlockReply },
+      typing: createMockTypingController(),
+      typingMode: "instant",
+      sessionKey: "main",
+      defaultModel: "openai/gpt-5.4",
+    });
+
+    const pending = runner(
+      createQueuedRun({
+        abortSignal: sourceAbortController.signal,
+        originatingChannel: "telegram",
+        originatingTo: "chat-1",
+        run: {
+          provider: "openai",
+          model: "gpt-5.4",
+          messageProvider: "telegram",
+          sourceReplyDeliveryMode: "message_tool_only",
+        },
+      }),
+    );
+    await routeStarted;
+
+    expect(requireMockCallArg(routeReplyMock, 0).abortSignal).toBe(sourceAbortController.signal);
+    sourceAbortController.abort();
+    releaseRoute();
+    await pending;
+
+    expect(routeReplyMock).toHaveBeenCalledOnce();
+    expect(onBlockReply).not.toHaveBeenCalled();
+  });
+
   it("suppresses a settled followup result after an accepted user abort", async () => {
     let releaseFallback: () => void = () => undefined;
     let releaseProgressRoute: () => void = () => undefined;

@@ -9,6 +9,7 @@ import {
 import type { SessionBindingRecord } from "../../infra/outbound/session-binding-service.js";
 import { getReplyPayloadMetadata, setReplyPayloadMetadata } from "../reply-payload.js";
 import type { MsgContext } from "../templating.js";
+import { getRecentTrackedTurn, resetTrackedTurnsForTests } from "../turn-tracker.js";
 import type { GetReplyOptions, ReplyPayload } from "../types.js";
 import {
   createDispatcher,
@@ -16,6 +17,7 @@ import {
   emptyConfig,
   hookMocks,
   messageAuditMocks,
+  mocks,
   sessionBindingMocks,
   sessionStoreMocks,
   ttsMocks,
@@ -26,6 +28,7 @@ import {
   setNoAbort,
   firstMockArg,
   dispatchTwiceWithFreshDispatchers,
+  installThreadingTestPlugin,
   messageAuditEvents,
   globalBeforeAll0,
   describe0BeforeEach0,
@@ -37,6 +40,174 @@ beforeAll(globalBeforeAll0);
 
 describe("dispatchReplyFromConfig", () => {
   beforeEach(describe0BeforeEach0);
+
+  it("wires Slack agent runs and final delivery into the tracked-turn observer", async () => {
+    setNoAbort();
+    resetTrackedTurnsForTests();
+    const sessionKey = "agent:main:slack:channel:C_TRACKED";
+    sessionStoreMocks.currentEntry = { sessionId: "session-tracked" };
+    const dispatcher = createDispatcher();
+    const replyResolver = vi.fn(async (_ctx: MsgContext, opts?: GetReplyOptions) => {
+      opts?.onAgentRunStart?.("run-tracked");
+      return { text: "tracked reply" } satisfies ReplyPayload;
+    });
+
+    const result = await dispatchReplyFromConfig({
+      ctx: buildTestCtx({
+        Provider: "slack",
+        Surface: "slack",
+        OriginatingChannel: "slack",
+        OriginatingTo: "channel:C_TRACKED",
+        To: "channel:C_TRACKED",
+        ChatType: "channel",
+        SessionKey: sessionKey,
+        MessageSid: "msg-tracked",
+      }),
+      cfg: emptyConfig,
+      dispatcher,
+      replyResolver,
+    });
+
+    expect(result.queuedFinal).toBe(true);
+    expect(dispatcher.sendFinalReply).toHaveBeenCalledWith(
+      expect.objectContaining({ text: "tracked reply" }),
+    );
+    expect(getRecentTrackedTurn(sessionKey)).toMatchObject({
+      runId: "run-tracked",
+      sessionId: "session-tracked",
+      channel: "slack",
+      status: "done",
+      phase: "done",
+      deliveryState: "final_sent",
+      deliveryTarget: "same_channel",
+      replyProduced: true,
+    });
+    resetTrackedTurnsForTests();
+  });
+
+  it("records tracked Slack final delivery only after the dispatcher settles", async () => {
+    setNoAbort();
+    resetTrackedTurnsForTests();
+    const sessionKey = "agent:main:slack:channel:C_FAILED_DELIVERY";
+    sessionStoreMocks.currentEntry = { sessionId: "session-failed-delivery" };
+    const deliver = vi.fn(async () => {
+      throw new Error("transport unavailable");
+    });
+    const dispatcher = createReplyDispatcher({ deliver, onError: vi.fn() });
+
+    const result = await dispatchReplyFromConfig({
+      ctx: buildTestCtx({
+        Provider: "slack",
+        Surface: "slack",
+        OriginatingChannel: "slack",
+        OriginatingTo: "channel:C_FAILED_DELIVERY",
+        To: "channel:C_FAILED_DELIVERY",
+        ChatType: "channel",
+        SessionKey: sessionKey,
+        MessageSid: "msg-failed-delivery",
+      }),
+      cfg: emptyConfig,
+      dispatcher,
+      replyResolver: vi.fn(async (_ctx: MsgContext, opts?: GetReplyOptions) => {
+        opts?.onAgentRunStart?.("run-failed-delivery");
+        return { text: "undelivered reply" };
+      }),
+    });
+    expect(result.queuedFinal).toBe(true);
+    expect(deliver).toHaveBeenCalledTimes(2);
+    expect(getRecentTrackedTurn(sessionKey)).toMatchObject({
+      status: "done",
+      phase: "done",
+      deliveryState: "delivery_failed",
+      replyProduced: true,
+      lastDeliveryError: "dispatcher final reply failed-deliver",
+    });
+    resetTrackedTurnsForTests();
+  });
+
+  it("stops waiting for a hung final delivery when the dispatch deadline aborts", async () => {
+    setNoAbort();
+    const abortController = new AbortController();
+    let deliveryStarted!: () => void;
+    const started = new Promise<void>((resolve) => {
+      deliveryStarted = resolve;
+    });
+    const dispatcher = createReplyDispatcher({
+      deliver: async () => {
+        deliveryStarted();
+        await new Promise<void>(() => {});
+      },
+      onError: vi.fn(),
+    });
+    const run = dispatchReplyFromConfig({
+      ctx: buildTestCtx({ Provider: "slack", ChatType: "channel", SessionKey: "agent:main:main" }),
+      cfg: emptyConfig,
+      dispatcher,
+      replyResolver: async () => ({ text: "never settles" }),
+      replyOptions: { abortSignal: abortController.signal },
+    });
+
+    await started;
+    abortController.abort();
+
+    await expect(run).resolves.toMatchObject({ queuedFinal: false });
+  });
+
+  it("binds routed undelivered-reply notices to the dispatch abort signal", async () => {
+    setNoAbort();
+    installThreadingTestPlugin({ id: "slack", defaultAccountId: "default" });
+    const abortController = new AbortController();
+    let releaseNoticeRoute: () => void = () => undefined;
+    let markNoticeRouteStarted: () => void = () => undefined;
+    const noticeRouteStarted = new Promise<void>((resolve) => {
+      markNoticeRouteStarted = resolve;
+    });
+    mocks.routeReply
+      .mockResolvedValueOnce({ ok: false, error: "transport unavailable" })
+      .mockImplementationOnce(
+        async () =>
+          await new Promise<{ ok: false; error: string }>((resolve) => {
+            releaseNoticeRoute = () => resolve({ ok: false, error: "aborted" });
+            markNoticeRouteStarted();
+          }),
+      );
+    const dispatcher = createDispatcher();
+    const run = dispatchReplyFromConfig({
+      ctx: buildTestCtx({
+        Provider: "exec-event",
+        Surface: "exec-event",
+        OriginatingChannel: "slack",
+        OriginatingTo: "channel:C_ABORT_NOTICE",
+        AccountId: "default",
+        ChatType: "channel",
+        SessionKey: "agent:main:slack:channel:C_ABORT_NOTICE",
+      }),
+      cfg: emptyConfig,
+      dispatcher,
+      replyResolver: async (_ctx: MsgContext, opts?: GetReplyOptions) => {
+        opts?.onAgentRunStart?.("run-abort-notice");
+        return { text: "undelivered reply" };
+      },
+      replyOptions: { abortSignal: abortController.signal },
+    });
+
+    await noticeRouteStarted;
+    expect(mocks.routeReply).toHaveBeenCalledTimes(2);
+    const noticeRouteCall = mocks.routeReply.mock.calls[1];
+    if (!noticeRouteCall) {
+      throw new Error("expected routed undelivered-reply notice");
+    }
+    const noticeAbortSignal = (noticeRouteCall[0] as { abortSignal?: AbortSignal }).abortSignal;
+    expect(noticeAbortSignal).toBeInstanceOf(AbortSignal);
+    expect(noticeAbortSignal?.aborted).toBe(false);
+
+    abortController.abort();
+    expect(noticeAbortSignal?.aborted).toBe(true);
+    releaseNoticeRoute();
+
+    await expect(run).resolves.toMatchObject({ queuedFinal: false });
+    expect(dispatcher.sendFinalReply).not.toHaveBeenCalled();
+  });
 
   it("keeps unauthorized plugin-owned binding slash replies suppressed while routed to the bound plugin", async () => {
     setNoAbort();

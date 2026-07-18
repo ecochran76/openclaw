@@ -92,6 +92,47 @@ describe("dispatchReplyFromConfig", () => {
     expect(activeDuringOffRun).toBe(false);
   });
 
+  it("suppresses watcher notices in message-tool-only mode", async () => {
+    vi.useFakeTimers();
+    try {
+      setNoAbort();
+      const dispatcher = createDispatcher();
+      const ctx = buildTestCtx({
+        Provider: "slack",
+        Surface: "slack",
+        ChatType: "channel",
+        From: "slack:channel:C1",
+        SessionKey: "agent:main:slack:channel:C1",
+      });
+      let finish!: () => void;
+      const pending = new Promise<void>((resolve) => {
+        finish = resolve;
+      });
+      const replyResolver = async (_ctx: MsgContext, opts?: GetReplyOptions) => {
+        opts?.onAgentRunStart?.("run-watcher-suppressed");
+        await pending;
+        return { text: "done" } satisfies ReplyPayload;
+      };
+
+      const run = dispatchReplyFromConfig({
+        ctx,
+        cfg: messageToolGroupReplyConfig,
+        dispatcher,
+        replyResolver,
+        replyOptions: { sourceReplyDeliveryMode: "message_tool_only" },
+      });
+      await vi.advanceTimersByTimeAsync(20_000);
+
+      expect(dispatcher.sendBlockReply).not.toHaveBeenCalled();
+      finish();
+      await vi.runAllTimersAsync();
+      await run;
+      expect(dispatcher.sendFinalReply).not.toHaveBeenCalled();
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
   it("forwards channel-owned group progress callbacks while source delivery is suppressed", async () => {
     setNoAbort();
     sessionStoreMocks.currentEntry = {
