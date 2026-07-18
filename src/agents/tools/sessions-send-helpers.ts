@@ -12,13 +12,30 @@ import { normalizeChannelId as normalizeChatChannelId } from "../../channels/reg
 import type { OpenClawConfig } from "../../config/types.openclaw.js";
 import { ANNOUNCE_SKIP_TOKEN, REPLY_SKIP_TOKEN } from "./sessions-send-tokens.js";
 export {
+  ANNOUNCE_SKIP_TOKEN,
   isAnnounceSkip,
   isNonDeliverableSessionsReply,
   isReplySkip,
+  REPLY_SKIP_TOKEN,
 } from "./sessions-send-tokens.js";
 
-const DEFAULT_AGENTNG_PONG_TURNS = 5;
+const DEFAULT_PING_PONG_TURNS = 5;
 const MAX_PING_PONG_TURNS = 20;
+const MAX_A2A_TIMEOUT_SECONDS = 300;
+const DEFAULT_A2A_TIMEOUT_SECONDS = 30;
+
+export type IngressEchoPolicy = {
+  enabled: boolean;
+  requireDelivery: boolean;
+};
+
+export type RelayPolicy = {
+  enabled: boolean;
+  mode: "target-only" | "dual-channel";
+  mirrorTurns: "round1" | "all";
+  verbosity: "none" | "sender-message" | "full-payload";
+  requireDelivery: boolean;
+};
 
 export type AnnounceTarget = {
   channel: string;
@@ -130,13 +147,81 @@ export function buildAgentToAgentAnnounceContext(params: {
   return lines.join("\n");
 }
 
-/** Resolves the configured A2A ping-pong turn limit with a hard runtime cap. */
-export function resolvePingPongTurns(cfg?: OpenClawConfig) {
-  const raw = cfg?.session?.agentToAgent?.maxPingPongTurns;
-  const fallback = DEFAULT_AGENTNG_PONG_TURNS;
+/** Clamps an A2A ping-pong turn limit with a hard runtime cap. */
+export function clampPingPongTurns(raw: number | undefined, fallback = DEFAULT_PING_PONG_TURNS) {
   if (typeof raw !== "number" || !Number.isFinite(raw)) {
     return fallback;
   }
   const rounded = Math.floor(raw);
   return Math.max(0, Math.min(MAX_PING_PONG_TURNS, rounded));
+}
+
+export function resolvePingPongTurns(cfg?: OpenClawConfig) {
+  return clampPingPongTurns(cfg?.session?.agentToAgent?.maxPingPongTurns, DEFAULT_PING_PONG_TURNS);
+}
+
+export function clampA2ATimeoutSeconds(
+  raw: number | undefined,
+  fallback = DEFAULT_A2A_TIMEOUT_SECONDS,
+) {
+  if (typeof raw !== "number" || !Number.isFinite(raw)) {
+    return fallback;
+  }
+  const rounded = Math.floor(raw);
+  return Math.max(1, Math.min(MAX_A2A_TIMEOUT_SECONDS, rounded));
+}
+
+export function resolveIngressEchoPolicy(cfg?: OpenClawConfig): IngressEchoPolicy {
+  const raw = cfg?.session?.agentToAgent?.ingressEcho;
+  return {
+    enabled: raw?.enabled === true,
+    requireDelivery: raw?.requireDelivery === true,
+  };
+}
+
+export function resolveRelayPolicy(cfg?: OpenClawConfig): RelayPolicy {
+  const raw = cfg?.session?.agentToAgent?.relay;
+  return {
+    enabled: raw?.enabled === true,
+    mode: raw?.mode === "dual-channel" ? "dual-channel" : "target-only",
+    mirrorTurns: raw?.mirrorTurns === "all" ? "all" : "round1",
+    verbosity:
+      raw?.verbosity === "none" || raw?.verbosity === "full-payload"
+        ? raw.verbosity
+        : "sender-message",
+    requireDelivery: raw?.requireDelivery === true,
+  };
+}
+
+export function buildAgentToAgentIngressEchoText(params: {
+  requesterSessionKey?: string;
+  requesterChannel?: string;
+  targetSessionKey: string;
+  message: string;
+}) {
+  const headerParts = ["A2A ingress echo:"];
+  if (params.requesterSessionKey) {
+    headerParts.push(`from ${params.requesterSessionKey}`);
+  }
+  if (params.requesterChannel) {
+    headerParts.push(`via ${params.requesterChannel}`);
+  }
+  headerParts.push(`to ${params.targetSessionKey}`);
+  return `${headerParts.join(" ")}\n\n${params.message}`.trim();
+}
+
+export function buildAgentToAgentRelayText(params: {
+  handoffId: string;
+  fromAgent: string;
+  toAgent: string;
+  text: string;
+  verbosity: RelayPolicy["verbosity"];
+}) {
+  if (params.verbosity === "none") {
+    return "";
+  }
+  if (params.verbosity === "sender-message") {
+    return `${params.fromAgent} -> ${params.toAgent}\n${params.text}`.trim();
+  }
+  return `[A2A handoff:${params.handoffId}] ${params.fromAgent} -> ${params.toAgent}\n${params.text}`.trim();
 }

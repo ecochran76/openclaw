@@ -42,6 +42,7 @@ import type { SpawnedToolContext } from "./spawned-context.js";
 import type { ToolFsPolicy } from "./tool-fs-policy.js";
 import { resolveToolLoopDetectionConfig } from "./tool-loop-detection-config.js";
 import { createAgentsListTool } from "./tools/agents-list-tool.js";
+import { createAutomationTool } from "./tools/automation-tool.js";
 import type { AnyAgentTool } from "./tools/common.js";
 import { createComputerTool } from "./tools/computer-tool.js";
 import { createCronTool, type CronCreatorToolAllowlistEntry } from "./tools/cron-tool.js";
@@ -93,6 +94,51 @@ export function filterToolsByClientCaps(
     (tool) => !tool.requiredClientCaps?.some((requiredCap) => !clientCaps.has(requiredCap)),
   );
 }
+
+type OpenClawToolsDeps = {
+  callGateway: typeof callGateway;
+  config?: OpenClawConfig;
+};
+
+const OPENCLAW_TOOLS_STAGE_WARN_MS = 2_000;
+
+function createOpenClawToolsStageTracker(agentSessionKey?: string) {
+  const startedAt = performance.now();
+  let previousAt = startedAt;
+  const stages: Array<{ name: string; durationMs: number; elapsedMs: number }> = [];
+  return {
+    mark(name: string) {
+      const now = performance.now();
+      stages.push({
+        name,
+        durationMs: Math.max(0, Math.round(now - previousAt)),
+        elapsedMs: Math.max(0, Math.round(now - startedAt)),
+      });
+      previousAt = now;
+    },
+    warnIfSlow() {
+      const totalMs = Math.max(0, Math.round(performance.now() - startedAt));
+      if (
+        totalMs < OPENCLAW_TOOLS_STAGE_WARN_MS &&
+        !stages.some((stage) => stage.durationMs >= OPENCLAW_TOOLS_STAGE_WARN_MS)
+      ) {
+        return;
+      }
+      const stageText = stages
+        .map((stage) => `${stage.name}:${stage.durationMs}ms@${stage.elapsedMs}ms`)
+        .join(",");
+      console.warn(
+        `[openclaw-tools-startup] totalMs=${totalMs} sessionKey=${agentSessionKey ?? "unknown"} stages=${stageText || "none"}`,
+      );
+    },
+  };
+}
+
+const defaultOpenClawToolsDeps: OpenClawToolsDeps = {
+  callGateway,
+};
+
+let openClawToolsDeps: OpenClawToolsDeps = defaultOpenClawToolsDeps;
 
 export function createOpenClawTools(
   options?: {
@@ -218,7 +264,8 @@ export function createOpenClawTools(
     allowGatewaySubagentBinding?: boolean;
   } & SpawnedToolContext,
 ): AnyAgentTool[] {
-  const resolvedConfig = options?.config;
+  const stages = createOpenClawToolsStageTracker(options?.agentSessionKey);
+  const resolvedConfig = options?.config ?? openClawToolsDeps.config;
   const runtimeSnapshot = getActiveSecretsRuntimeConfigSnapshot();
   const availabilityConfig = selectApplicableRuntimeConfig({
     inputConfig: resolvedConfig,
@@ -255,6 +302,7 @@ export function createOpenClawTools(
     options?.sandboxRoot && options?.sandboxFsBridge
       ? { root: options.sandboxRoot, bridge: options.sandboxFsBridge }
       : undefined;
+  stages.mark("context");
   const optionalMediaTools = resolveOptionalMediaToolFactoryPlan({
     config: availabilityConfig ?? resolvedConfig,
     workspaceDir,
@@ -298,6 +346,7 @@ export function createOpenClawTools(
       })
     : null;
   options?.recordToolPrepStage?.("openclaw-tools:image-tool");
+  stages.mark("image-tool");
   const imageGenerateTool = optionalMediaTools.imageGenerate
     ? createImageGenerateTool({
         config: options?.config,
@@ -312,6 +361,7 @@ export function createOpenClawTools(
       })
     : null;
   options?.recordToolPrepStage?.("openclaw-tools:image-generate-tool");
+  stages.mark("image-generate");
   const videoGenerateTool = optionalMediaTools.videoGenerate
     ? createVideoGenerateTool({
         config: options?.config,
@@ -326,6 +376,7 @@ export function createOpenClawTools(
       })
     : null;
   options?.recordToolPrepStage?.("openclaw-tools:video-generate-tool");
+  stages.mark("video-generate");
   const musicGenerateTool = optionalMediaTools.musicGenerate
     ? createMusicGenerateTool({
         config: options?.config,
@@ -340,6 +391,7 @@ export function createOpenClawTools(
       })
     : null;
   options?.recordToolPrepStage?.("openclaw-tools:music-generate-tool");
+  stages.mark("music-generate");
   const pdfTool =
     optionalMediaTools.pdf && options?.agentDir?.trim()
       ? createPdfTool({
@@ -353,6 +405,7 @@ export function createOpenClawTools(
         })
       : null;
   options?.recordToolPrepStage?.("openclaw-tools:pdf-tool");
+  stages.mark("pdf-tool");
   const webSearchTool = createWebSearchTool({
     config: options?.config,
     agentDir: options?.agentDir,
@@ -361,6 +414,7 @@ export function createOpenClawTools(
     lateBindRuntimeConfig: true,
   });
   options?.recordToolPrepStage?.("openclaw-tools:web-search-tool");
+  stages.mark("web-search");
   const webFetchTool = createWebFetchTool({
     config: options?.config,
     sandboxed: options?.sandboxed,
@@ -368,6 +422,7 @@ export function createOpenClawTools(
     lateBindRuntimeConfig: true,
   });
   options?.recordToolPrepStage?.("openclaw-tools:web-fetch-tool");
+  stages.mark("web-fetch");
   const messageTool = options?.disableMessageTool
     ? null
     : createMessageTool({
@@ -400,6 +455,7 @@ export function createOpenClawTools(
       });
   const heartbeatTool = options?.enableHeartbeatTool ? createHeartbeatResponseTool() : null;
   options?.recordToolPrepStage?.("openclaw-tools:message-tool");
+  stages.mark("message-tool");
   const nodesToolBase = createNodesTool({
     agentSessionKey: options?.agentSessionKey,
     agentChannel: options?.agentChannel,
@@ -410,6 +466,7 @@ export function createOpenClawTools(
     modelHasVision: options?.modelHasVision,
     allowMediaInvokeCommands: options?.allowMediaInvokeCommands,
   });
+  stages.mark("nodes-tool");
   const nodesTool = applyNodesToolWorkspaceGuard(nodesToolBase, {
     fsPolicy: options?.fsPolicy,
     sandboxContainerWorkdir: options?.sandboxContainerWorkdir,
@@ -417,6 +474,7 @@ export function createOpenClawTools(
     workspaceDir,
   });
   options?.recordToolPrepStage?.("openclaw-tools:nodes-tool");
+  stages.mark("nodes-guard");
   const embedded = isEmbeddedMode();
   const explicitFactoryAllowlist = mergeFactoryPolicyList(
     resolvedConfig?.tools?.allow,
@@ -482,6 +540,16 @@ export function createOpenClawTools(
             agentSessionKey: options?.runSessionKey ?? options?.agentSessionKey,
             sandboxed: options?.sandboxed,
             config: resolvedConfig,
+          }),
+          createAutomationTool({
+            agentSessionKey: options?.agentSessionKey,
+            agentChannel: options?.agentChannel,
+            agentTo: options?.agentTo,
+            agentThreadId: options?.agentThreadId,
+            currentChannelId: options?.currentChannelId,
+            currentThreadTs: options?.currentThreadTs,
+            agentAccountId: options?.agentAccountId,
+            config: options?.config,
           }),
         ]),
     ...(!embedded && taskSuggestionSessionKey && options?.taskSuggestionDeliveryMode === "gateway"
@@ -625,22 +693,21 @@ export function createOpenClawTools(
     ...collectPresentOpenClawTools([webSearchTool, webFetchTool, imageTool, pdfTool]),
   ];
   options?.recordToolPrepStage?.("openclaw-tools:core-tool-list");
+  stages.mark("core-tools");
   let allTools = tools;
   if (!options?.disablePluginTools) {
-    const existingToolNames = new Set<string>();
-    for (const tool of tools) {
-      existingToolNames.add(tool.name);
-    }
     allTools = [
       ...tools,
       ...resolveOpenClawPluginToolsForOptions({
         options,
         resolvedConfig,
-        existingToolNames,
+        existingToolNames: new Set(tools.map((tool) => tool.name)),
       }),
     ];
     options?.recordToolPrepStage?.("openclaw-tools:plugin-tools");
+    stages.mark("plugin-tools");
   }
+  stages.warnIfSlow();
 
   allTools = filterToolsByClientCaps(allTools, options?.clientCaps);
   options?.recordToolPrepStage?.("openclaw-tools:client-capabilities");

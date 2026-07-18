@@ -294,6 +294,8 @@ export type GetReplyOptions = {
   allowProgressCallbacksWhenSourceDeliverySuppressed?: boolean;
   /** Called when a suppressed source reply mode observes visible delivery through another path. */
   onObservedReplyDelivery?: () => Promise<void> | void;
+  /** Mutable lifecycle receipt set when this turn actually attempts memory-flush maintenance. */
+  memoryFlushOccurredRef?: { value: boolean };
   /** Emit tool result summaries for channel-owned progress UI even when verbose is off. */
   forceToolResultProgress?: boolean;
   disableBlockStreaming?: boolean;

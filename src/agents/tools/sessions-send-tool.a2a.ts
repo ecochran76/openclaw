@@ -8,6 +8,8 @@ import type { CallGatewayOptions } from "../../gateway/call.js";
 import { formatErrorMessage } from "../../infra/errors.js";
 import { createSubsystemLogger } from "../../logging/subsystem.js";
 import type { GatewayMessageChannel } from "../../utils/message-channel.js";
+import { buildRelaySummary, relayTurn } from "../a2a/relay-delivery.js";
+import type { RelayResult, RelayTargetResult } from "../a2a/types.js";
 import { resolveNestedAgentLaneForSession } from "../lanes.js";
 import {
   type AgentWaitResult,
@@ -26,21 +28,28 @@ import {
   isAnnounceSkip,
   isNonDeliverableSessionsReply,
   isReplySkip,
+  type RelayPolicy,
 } from "./sessions-send-helpers.js";
 
 const log = createSubsystemLogger("agents/sessions-send");
 
 type GatewayCaller = <T = unknown>(opts: CallGatewayOptions) => Promise<T>;
+type AnnounceTargetResolver = typeof resolveAnnounceTarget;
+type AgentStepRunner = typeof runAgentStep;
 
 const defaultSessionsSendA2ADeps = {
   callGateway: async <T = unknown>(opts: CallGatewayOptions): Promise<T> => {
     const { callGateway } = await import("../../gateway/call.js");
     return callGateway<T>(opts);
   },
+  resolveAnnounceTarget,
+  runAgentStep,
 };
 
 let sessionsSendA2ADeps: {
   callGateway: GatewayCaller;
+  resolveAnnounceTarget: AnnounceTargetResolver;
+  runAgentStep: AgentStepRunner;
 } = defaultSessionsSendA2ADeps;
 
 function isDeliveryFailureWait(wait: AgentWaitResult): boolean {
@@ -82,7 +91,8 @@ async function deliverAnnounceReply(params: {
   }
 }
 
-export async function runSessionsSendA2AFlow(params: {
+export type SessionsSendA2AFlowParams = {
+  runContextId?: string;
   targetSessionKey: string;
   displayKey: string;
   message: string;
@@ -94,15 +104,79 @@ export async function runSessionsSendA2AFlow(params: {
   roundOneReply?: string;
   waitRunId?: string;
   notifyRequesterOnWaitFailure?: boolean;
-}) {
-  const runContextId = params.waitRunId ?? "unknown";
+  relayPolicy?: RelayPolicy;
+  sourceRelayTarget?: AnnounceTarget | null;
+  targetRelayTarget?: AnnounceTarget | null;
+  requesterAgentId?: string;
+  targetAgentId?: string;
+};
+
+export type StartedSessionsSendA2AFlow = {
+  relay: RelayResult;
+  completion?: Promise<{ relay: RelayResult } | undefined>;
+};
+
+export async function startSessionsSendA2AFlow(
+  params: SessionsSendA2AFlowParams,
+): Promise<StartedSessionsSendA2AFlow> {
+  const runContextId = params.runContextId ?? params.waitRunId ?? crypto.randomUUID();
+  const relayTargets: RelayTargetResult[] = [];
+  try {
+    // The request relay is independent of the target's reply. Attempt it before
+    // waiting so strict delivery cannot be reported as pending without proof.
+    const initialRelay = await relayTurn(
+      {
+        runContextId,
+        turnId: "request",
+        relayPolicy: params.relayPolicy,
+        sourceRelayTarget: params.sourceRelayTarget,
+        targetRelayTarget: params.targetRelayTarget,
+        fromAgent: params.requesterAgentId ?? "requester",
+        toAgent: params.targetAgentId ?? "target",
+        text: params.message,
+      },
+      {
+        callGateway: sessionsSendA2ADeps.callGateway,
+      },
+    );
+    relayTargets.push(...initialRelay.targets);
+    if (initialRelay.requiredFailure) {
+      return {
+        relay: buildRelaySummary({
+          policy: params.relayPolicy,
+          targets: relayTargets,
+          blocked: true,
+        }),
+      };
+    }
+
+    return {
+      relay: buildRelaySummary({ policy: params.relayPolicy, targets: relayTargets }),
+      completion: continueSessionsSendA2AFlow(params, runContextId, relayTargets),
+    };
+  } catch (err) {
+    log.warn("sessions_send initial relay failed", {
+      runId: runContextId,
+      error: formatErrorMessage(err),
+    });
+    return {
+      relay: buildRelaySummary({ policy: params.relayPolicy, targets: relayTargets }),
+    };
+  }
+}
+
+async function continueSessionsSendA2AFlow(
+  params: SessionsSendA2AFlowParams,
+  runContextId: string,
+  relayTargets: RelayTargetResult[],
+): Promise<{ relay: RelayResult } | undefined> {
   try {
     let primaryReply = params.roundOneReply;
     let latestReply = params.roundOneReply;
     if (!primaryReply && params.waitRunId) {
       const wait = await waitForAgentRun({
         runId: params.waitRunId,
-        timeoutMs: Math.min(params.announceTimeoutMs, 60_000),
+        timeoutMs: params.announceTimeoutMs,
         callGateway: sessionsSendA2ADeps.callGateway,
       });
       if (wait.status === "ok") {
@@ -136,20 +210,68 @@ export async function runSessionsSendA2AFlow(params: {
             sourceTool: "sessions_send",
           });
         }
-        return;
+        const requiredReplyRelayMissed =
+          params.relayPolicy?.requireDelivery === true &&
+          (params.relayPolicy.mirrorTurns === "round1" || params.relayPolicy.mirrorTurns === "all");
+        return {
+          relay: buildRelaySummary({
+            policy: params.relayPolicy,
+            targets: relayTargets,
+            blocked: requiredReplyRelayMissed,
+          }),
+        };
       }
     }
-    if (!latestReply) {
-      return;
-    }
     if (isNonDeliverableSessionsReply(latestReply)) {
-      return;
+      return { relay: buildRelaySummary({ policy: params.relayPolicy, targets: relayTargets }) };
     }
 
-    const announceTarget = await resolveAnnounceTarget({
-      sessionKey: params.targetSessionKey,
-      displayKey: params.displayKey,
-    });
+    if (
+      latestReply &&
+      (params.relayPolicy?.mirrorTurns === "round1" || params.relayPolicy?.mirrorTurns === "all")
+    ) {
+      const roundOneRelay = await relayTurn(
+        {
+          runContextId,
+          turnId: "round-1-reply",
+          relayPolicy: params.relayPolicy,
+          sourceRelayTarget: params.sourceRelayTarget,
+          targetRelayTarget: params.targetRelayTarget,
+          fromAgent: params.targetAgentId ?? "target",
+          toAgent: params.requesterAgentId ?? "requester",
+          text: latestReply,
+        },
+        {
+          callGateway: sessionsSendA2ADeps.callGateway,
+        },
+      );
+      relayTargets.push(...roundOneRelay.targets);
+      if (roundOneRelay.requiredFailure) {
+        return {
+          relay: buildRelaySummary({
+            policy: params.relayPolicy,
+            targets: relayTargets,
+            blocked: true,
+          }),
+        };
+      }
+    }
+
+    if (!latestReply) {
+      return { relay: buildRelaySummary({ policy: params.relayPolicy, targets: relayTargets }) };
+    }
+
+    const announceTarget =
+      params.targetRelayTarget ??
+      (await sessionsSendA2ADeps.resolveAnnounceTarget(
+        {
+          sessionKey: params.targetSessionKey,
+          displayKey: params.displayKey,
+        },
+        {
+          callGateway: sessionsSendA2ADeps.callGateway,
+        },
+      ));
     const targetChannel = announceTarget?.channel ?? "unknown";
 
     // A same-session send is a human-facing source-channel reply, not a true
@@ -162,14 +284,14 @@ export async function runSessionsSendA2AFlow(params: {
       (!params.requesterChannel || params.requesterChannel === announceTarget.channel);
     if (sameSessionSourceReply && canDirectDeliverSameSessionReply) {
       if (params.waitRunId && !params.roundOneReply && !params.baseline) {
-        return;
+        return { relay: buildRelaySummary({ policy: params.relayPolicy, targets: relayTargets }) };
       }
       await deliverAnnounceReply({
         announceTarget,
         message: latestReply,
         runContextId,
       });
-      return;
+      return { relay: buildRelaySummary({ policy: params.relayPolicy, targets: relayTargets }) };
     }
     if (sameSessionSourceReply && !announceTarget) {
       return;
@@ -195,7 +317,7 @@ export async function runSessionsSendA2AFlow(params: {
           turn,
           maxTurns: params.maxPingPongTurns,
         });
-        const replyText = await runAgentStep({
+        const replyText = await sessionsSendA2ADeps.runAgentStep({
           sessionKey: currentSessionKey,
           message: incomingMessage,
           extraSystemPrompt: replyPrompt,
@@ -210,6 +332,41 @@ export async function runSessionsSendA2AFlow(params: {
           break;
         }
         latestReply = replyText;
+        if (params.relayPolicy?.enabled === true && params.relayPolicy.mirrorTurns === "all") {
+          const fromAgent =
+            currentRole === "requester"
+              ? (params.requesterAgentId ?? "requester")
+              : (params.targetAgentId ?? "target");
+          const toAgent =
+            currentRole === "requester"
+              ? (params.targetAgentId ?? "target")
+              : (params.requesterAgentId ?? "requester");
+          const relayAttempt = await relayTurn(
+            {
+              runContextId,
+              turnId: `ping-pong-${turn}`,
+              relayPolicy: params.relayPolicy,
+              sourceRelayTarget: params.sourceRelayTarget,
+              targetRelayTarget: params.targetRelayTarget,
+              fromAgent,
+              toAgent,
+              text: replyText,
+            },
+            {
+              callGateway: sessionsSendA2ADeps.callGateway,
+            },
+          );
+          relayTargets.push(...relayAttempt.targets);
+          if (relayAttempt.requiredFailure) {
+            return {
+              relay: buildRelaySummary({
+                policy: params.relayPolicy,
+                targets: relayTargets,
+                blocked: true,
+              }),
+            };
+          }
+        }
         incomingMessage = replyText;
         const swap = currentSessionKey;
         currentSessionKey = nextSessionKey;
@@ -217,49 +374,76 @@ export async function runSessionsSendA2AFlow(params: {
       }
     }
 
-    const announcePrompt = buildAgentToAgentAnnounceContext({
-      requesterSessionKey: params.requesterSessionKey,
-      requesterChannel: params.requesterChannel,
-      targetSessionKey: params.displayKey,
-      targetChannel,
-      originalMessage: params.message,
-      roundOneReply: primaryReply,
-      latestReply,
-    });
-    const announceReply = await runAgentStep({
-      sessionKey: params.targetSessionKey,
-      message: "Agent-to-agent announce step.",
-      extraSystemPrompt: announcePrompt,
-      timeoutMs: params.announceTimeoutMs,
-      lane: resolveNestedAgentLaneForSession(params.targetSessionKey),
-      transcriptMessage: "",
-      sourceSessionKey: params.requesterSessionKey,
-      sourceChannel: params.requesterChannel,
-      sourceTool: "sessions_send",
-    });
-    if (
-      announceTarget &&
-      announceReply &&
-      announceReply.trim() &&
-      !isAnnounceSkip(announceReply) &&
-      !isNonDeliverableSessionsReply(announceReply)
-    ) {
-      await deliverAnnounceReply({
-        announceTarget,
-        message: announceReply,
-        runContextId,
+    const suppressAnnounceForRelay =
+      params.relayPolicy?.enabled === true && params.relayPolicy.mode === "dual-channel";
+    if (!suppressAnnounceForRelay) {
+      const announcePrompt = buildAgentToAgentAnnounceContext({
+        requesterSessionKey: params.requesterSessionKey,
+        requesterChannel: params.requesterChannel,
+        targetSessionKey: params.displayKey,
+        targetChannel,
+        originalMessage: params.message,
+        roundOneReply: primaryReply,
+        latestReply,
       });
+      const announceReply = await sessionsSendA2ADeps.runAgentStep({
+        sessionKey: params.targetSessionKey,
+        message: "Agent-to-agent announce step.",
+        extraSystemPrompt: announcePrompt,
+        timeoutMs: params.announceTimeoutMs,
+        lane: resolveNestedAgentLaneForSession(params.targetSessionKey),
+        transcriptMessage: "",
+        sourceSessionKey: params.requesterSessionKey,
+        sourceChannel: params.requesterChannel,
+        sourceTool: "sessions_send",
+      });
+      if (
+        announceTarget &&
+        announceReply &&
+        announceReply.trim() &&
+        !isAnnounceSkip(announceReply) &&
+        !isNonDeliverableSessionsReply(announceReply)
+      ) {
+        await deliverAnnounceReply({
+          announceTarget,
+          message: announceReply,
+          runContextId,
+        });
+      }
     }
   } catch (err) {
     log.warn("sessions_send announce flow failed", {
       runId: runContextId,
       error: formatErrorMessage(err),
     });
+    return {
+      relay: buildRelaySummary({
+        policy: params.relayPolicy,
+        targets: relayTargets,
+        blocked: params.relayPolicy?.requireDelivery === true,
+      }),
+    };
   }
+  return {
+    relay: buildRelaySummary({ policy: params.relayPolicy, targets: relayTargets }),
+  };
 }
 
-export const testing = {
-  setDepsForTest(overrides?: Partial<{ callGateway: GatewayCaller }>) {
+export async function runSessionsSendA2AFlow(
+  params: SessionsSendA2AFlowParams,
+): Promise<{ relay: RelayResult } | undefined> {
+  const started = await startSessionsSendA2AFlow(params);
+  return started.completion ? await started.completion : { relay: started.relay };
+}
+
+export const __testing = {
+  setDepsForTest(
+    overrides?: Partial<{
+      callGateway: GatewayCaller;
+      resolveAnnounceTarget: AnnounceTargetResolver;
+      runAgentStep: AgentStepRunner;
+    }>,
+  ) {
     sessionsSendA2ADeps = overrides
       ? {
           ...defaultSessionsSendA2ADeps,

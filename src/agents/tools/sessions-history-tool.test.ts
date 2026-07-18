@@ -16,6 +16,7 @@ type HistoryMessage = {
 };
 
 let createSessionsHistoryTool: typeof import("./sessions-history-tool.js").createSessionsHistoryTool;
+let sessionsResolutionTesting: typeof import("./sessions-resolution.js").testing;
 let previousConfigPath: string | undefined;
 let tempDir: string | undefined;
 
@@ -81,6 +82,7 @@ describe("sessions_history redaction", () => {
     tempDir = fs.mkdtempSync(path.join(os.tmpdir(), "openclaw-sessions-history-redact-"));
     useLoggingConfig("redaction-off.json", { redactSensitive: "off" });
     ({ createSessionsHistoryTool } = await import("./sessions-history-tool.js"));
+    ({ testing: sessionsResolutionTesting } = await import("./sessions-resolution.js"));
   });
 
   afterAll(() => {
@@ -106,6 +108,50 @@ describe("sessions_history redaction", () => {
     expect(serialized).not.toContain("sk-or-v1-abcdef0123456789");
     expect(serialized).toContain("OPENROUTER_API_KEY=");
     expect((result.details as { contentRedacted?: unknown }).contentRedacted).toBe(true);
+  });
+
+  it("does not disclose a session-id-resolved cross-agent denial", async () => {
+    sessionsResolutionTesting.setDepsForTest({
+      callGateway: async <T = Record<string, unknown>>(request: CallGatewayRequest): Promise<T> => {
+        if (request.method === "sessions.resolve") {
+          const params = request.params as Record<string, unknown>;
+          if (params.key === "session-id-only") {
+            throw new Error("not a session key");
+          }
+          return { key: "agent:secret-target:main" } as T;
+        }
+        if (request.method === "sessions.list") {
+          return { sessions: [] } as T;
+        }
+        return {} as T;
+      },
+    });
+    try {
+      const tool = createSessionsHistoryTool({
+        agentSessionKey: "agent:main:main",
+        config: {
+          tools: {
+            agentToAgent: { enabled: true, allow: ["*"] },
+            sessions: { visibility: "tree" },
+          },
+        },
+      });
+
+      const result = await tool.execute("call-denied-session-id", {
+        sessionKey: "session-id-only",
+      });
+      const details = readHistoryDetails(result);
+
+      expect(details).toMatchObject({
+        status: "forbidden",
+        error: "sessions_history access denied.",
+      });
+      expect(JSON.stringify(details)).not.toContain("secret-target");
+      expect(details).not.toHaveProperty("permissionRequest");
+      expect(details).not.toHaveProperty("pendingApproval");
+    } finally {
+      sessionsResolutionTesting.setDepsForTest();
+    }
   });
 
   it("applies custom redaction patterns to recalled session text", async () => {

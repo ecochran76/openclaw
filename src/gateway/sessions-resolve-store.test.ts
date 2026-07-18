@@ -67,14 +67,14 @@ describe("resolveSessionKeyFromResolveParams store canonicalization", () => {
           cfg,
           p: { sessionId: "sess-default-alias" },
         }),
-      ).resolves.toEqual({ ok: true, key: "agent:ops:main" });
+      ).resolves.toMatchObject({ ok: true, key: "agent:ops:main" });
 
       await expect(
         resolveSessionKeyFromResolveParams({
           cfg,
           p: { label: "default-alias" },
         }),
-      ).resolves.toEqual({ ok: true, key: "agent:ops:main" });
+      ).resolves.toMatchObject({ ok: true, key: "agent:ops:main" });
     });
   });
 
@@ -290,7 +290,12 @@ describe("resolveSessionKeyFromResolveParams store canonicalization", () => {
           cfg,
           p: { label: "claude-delegate" },
         }),
-      ).resolves.toEqual({ ok: true, key: acpKey });
+      ).resolves.toMatchObject({
+        ok: true,
+        key: acpKey,
+        agentId: "claude",
+        resolution: { matchedBy: "label" },
+      });
     });
   });
 

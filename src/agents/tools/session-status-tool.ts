@@ -20,6 +20,14 @@ import {
 } from "../../config/sessions.js";
 import type { OpenClawConfig } from "../../config/types.openclaw.js";
 import { triggerSessionPatchHook } from "../../gateway/session-patch-hooks.js";
+import {
+  formatUsagePolicyDecisionLine,
+  formatUsageWindowSummary,
+  isUsagePolicySurfaceEnabled,
+  loadProviderUsageSummaryWithCache,
+  readCachedUsagePolicyDecision,
+  resolveUsageProviderId,
+} from "../../infra/provider-usage.js";
 import { loadManifestMetadataSnapshot } from "../../plugins/manifest-contract-eligibility.js";
 import {
   buildAgentMainSessionKey,
@@ -44,6 +52,8 @@ import {
   isDeliverableMessageChannel,
   normalizeMessageChannel,
 } from "../../utils/message-channel.js";
+import { resolveAgentDir } from "../agent-scope.js";
+import { resolveModelAuthLabel } from "../model-auth-label.js";
 import { loadModelCatalog } from "../model-catalog.js";
 import {
   buildModelAliasIndex,
@@ -60,6 +70,7 @@ import {
 } from "../tool-description-presets.js";
 import type { AnyAgentTool } from "./common.js";
 import {
+  jsonResult,
   normalizeToolModelOverride,
   readNonNegativeIntegerParam,
   readStringParam,
@@ -71,15 +82,18 @@ import {
   resolveStoreScopedRequesterKey,
 } from "./session-status-session-resolve.js";
 import {
+  checkAgentToAgentAccess,
   createAgentToAgentPolicy,
   createSessionVisibilityGuard,
   resolveCurrentSessionClientAlias,
+  shouldResolveSessionIdInput,
+  type SessionAccessPermissionRequest,
   resolveEffectiveSessionToolsVisibility,
   resolveSandboxedSessionToolContext,
   resolveSessionReference,
   resolveVisibleSessionReference,
-  shouldResolveSessionIdInput,
 } from "./sessions-helpers.js";
+import { buildPendingSessionApprovalOutput } from "./sessions-pending-approvals.js";
 
 const SessionStatusToolSchema = Type.Object({
   sessionKey: Type.Optional(Type.String()),
@@ -494,6 +508,12 @@ export function createSessionStatusTool(opts?: {
             requesterInternalKey: effectiveRequesterKey,
           }),
         );
+      // A denial may echo caller-controlled text, but resolution results and target-agent
+      // metadata remain private until access succeeds.
+      const accessDeniedLiteralKey =
+        requestedKeyParam !== undefined && !isSemanticCurrentRequest
+          ? requestedKeyParam.trim() || undefined
+          : undefined;
 
       // Resolve semantic "current" to the live run session key for lookup purposes (#76708).
       // In sandboxed channel runs there may be no separate runSessionKey because the sandbox
@@ -512,35 +532,91 @@ export function createSessionStatusTool(opts?: {
         requestedKeyInput = requestedKeyRaw?.trim() ?? "";
       }
       const effectiveRequesterLookupKey = effectiveRequesterKey.trim();
-      let resolvedViaSessionId = false;
+      let resolvedTargetViaSessionId = false;
       let resolvedViaImplicitCurrentFallback = false;
       if (!requestedKeyInput) {
         throw new Error("sessionKey required");
       }
       requestedKeyRaw = requestedKeyInput;
-      const ensureAgentAccess = (targetAgentId: string) => {
-        if (targetAgentId === requesterAgentId) {
-          return;
+      const denyAccessResult = async (
+        access: {
+          status: "forbidden";
+          error: string;
+          permissionRequest?: SessionAccessPermissionRequest;
+        },
+        disclosure?: {
+          sessionKey?: string;
+          redactResolvedTarget?: boolean;
+        },
+      ) => {
+        // A redacted denial intentionally withholds the resolved target identity. A durable
+        // approval would retain that hidden target and create an undisclosed authorization path.
+        const approvalOutput = disclosure?.redactResolvedTarget
+          ? {}
+          : await buildPendingSessionApprovalOutput({
+              permissionRequest: access.permissionRequest,
+              requesterSessionKey: opts?.agentSessionKey,
+              originalToolName: "session_status",
+              originalArgs: params,
+            });
+        return jsonResult({
+          status: access.status,
+          error: disclosure?.redactResolvedTarget ? "Session status access denied." : access.error,
+          ...(disclosure?.sessionKey ? { sessionKey: disclosure.sessionKey } : {}),
+          ...(!disclosure?.redactResolvedTarget && access.permissionRequest
+            ? { permissionRequest: access.permissionRequest }
+            : {}),
+          ...approvalOutput,
+        });
+      };
+      const handleAccessDeny = async (
+        access: {
+          status: "forbidden";
+          error: string;
+          permissionRequest?: SessionAccessPermissionRequest;
+        },
+        disclosure?: {
+          sessionKey?: string;
+          redactResolvedTarget?: boolean;
+        },
+      ) => {
+        if (access.permissionRequest === undefined) {
+          throw new Error(access.error);
         }
-        // Gate cross-agent access behind tools.agentToAgent settings.
-        if (!a2aPolicy.enabled) {
-          throw new Error(
-            "Agent-to-agent status is disabled. Set tools.agentToAgent.enabled=true to allow cross-agent access.",
-          );
+        return await denyAccessResult(access, disclosure);
+      };
+      const ensureAgentAccess = async (
+        targetAgentId: string,
+        disclosure?: {
+          sessionKey?: string;
+          redactResolvedTarget?: boolean;
+        },
+      ) => {
+        const access = checkAgentToAgentAccess({
+          action: "status",
+          requesterAgentId,
+          targetAgentId,
+          a2aPolicy,
+        });
+        if (!access.allowed) {
+          return await denyAccessResult(access, disclosure);
         }
-        if (!a2aPolicy.isAllowed(requesterAgentId, targetAgentId)) {
-          throw new Error("Agent-to-agent session status denied by tools.agentToAgent.allow.");
-        }
+        return undefined;
       };
 
       if (requestedKeyInput.startsWith("agent:") && !isSemanticCurrentRequest) {
         const requestedAgentId = resolveAgentIdFromSessionKey(requestedKeyInput);
-        ensureAgentAccess(requestedAgentId);
+        const denied = await ensureAgentAccess(requestedAgentId, {
+          sessionKey: requestedKeyRaw,
+        });
+        if (denied) {
+          return denied;
+        }
         const access = visibilityGuard.check(
           normalizeVisibilityTargetSessionKey(requestedKeyInput, requestedAgentId),
         );
         if (!access.allowed) {
-          throw new Error(access.error);
+          return await handleAccessDeny(access, { sessionKey: requestedKeyRaw });
         }
       }
 
@@ -588,8 +664,14 @@ export function createSessionStatusTool(opts?: {
             throw new Error("Session status visibility is restricted to the current session tree.");
           }
           // If resolution points at another agent, enforce A2A policy before switching stores.
-          ensureAgentAccess(resolveAgentIdFromSessionKey(visibleSession.key));
-          resolvedViaSessionId = true;
+          const denied = await ensureAgentAccess(resolveAgentIdFromSessionKey(visibleSession.key), {
+            sessionKey: accessDeniedLiteralKey,
+            redactResolvedTarget: true,
+          });
+          if (denied) {
+            return denied;
+          }
+          resolvedTargetViaSessionId = true;
           requestedKeyRaw = visibleSession.key;
           requestedKeyInput = requestedKeyRaw.trim();
           agentId = resolveAgentIdFromSessionKey(visibleSession.key);
@@ -681,21 +763,46 @@ export function createSessionStatusTool(opts?: {
         throw new Error(`Unknown ${kind}: ${requestedKeyInput}`);
       }
 
-      // Preserve caller-scoped raw-key/current lookups as "self" for visibility checks.
+      if (isSemanticCurrentRequest) {
+        const denied = await ensureAgentAccess(agentId, {
+          sessionKey: accessDeniedLiteralKey,
+          redactResolvedTarget: true,
+        });
+        if (denied) {
+          return denied;
+        }
+      }
+
+      const needsVisibilityCheckForImplicitTarget =
+        !isExplicitAgentKey &&
+        (requestedKeyInput === "main" ||
+          (requestedKeyInput !== "current" &&
+            shouldResolveSessionIdInput(requestedKeyInput) &&
+            resolved.key !== requestedKeyInput));
+
+      // Preserve caller-scoped raw-key/current lookups as "self" for visibility checks unless
+      // sandbox/session-id/implicit-target resolution requires checking the resolved target directly.
       const shouldTreatVisibilityTargetAsSelf =
         isSemanticCurrentRequest ||
-        resolvedViaImplicitCurrentFallback ||
-        (!resolvedViaSessionId &&
-          (requestedKeyInput === "current" || resolved.key === requestedKeyInput));
+        (!resolvedTargetViaSessionId &&
+          !needsVisibilityCheckForImplicitTarget &&
+          !(opts?.sandboxed === true && !isExplicitAgentKey) &&
+          (resolvedViaImplicitCurrentFallback ||
+            requestedKeyInput === "current" ||
+            resolved.key === requestedKeyInput));
       const visibilityTargetKey = shouldTreatVisibilityTargetAsSelf
         ? visibilityRequesterKey
         : normalizeVisibilityTargetSessionKey(resolved.key, agentId);
       const access = visibilityGuard.check(visibilityTargetKey);
       if (!access.allowed) {
-        throw new Error(access.error);
+        return await handleAccessDeny(access, {
+          sessionKey: accessDeniedLiteralKey,
+          redactResolvedTarget: true,
+        });
       }
 
       const configured = resolveDefaultModelForAgent({ cfg, agentId });
+      const agentDir = resolveAgentDir(cfg, agentId);
       const modelRaw = readStringParam(params, "model");
       let changedModel = false;
       if (typeof modelRaw === "string") {
@@ -817,10 +924,77 @@ export function createSessionStatusTool(opts?: {
           : resolved.entry;
       const providerOverrideForCard = statusSessionEntry.providerOverride?.trim();
       const providerForCard = providerOverrideForCard ?? defaultProviderForCard;
-      const primaryModelLabel =
-        providerForCard && defaultModelForCard
-          ? `${providerForCard}/${defaultModelForCard}`
-          : defaultModelForCard;
+      const primaryModelLabel = providerForCard
+        ? `${providerForCard}/${defaultModelForCard}`
+        : defaultModelForCard;
+      const usageProvider = resolveUsageProviderId(providerForCard);
+      let usageLine: string | undefined;
+      const activeProfileId = resolved.entry.authProfileOverride?.trim() || undefined;
+      const activeProfileSelectionSource = resolved.entry.authProfileOverrideSource ?? "none";
+      if (usageProvider) {
+        try {
+          const usageSummary = await loadProviderUsageSummaryWithCache({
+            timeoutMs: 3500,
+            providers: [usageProvider],
+            agentDir,
+            profileId: activeProfileId,
+            cacheAgentDir: activeProfileId ? agentDir : undefined,
+            cacheAgentId: activeProfileId ? agentId : undefined,
+            cacheProfileId: activeProfileId,
+            fallbackToCache: true,
+          });
+          const snapshot = usageSummary.providers.find((entry) => entry.provider === usageProvider);
+          if (snapshot) {
+            const formatted = formatUsageWindowSummary(snapshot, {
+              now: Date.now(),
+              maxWindows: 2,
+              includeResets: true,
+            });
+            if (formatted && !formatted.startsWith("error:")) {
+              usageLine = activeProfileId
+                ? `Usage (profile ${activeProfileId}): ${formatted}`
+                : `Usage: ${formatted}`;
+            }
+          } else if (activeProfileId) {
+            usageLine = `Usage unavailable for active profile (${activeProfileId})`;
+          }
+        } catch {
+          usageLine = activeProfileId
+            ? `Usage unavailable for active profile (${activeProfileId})`
+            : "Usage unavailable for active profile";
+        }
+        if (
+          activeProfileId &&
+          isUsagePolicySurfaceEnabled({
+            config: cfg,
+            provider: usageProvider,
+            profileId: activeProfileId,
+            surface: "sessionStatus",
+          })
+        ) {
+          const usagePolicyLine = formatUsagePolicyDecisionLine(
+            await readCachedUsagePolicyDecision({
+              config: cfg,
+              agentDir,
+              agentId,
+              provider: usageProvider,
+              profileId: activeProfileId,
+              selectionSource: activeProfileSelectionSource,
+              now: Date.now(),
+            }),
+          );
+          if (usagePolicyLine) {
+            usageLine = [usageLine, usagePolicyLine].filter(Boolean).join("\n");
+          }
+        }
+      }
+      const modelAuthLabel =
+        resolveModelAuthLabel({
+          provider: providerForCard,
+          cfg,
+          sessionEntry: statusSessionEntry,
+          agentDir,
+        }) ?? undefined;
       const isGroup =
         statusSessionEntry.chatType === "group" ||
         statusSessionEntry.chatType === "channel" ||
@@ -863,11 +1037,17 @@ export function createSessionStatusTool(opts?: {
         taskLineOverride: taskLine,
         skipDefaultTaskLookup: true,
         primaryModelLabelOverride: primaryModelLabel,
+        modelAuthOverride: modelAuthLabel,
+        activeModelAuthOverride: modelAuthLabel,
         ...(providerForCard ? {} : { modelAuthOverride: undefined }),
         includeTranscriptUsage: true,
       });
       const fullStatusText =
         taskLine && !statusText.includes(taskLine) ? `${statusText}\n${taskLine}` : statusText;
+      const statusWithUsageText =
+        usageLine && !fullStatusText.includes(usageLine)
+          ? `${fullStatusText}\n${usageLine}`
+          : fullStatusText;
       const resultOverrideProvider = statusSessionEntry.providerOverride?.trim();
       const resultOverrideModel = statusSessionEntry.modelOverride?.trim();
       const liveSessionKeySet = new Set(
@@ -897,8 +1077,8 @@ export function createSessionStatusTool(opts?: {
       ].filter((block): block is string => Boolean(block));
       const visibleStatusText =
         extraBlocks.length > 0
-          ? `${fullStatusText}\n\n${extraBlocks.join("\n\n")}`
-          : fullStatusText;
+          ? `${statusWithUsageText}\n\n${extraBlocks.join("\n\n")}`
+          : statusWithUsageText;
       const modelOverrideForResult =
         modelRaw === undefined
           ? undefined

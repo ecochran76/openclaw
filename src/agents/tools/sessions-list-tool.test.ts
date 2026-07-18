@@ -6,9 +6,10 @@ import { createSessionsListTool } from "./sessions-list-tool.js";
 const mocks = vi.hoisted(() => ({
   gatewayCall: vi.fn(),
   createAgentToAgentPolicy: vi.fn(() => ({})),
-  createSessionVisibilityGuard: vi.fn(async () => ({
+  createSessionVisibilityRowChecker: vi.fn((_params?: unknown) => ({
     check: () => ({ allowed: true }),
   })),
+  buildPendingSessionApprovalOutput: vi.fn(async () => ({})),
   resolveEffectiveSessionToolsVisibility: vi.fn(() => "all"),
   resolveSandboxedSessionToolContext: vi.fn(() => ({
     mainKey: "main",
@@ -36,13 +37,23 @@ vi.mock("./sessions-helpers.js", async (importActual) => {
   return {
     ...actual,
     createAgentToAgentPolicy: () => mocks.createAgentToAgentPolicy(),
-    createSessionVisibilityGuard: async () => await mocks.createSessionVisibilityGuard(),
+    createSessionVisibilityRowChecker: (params: unknown) =>
+      mocks.createSessionVisibilityRowChecker(params),
     resolveEffectiveSessionToolsVisibility: () => mocks.resolveEffectiveSessionToolsVisibility(),
     resolveSandboxedSessionToolContext: () => mocks.resolveSandboxedSessionToolContext(),
   };
 });
 
+vi.mock("./sessions-pending-approvals.js", () => ({
+  buildPendingSessionApprovalOutput: (params: unknown) =>
+    mocks.buildPendingSessionApprovalOutput(params),
+}));
+
 type SessionsListDetails = {
+  status?: string;
+  error?: string;
+  permissionRequest?: Record<string, unknown>;
+  pendingApproval?: Record<string, unknown>;
   sessions?: Array<{
     channel?: string;
     deliveryContext?: {
@@ -76,9 +87,10 @@ describe("sessions-list-tool", () => {
   beforeEach(() => {
     vi.clearAllMocks();
     mocks.createAgentToAgentPolicy.mockReturnValue({});
-    mocks.createSessionVisibilityGuard.mockResolvedValue({
+    mocks.createSessionVisibilityRowChecker.mockReturnValue({
       check: () => ({ allowed: true }),
     });
+    mocks.buildPendingSessionApprovalOutput.mockResolvedValue({});
     mocks.resolveEffectiveSessionToolsVisibility.mockReturnValue("all");
     mocks.resolveSandboxedSessionToolContext.mockReturnValue({
       mainKey: "main",
@@ -109,6 +121,102 @@ describe("sessions-list-tool", () => {
     ]);
     expect(getSessionsListDetails(result).sessions?.[0]?.stateVersion).toBe(7);
     expect(getSessionsListDetails(result).sessions?.[1]?.stateVersion).toBeUndefined();
+  });
+
+  it.each([
+    ["absent", []],
+    ["hidden", [{ key: "agent:ops:main", kind: "main", agentId: "ops" }]],
+  ])(
+    "returns the same pre-lookup approval when the explicit target is %s",
+    async (_scenario, sessions) => {
+      const permissionRequest = {
+        kind: "config_permission_request" as const,
+        reason: "session_visibility" as const,
+        action: "list" as const,
+        requesterAgentId: "main",
+        targetAgentId: "ops",
+        retryable: true as const,
+        askUser: "Allow cross-agent session list access?",
+        suggestedChanges: [{ path: "tools.sessions.visibility" as const, value: "all" }],
+      };
+      mocks.gatewayCall.mockResolvedValue({ path: "/tmp/sessions.json", sessions });
+      mocks.createSessionVisibilityRowChecker.mockReturnValue({
+        check: (row: { key: string }) =>
+          row.key === "agent:ops:main"
+            ? {
+                allowed: false as const,
+                status: "forbidden" as const,
+                error: "Session list visibility is restricted.",
+                permissionRequest,
+              }
+            : { allowed: true as const },
+      });
+      mocks.buildPendingSessionApprovalOutput.mockResolvedValue({
+        pendingApproval: {
+          approvalId: "approval-list-1",
+          state: "pending",
+          expiresAt: 1234,
+        },
+      });
+      const tool = createSessionsListTool({
+        agentSessionKey: "agent:main:main",
+        config: {} as never,
+      });
+
+      const result = await tool.execute("call-list-approval", { agentId: "ops" });
+      const details = getSessionsListDetails(result);
+
+      expect(details).toMatchObject({
+        status: "forbidden",
+        error: "Session list visibility is restricted.",
+        permissionRequest,
+        pendingApproval: {
+          approvalId: "approval-list-1",
+          state: "pending",
+        },
+      });
+      expect(mocks.buildPendingSessionApprovalOutput).toHaveBeenCalledWith({
+        permissionRequest,
+        requesterSessionKey: "agent:main:main",
+        originalToolName: "sessions_list",
+        originalArgs: { agentId: "ops" },
+      });
+      expect(mocks.gatewayCall).not.toHaveBeenCalled();
+      expect(mocks.createSessionVisibilityRowChecker).toHaveBeenCalledWith({
+        action: "list",
+        requesterSessionKey: "main",
+        visibility: "all",
+        a2aPolicy: {},
+      });
+    },
+  );
+
+  it("queries and returns an explicitly authorized cross-agent scope", async () => {
+    mocks.gatewayCall.mockResolvedValue({
+      path: "/tmp/sessions.json",
+      sessions: [{ key: "agent:ops:main", kind: "main", agentId: "ops" }],
+    });
+    const check = vi.fn(() => ({ allowed: true as const }));
+    mocks.createSessionVisibilityRowChecker.mockReturnValue({ check });
+    const tool = createSessionsListTool({
+      agentSessionKey: "agent:main:main",
+      config: {} as never,
+    });
+
+    const result = await tool.execute("call-list-authorized", { agentId: "ops" });
+
+    expect(check).toHaveBeenNthCalledWith(1, {
+      key: "agent:ops:main",
+      agentId: "ops",
+    });
+    expect(mocks.gatewayCall).toHaveBeenCalledOnce();
+    expect(mocks.gatewayCall).toHaveBeenCalledWith(
+      expect.objectContaining({
+        method: "sessions.list",
+        params: expect.objectContaining({ agentId: "ops" }),
+      }),
+    );
+    expect(getSessionsListDetails(result).sessions).toHaveLength(1);
   });
 
   it("keeps deliveryContext.threadId in sessions_list results", async () => {
@@ -163,11 +271,11 @@ describe("sessions-list-tool", () => {
       channel: "telegram",
       to: "telegram:topic",
       accountId: "acct-2",
-      threadId: 271,
+      threadId: "271",
     });
   });
 
-  it("keeps numeric deliveryContext.threadId in sessions_list results", async () => {
+  it("normalizes numeric deliveryContext.threadId in sessions_list results", async () => {
     mocks.gatewayCall.mockImplementation(async (opts: unknown) => {
       const request = opts as { method?: string };
       if (request.method === "sessions.list") {
@@ -199,7 +307,7 @@ describe("sessions-list-tool", () => {
       channel: "telegram",
       to: "-100123",
       accountId: "acct-1",
-      threadId: 99,
+      threadId: "99",
     });
   });
 

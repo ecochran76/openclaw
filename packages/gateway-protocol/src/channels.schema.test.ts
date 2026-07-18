@@ -71,4 +71,36 @@ describe("ChannelsStatusResultSchema", () => {
       }),
     ).toBe(true);
   });
+
+  it("accepts cleared socket timestamps and rejects invalid timestamp values", () => {
+    const result = {
+      ts: Date.now(),
+      channelOrder: ["slack"],
+      channelLabels: { slack: "Slack" },
+      channels: { slack: { configured: true } },
+      channelAccounts: {
+        slack: [
+          {
+            accountId: "default",
+            lastSocketConnectedAt: null,
+            lastSocketDisconnectedAt: null,
+            lastSocketReconnectAt: null,
+            lastSocketEnvelopeAt: null,
+            lastSlackEventAt: null,
+          },
+        ],
+      },
+      channelDefaultAccountId: { slack: "default" },
+    };
+
+    expect(validate.Check(result)).toBe(true);
+    expect(
+      validate.Check({
+        ...result,
+        channelAccounts: {
+          slack: [{ ...result.channelAccounts.slack[0], lastSocketReconnectAt: "now" }],
+        },
+      }),
+    ).toBe(false);
+  });
 });

@@ -17,10 +17,28 @@ async function callGatewayLazy<T = unknown>(opts: CallGatewayOptions): Promise<T
   return callGateway<T>(opts);
 }
 
-export async function resolveAnnounceTarget(params: {
-  sessionKey: string;
-  displayKey: string;
-}): Promise<AnnounceTarget | null> {
+type GatewayCaller = <T = unknown>(opts: CallGatewayOptions) => Promise<T>;
+
+const defaultSessionsAnnounceTargetDeps = {
+  callGateway: callGatewayLazy,
+};
+
+let sessionsAnnounceTargetDeps: {
+  callGateway: GatewayCaller;
+} = defaultSessionsAnnounceTargetDeps;
+
+type ResolveAnnounceTargetDeps = {
+  callGateway?: GatewayCaller;
+};
+
+export async function resolveAnnounceTarget(
+  params: {
+    sessionKey: string;
+    displayKey: string;
+  },
+  deps?: ResolveAnnounceTargetDeps,
+): Promise<AnnounceTarget | null> {
+  const gatewayCall = deps?.callGateway ?? sessionsAnnounceTargetDeps.callGateway;
   const parsed = resolveAnnounceTargetFromKey(params.sessionKey);
   const parsedDisplay = resolveAnnounceTargetFromKey(params.displayKey);
   const fallback = parsed ?? parsedDisplay ?? null;
@@ -38,7 +56,7 @@ export async function resolveAnnounceTarget(params: {
   }
 
   try {
-    const list = await callGatewayLazy<{ sessions: Array<SessionListRow> }>({
+    const list = await gatewayCall<{ sessions: Array<SessionListRow> }>({
       method: "sessions.list",
       params: {
         includeGlobal: true,
@@ -52,9 +70,25 @@ export async function resolveAnnounceTarget(params: {
       sessions.find((entry) => entry?.key === params.displayKey);
 
     const context = deliveryContextFromSession(match);
-    const threadId = normalizeOptionalStringifiedId(context?.threadId ?? fallbackThreadId);
-    if (context?.channel && context.to) {
-      return { channel: context.channel, to: context.to, accountId: context.accountId, threadId };
+    const origin =
+      match?.origin && typeof match.origin === "object"
+        ? (match.origin as Record<string, unknown>)
+        : undefined;
+    const threadId = normalizeOptionalStringifiedId(
+      context?.threadId ?? match?.lastThreadId ?? origin?.threadId ?? fallbackThreadId,
+    );
+    const to = context?.to ?? (typeof origin?.to === "string" ? origin.to : undefined);
+    const channel =
+      context?.channel ??
+      (typeof origin?.provider === "string"
+        ? origin.provider
+        : typeof origin?.channel === "string"
+          ? origin.channel
+          : undefined);
+    const accountId =
+      context?.accountId ?? (typeof origin?.accountId === "string" ? origin.accountId : undefined);
+    if (channel && to) {
+      return { channel, to, accountId, threadId };
     }
   } catch {
     // ignore
@@ -62,3 +96,14 @@ export async function resolveAnnounceTarget(params: {
 
   return fallback;
 }
+
+export const __testing = {
+  setDepsForTest(overrides?: Partial<{ callGateway: GatewayCaller }>) {
+    sessionsAnnounceTargetDeps = overrides
+      ? {
+          ...defaultSessionsAnnounceTargetDeps,
+          ...overrides,
+        }
+      : defaultSessionsAnnounceTargetDeps;
+  },
+};

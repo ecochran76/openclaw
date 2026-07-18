@@ -14,6 +14,7 @@ import type { AcpTurnAttachment } from "../../acp/control-plane/manager.types.js
 import { resolveAcpAgentPolicyError, resolveAcpDispatchPolicyError } from "../../acp/policy.js";
 import { AcpRuntimeError, toAcpRuntimeError } from "../../acp/runtime/errors.js";
 import { resolveAgentDir, resolveAgentWorkspaceDir } from "../../agents/agent-scope.js";
+import { normalizeToolName } from "../../agents/tool-policy.js";
 import type { ChatType } from "../../channels/chat-type.js";
 import type { OpenClawConfig } from "../../config/types.openclaw.js";
 import type { TtsAutoMode } from "../../config/types.tts.js";
@@ -42,6 +43,10 @@ import {
   resolveInlineAgentImageAttachments,
 } from "./agent-turn-attachments.js";
 import { resolveFirstContextText } from "./context-text.js";
+import {
+  hasBoundConversationForSession,
+  shouldAttemptDirectAcpDispatch,
+} from "./dispatch-acp-compatibility.js";
 import {
   createAcpDispatchDeliveryCoordinator,
   type AcpDispatchDeliveryCoordinator,
@@ -120,6 +125,10 @@ function loadDispatchAcpTranscriptRuntime() {
   return dispatchAcpTranscriptRuntimeLoader.load();
 }
 
+function isRestrictiveRuntimeToolsAllow(toolsAllow: readonly string[] | undefined): boolean {
+  return Array.isArray(toolsAllow) && !toolsAllow.some((entry) => normalizeToolName(entry) === "*");
+}
+
 type DispatchProcessedRecorder = (
   outcome: "completed" | "skipped" | "error",
   opts?: {
@@ -167,43 +176,6 @@ function resolveAcpTurnText(params: {
     ].join(" "),
   );
   return params.promptText ? `${guidance}\n\n${params.promptText}` : guidance;
-}
-
-function isRestrictiveRuntimeToolsAllow(toolsAllow: string[] | undefined): boolean {
-  if (toolsAllow === undefined) {
-    return false;
-  }
-  return !toolsAllow.some((entry) => normalizeLowercaseStringOrEmpty(entry) === "*");
-}
-
-async function hasBoundConversationForSession(params: {
-  cfg: OpenClawConfig;
-  sessionKey: string;
-  channelRaw: string | undefined;
-  accountIdRaw: string | undefined;
-}): Promise<boolean> {
-  const channel = normalizeOptionalLowercaseString(params.channelRaw) ?? "";
-  if (!channel) {
-    return false;
-  }
-  const accountId = normalizeOptionalLowercaseString(params.accountIdRaw) ?? "";
-  const channels = params.cfg.channels as Record<string, { defaultAccount?: unknown } | undefined>;
-  const configuredDefaultAccountId = channels?.[channel]?.defaultAccount;
-  const normalizedAccountId =
-    accountId || normalizeOptionalLowercaseString(configuredDefaultAccountId) || "default";
-  const { getSessionBindingService } = await loadDispatchAcpManagerRuntime();
-  const bindingService = getSessionBindingService();
-  const bindings = bindingService.listBySession(params.sessionKey);
-  return bindings.some((binding) => {
-    const bindingChannel = normalizeOptionalLowercaseString(binding.conversation.channel) ?? "";
-    const bindingAccountId = normalizeOptionalLowercaseString(binding.conversation.accountId) ?? "";
-    const conversationId = normalizeOptionalString(binding.conversation.conversationId) ?? "";
-    return (
-      bindingChannel === channel &&
-      (bindingAccountId || "default") === normalizedAccountId &&
-      conversationId.length > 0
-    );
-  });
 }
 
 export type AcpDispatchAttemptResult = {
@@ -293,6 +265,7 @@ async function finalizeAcpTurnOutput(params: {
   sessionTtsAuto?: TtsAutoMode;
   ttsChannel?: string;
   ttsAccountId?: string;
+  shouldRouteToOriginating: boolean;
   shouldEmitResolvedIdentityNotice: boolean;
 }): Promise<boolean> {
   await params.delivery.settleVisibleText();
@@ -352,8 +325,9 @@ async function finalizeAcpTurnOutput(params: {
     }
   }
 
-  // Some ACP parent surfaces only expose terminal replies, so block routing alone is not enough
-  // to prove the final result was visible to the user.
+  // Some ACP parent surfaces only expose terminal replies, so streamed block
+  // delivery alone is not enough to prove the final result was visible to the
+  // user.
   const shouldDeliverTextFallback =
     ttsMode !== "all" &&
     accumulatedVisibleBlockText.trim().length > 0 &&
@@ -424,6 +398,16 @@ export async function tryDispatchAcpReply(params: {
 }): Promise<AcpDispatchAttemptResult | null> {
   const sessionKey = normalizeOptionalString(params.sessionKey);
   if (!sessionKey || params.bypassForCommand) {
+    return null;
+  }
+  if (
+    !(await shouldAttemptDirectAcpDispatch({
+      cfg: params.cfg,
+      sessionKey,
+      channelRaw: params.ctx.OriginatingChannel ?? params.ctx.Surface ?? params.ctx.Provider,
+      accountIdRaw: params.ctx.AccountId,
+    }))
+  ) {
     return null;
   }
 
@@ -778,6 +762,7 @@ export async function tryDispatchAcpReply(params: {
         sessionTtsAuto: params.sessionTtsAuto,
         ttsChannel: params.ttsChannel,
         ttsAccountId: effectiveDispatchAccountId,
+        shouldRouteToOriginating: params.shouldRouteToOriginating,
         shouldEmitResolvedIdentityNotice,
       })) || queuedFinal;
 

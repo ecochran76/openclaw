@@ -25,6 +25,7 @@ export type SessionToolsVisibility = "self" | "tree" | "agent" | "all";
 /** Agent-to-agent access policy compiled from `tools.agentToAgent` config. */
 export type AgentToAgentPolicy = {
   enabled: boolean;
+  allowPatterns: string[];
   matchesAllow: (agentId: string) => boolean;
   isAllowed: (requesterAgentId: string, targetAgentId: string) => boolean;
 };
@@ -32,10 +33,33 @@ export type AgentToAgentPolicy = {
 /** Session operation whose visibility error copy should be rendered. */
 export type SessionAccessAction = "history" | "send" | "list" | "status";
 
+export type SessionAccessPermissionRequest = {
+  kind: "config_permission_request";
+  reason: "agent_to_agent_disabled" | "agent_to_agent_allow" | "session_visibility";
+  action: SessionAccessAction;
+  requesterAgentId: string;
+  targetAgentId: string;
+  /** Exact identities used to recheck a visibility approval without lossy main-session synthesis. */
+  requesterSessionKey?: string;
+  targetSessionKey?: string;
+  retryable: true;
+  askUser: string;
+  suggestedChanges: Array<{
+    path: "tools.agentToAgent.enabled" | "tools.agentToAgent.allow" | "tools.sessions.visibility";
+    value: boolean | string | string[];
+  }>;
+  missingAllowAgents?: string[];
+};
+
 /** Result of checking whether one session operation may target a session. */
 export type SessionAccessResult =
   | { allowed: true }
-  | { allowed: false; error: string; status: "forbidden" };
+  | {
+      allowed: false;
+      error: string;
+      status: "forbidden";
+      permissionRequest?: SessionAccessPermissionRequest;
+    };
 
 /** Minimal session row metadata needed to evaluate ownership and cross-agent access. */
 export type SessionVisibilityRow = {
@@ -174,14 +198,15 @@ export function createAgentToAgentPolicy(cfg: OpenClawConfig): AgentToAgentPolic
   const routingA2A = cfg.tools?.agentToAgent;
   const enabled = routingA2A?.enabled === true;
   const rawAllowPatterns = Array.isArray(routingA2A?.allow) ? routingA2A.allow : [];
-  const allowPatterns = rawAllowPatterns.map((pattern) => compileAgentAllowPattern(pattern));
-  const hasWildcardPatterns = allowPatterns.some((pattern) => pattern.kind === "wildcard");
+  const allowPatterns = rawAllowPatterns.map((pattern) => normalizeOptionalString(pattern) ?? "");
+  const compiledAllowPatterns = allowPatterns.map((pattern) => compileAgentAllowPattern(pattern));
+  const hasWildcardPatterns = compiledAllowPatterns.some((pattern) => pattern.kind === "wildcard");
   const matchesAllow = (agentId: string) => {
     if (allowPatterns.length === 0) {
       return true;
     }
     const lowerAgentId = hasWildcardPatterns ? agentId.toLowerCase() : "";
-    return allowPatterns.some((pattern) => {
+    return compiledAllowPatterns.some((pattern) => {
       if (pattern.kind === "all") {
         return true;
       }
@@ -203,7 +228,7 @@ export function createAgentToAgentPolicy(cfg: OpenClawConfig): AgentToAgentPolic
     }
     return matchesAllow(requesterAgentId) && matchesAllow(targetAgentId);
   };
-  return { enabled, matchesAllow, isAllowed };
+  return { enabled, allowPatterns, matchesAllow, isAllowed };
 }
 
 function actionPrefix(action: SessionAccessAction): string {
@@ -266,6 +291,140 @@ function selfVisibilityMessage(action: SessionAccessAction): string {
 
 function treeVisibilityMessage(action: SessionAccessAction): string {
   return `${actionPrefix(action)} visibility is restricted to the current session tree (tools.sessions.visibility=tree).`;
+}
+
+function dedupeTrimmedStrings(values: string[]): string[] {
+  const seen = new Set<string>();
+  const result: string[] = [];
+  for (const value of values) {
+    const trimmed = value.trim();
+    if (!trimmed || seen.has(trimmed)) {
+      continue;
+    }
+    seen.add(trimmed);
+    result.push(trimmed);
+  }
+  return result;
+}
+
+function buildCrossAgentPairLabel(requesterAgentId: string, targetAgentId: string) {
+  return `${requesterAgentId} -> ${targetAgentId}`;
+}
+
+function buildVisibilityPermissionRequest(params: {
+  action: SessionAccessAction;
+  requesterAgentId: string;
+  targetAgentId: string;
+  requesterSessionKey: string;
+  targetSessionKey: string;
+}): SessionAccessPermissionRequest {
+  const pair = buildCrossAgentPairLabel(params.requesterAgentId, params.targetAgentId);
+  return {
+    kind: "config_permission_request",
+    reason: "session_visibility",
+    action: params.action,
+    requesterAgentId: params.requesterAgentId,
+    targetAgentId: params.targetAgentId,
+    requesterSessionKey: params.requesterSessionKey,
+    targetSessionKey: params.targetSessionKey,
+    retryable: true,
+    askUser:
+      `Allow the global session-visibility expansion needed for ${pair} to perform session ${params.action}? ` +
+      "Setting tools.sessions.visibility=all exposes all agents' sessions to session tools; tools.agentToAgent still gates cross-agent access.",
+    suggestedChanges: [{ path: "tools.sessions.visibility", value: "all" }],
+  };
+}
+
+function buildA2ADisabledPermissionRequest(params: {
+  action: SessionAccessAction;
+  requesterAgentId: string;
+  targetAgentId: string;
+}): SessionAccessPermissionRequest {
+  const pair = buildCrossAgentPairLabel(params.requesterAgentId, params.targetAgentId);
+  return {
+    kind: "config_permission_request",
+    reason: "agent_to_agent_disabled",
+    action: params.action,
+    requesterAgentId: params.requesterAgentId,
+    targetAgentId: params.targetAgentId,
+    retryable: true,
+    askUser:
+      `Enable the global agent-to-agent gate needed for ${pair} to perform ${params.action}? ` +
+      "Existing tools.agentToAgent.allow membership still applies; an empty allow list permits every agent.",
+    suggestedChanges: [{ path: "tools.agentToAgent.enabled", value: true }],
+  };
+}
+
+function buildA2ADenyPermissionRequest(params: {
+  action: SessionAccessAction;
+  requesterAgentId: string;
+  targetAgentId: string;
+  a2aPolicy: AgentToAgentPolicy;
+}): SessionAccessPermissionRequest {
+  const missingAllowAgents = dedupeTrimmedStrings(
+    [params.requesterAgentId, params.targetAgentId].filter(
+      (agentId) => !params.a2aPolicy.matchesAllow(agentId),
+    ),
+  );
+  const pair = buildCrossAgentPairLabel(params.requesterAgentId, params.targetAgentId);
+  return {
+    kind: "config_permission_request",
+    reason: "agent_to_agent_allow",
+    action: params.action,
+    requesterAgentId: params.requesterAgentId,
+    targetAgentId: params.targetAgentId,
+    retryable: true,
+    askUser:
+      `Expand tools.agentToAgent.allow membership for ${pair} to perform ${params.action}? ` +
+      `Adding ${missingAllowAgents.join(", ")} authorizes each added agent with every agent matched by the allow list, not only this pair.`,
+    suggestedChanges: [
+      {
+        path: "tools.agentToAgent.allow",
+        value: dedupeTrimmedStrings([...params.a2aPolicy.allowPatterns, ...missingAllowAgents]),
+      },
+    ],
+    missingAllowAgents,
+  };
+}
+
+export function checkAgentToAgentAccess(params: {
+  action: SessionAccessAction;
+  requesterAgentId: string;
+  targetAgentId: string;
+  a2aPolicy: AgentToAgentPolicy;
+}): SessionAccessResult {
+  if (params.requesterAgentId === params.targetAgentId) {
+    return { allowed: true };
+  }
+  const pair = buildCrossAgentPairLabel(params.requesterAgentId, params.targetAgentId);
+  if (!params.a2aPolicy.enabled) {
+    const permissionRequest = buildA2ADisabledPermissionRequest(params);
+    return {
+      allowed: false,
+      status: "forbidden",
+      error:
+        `${a2aDisabledMessage(params.action)} Current pair: ${pair}. ` +
+        "Enabling this global gate affects every agent admitted by tools.agentToAgent.allow; an empty allow list admits every agent. Ask the user whether to enable that global scope, then retry.",
+      permissionRequest,
+    };
+  }
+  if (!params.a2aPolicy.isAllowed(params.requesterAgentId, params.targetAgentId)) {
+    const permissionRequest = buildA2ADenyPermissionRequest(params);
+    const missingAllowAgents = permissionRequest.missingAllowAgents ?? [];
+    const missingText =
+      missingAllowAgents.length > 0
+        ? ` Missing allow entries: ${missingAllowAgents.join(", ")}.`
+        : "";
+    return {
+      allowed: false,
+      status: "forbidden",
+      error:
+        `${a2aDeniedMessage(params.action)}${missingText} Current pair: ${pair}. ` +
+        "Ask the user whether to expand allow-list membership beyond this pair, then retry.",
+      permissionRequest,
+    };
+  }
+  return { allowed: true };
 }
 
 /** Create a direct session-key visibility checker for one requester/action pair. */
@@ -335,24 +494,55 @@ export function createSessionVisibilityRowChecker(params: {
     const isCrossAgent = targetAgentId !== requesterAgentId;
     if (isCrossAgent) {
       if (params.visibility !== "all") {
+        const permissionRequest = buildVisibilityPermissionRequest({
+          action: params.action,
+          requesterAgentId,
+          targetAgentId,
+          requesterSessionKey: params.requesterSessionKey,
+          targetSessionKey,
+        });
         return {
           allowed: false,
           status: "forbidden",
-          error: crossVisibilityMessage(params.action),
+          error:
+            `${crossVisibilityMessage(params.action)} Current pair: ` +
+            `${buildCrossAgentPairLabel(requesterAgentId, targetAgentId)}. ` +
+            "Ask the user whether to expand session visibility globally, then retry.",
+          permissionRequest,
         };
       }
       if (!params.a2aPolicy.enabled) {
+        const permissionRequest = buildA2ADisabledPermissionRequest({
+          action: params.action,
+          requesterAgentId,
+          targetAgentId,
+        });
         return {
           allowed: false,
           status: "forbidden",
-          error: a2aDisabledMessage(params.action),
+          error: `${a2aDisabledMessage(params.action)} Current pair: ${buildCrossAgentPairLabel(requesterAgentId, targetAgentId)}. Enabling this global gate affects every agent admitted by tools.agentToAgent.allow; an empty allow list admits every agent. Ask the user whether to enable that global scope, then retry.`,
+          permissionRequest,
         };
       }
       if (!params.a2aPolicy.isAllowed(requesterAgentId, targetAgentId)) {
+        const permissionRequest = buildA2ADenyPermissionRequest({
+          action: params.action,
+          requesterAgentId,
+          targetAgentId,
+          a2aPolicy: params.a2aPolicy,
+        });
+        const missingAllowAgents = permissionRequest.missingAllowAgents ?? [];
+        const missingText =
+          missingAllowAgents.length > 0
+            ? ` Missing allow entries: ${missingAllowAgents.join(", ")}.`
+            : "";
         return {
           allowed: false,
           status: "forbidden",
-          error: a2aDeniedMessage(params.action),
+          error:
+            `${a2aDeniedMessage(params.action)}${missingText} Current pair: ${buildCrossAgentPairLabel(requesterAgentId, targetAgentId)}. ` +
+            "Ask the user whether to expand allow-list membership beyond this pair, then retry.",
+          permissionRequest,
         };
       }
       return { allowed: true };

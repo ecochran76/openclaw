@@ -51,6 +51,35 @@ const emptyPluginMetadataSnapshot = vi.hoisted(() => ({
   plugins: [],
 }));
 const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/;
+const resolveUsageProviderIdMock = vi.hoisted(() =>
+  vi.fn<(...args: unknown[]) => string | undefined>(() => undefined),
+);
+const loadProviderUsageSummaryWithCacheMock = vi.hoisted(() =>
+  vi.fn<
+    (
+      ...args: unknown[]
+    ) => Promise<{ updatedAt: number; providers: Array<Record<string, unknown>> }>
+  >(async () => ({
+    updatedAt: Date.now(),
+    providers: [],
+  })),
+);
+const isUsagePolicySurfaceEnabledMock = vi.hoisted(() =>
+  vi.fn<(...args: unknown[]) => boolean>(() => false),
+);
+const readCachedUsagePolicyDecisionMock = vi.hoisted(() =>
+  vi.fn<(...args: unknown[]) => Promise<Record<string, unknown>>>(async () => ({
+    action: "allow",
+    reason: "unsupported",
+    scope: "none",
+    provider: "openai-codex",
+    profileId: "openai-codex:default",
+    selectionSource: "none",
+  })),
+);
+const formatUsagePolicyDecisionLineMock = vi.hoisted(() =>
+  vi.fn<(...args: unknown[]) => string | null>(() => null),
+);
 
 const createMockConfig = () => ({
   session: { mainKey: "main", scope: "per-sender" },
@@ -213,7 +242,9 @@ function createModelCatalogModuleMock() {
 
 function createAuthProfilesModuleMock() {
   return {
+    externalCliDiscoveryForProviderAuth: () => undefined,
     ensureAuthProfileStore: () => ({ profiles: {} }),
+    loadAuthProfileStoreWithoutExternalProfiles: () => ({ profiles: {} }),
     resolveAuthProfileDisplayLabel: () => undefined,
     resolveAuthProfileOrder: () => [],
   };
@@ -224,6 +255,7 @@ function createModelAuthModuleMock() {
     resolveEnvApiKey: resolveEnvApiKeyMock,
     resolveUsableCustomProviderApiKey: resolveUsableCustomProviderApiKeyMock,
     resolveModelAuthMode: () => "api-key",
+    resolveProviderEntryApiKeyProfileReference: () => ({ kind: "none" }),
   };
 }
 
@@ -1996,9 +2028,74 @@ describe("session_status tool", () => {
 
     const tool = getSessionStatusTool("agent:main:main");
 
-    await expect(tool.execute("call5", { sessionKey: "agent:other:main" })).rejects.toThrow(
-      "Agent-to-agent status is disabled",
-    );
+    const result = await tool.execute("call5", { sessionKey: "agent:other:main" });
+    expect(result.details).toMatchObject({
+      status: "forbidden",
+      error: expect.stringContaining("Agent-to-agent status is disabled"),
+      permissionRequest: {
+        action: "status",
+        reason: "agent_to_agent_disabled",
+        requesterAgentId: "main",
+        targetAgentId: "other",
+      },
+      pendingApproval: {
+        state: "pending",
+      },
+    });
+  });
+
+  it("does not disclose a resolved cross-agent target when an opaque session ID is denied", async () => {
+    resetSessionStore({
+      "agent:hidden-status-agent:main": {
+        sessionId: "opaque-status-session-id",
+        updatedAt: 10,
+      },
+    });
+
+    const tool = getSessionStatusTool("agent:main:main");
+    const result = await tool.execute("call5-opaque-denied", {
+      sessionKey: "opaque-status-session-id",
+    });
+    const details = result.details as Record<string, unknown>;
+    const serialized = JSON.stringify(details);
+
+    expect(details).toMatchObject({
+      status: "forbidden",
+      error: "Session status access denied.",
+      sessionKey: "opaque-status-session-id",
+    });
+    expect(details).not.toHaveProperty("permissionRequest");
+    expect(details).not.toHaveProperty("pendingApproval");
+    expect(serialized).not.toContain("agent:hidden-status-agent:main");
+    expect(serialized).not.toContain("hidden-status-agent");
+  });
+
+  it("does not disclose a resolved cross-agent target when the current selector is denied", async () => {
+    resetSessionStore({
+      "agent:hidden-selector-agent:main": {
+        sessionId: "hidden-selector-session-id",
+        updatedAt: 10,
+      },
+    });
+
+    const tool = createSessionStatusTool({
+      agentSessionKey: "agent:main:main",
+      runSessionKey: "agent:hidden-selector-agent:main",
+      config: mockConfig as never,
+    });
+    const result = await tool.execute("call5-selector-denied", { sessionKey: "current" });
+    const details = result.details as Record<string, unknown>;
+    const serialized = JSON.stringify(details);
+
+    expect(details).toMatchObject({
+      status: "forbidden",
+      error: "Session status access denied.",
+    });
+    expect(details).not.toHaveProperty("sessionKey");
+    expect(details).not.toHaveProperty("permissionRequest");
+    expect(details).not.toHaveProperty("pendingApproval");
+    expect(serialized).not.toContain("agent:hidden-selector-agent:main");
+    expect(serialized).not.toContain("hidden-selector-agent");
   });
 
   it("blocks unsandboxed same-agent session_status outside self visibility", async () => {

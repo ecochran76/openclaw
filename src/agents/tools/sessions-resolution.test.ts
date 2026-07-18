@@ -13,6 +13,7 @@ let resolveDisplaySessionKey: typeof import("./sessions-resolution.js").resolveD
 let resolveInternalSessionKey: typeof import("./sessions-resolution.js").resolveInternalSessionKey;
 let resolveMainSessionAlias: typeof import("./sessions-resolution.js").resolveMainSessionAlias;
 let resolveSessionReference: typeof import("./sessions-resolution.js").resolveSessionReference;
+let resolveSessionSelectorAuthorization: typeof import("./sessions-resolution.js").resolveSessionSelectorAuthorization;
 let resolveVisibleSessionReference: typeof import("./sessions-resolution.js").resolveVisibleSessionReference;
 let shouldResolveSessionIdInput: typeof import("./sessions-resolution.js").shouldResolveSessionIdInput;
 
@@ -23,6 +24,7 @@ beforeAll(async () => {
     resolveInternalSessionKey,
     resolveMainSessionAlias,
     resolveSessionReference,
+    resolveSessionSelectorAuthorization,
     resolveVisibleSessionReference,
     shouldResolveSessionIdInput,
   } = await import("./sessions-resolution.js"));
@@ -44,6 +46,45 @@ function expectResolvedSessionReference(
   expect(result.displayKey).toBe(expected.displayKey);
   expect(result.resolvedViaSessionId).toBe(expected.resolvedViaSessionId);
 }
+
+describe("resolveSessionSelectorAuthorization", () => {
+  const base = {
+    requesterAgentId: "main",
+    requesterSessionKey: "agent:main:main",
+    targetAgentId: "other",
+    mainKey: "main",
+  };
+
+  it("keeps same-agent and globally visible selectors unrestricted", () => {
+    expect(
+      resolveSessionSelectorAuthorization({
+        ...base,
+        targetAgentId: "main",
+        visibility: "self",
+      }),
+    ).toEqual({ kind: "unrestricted" });
+    expect(resolveSessionSelectorAuthorization({ ...base, visibility: "all" })).toEqual({
+      kind: "unrestricted",
+    });
+  });
+
+  it("scopes cross-agent tree selectors to requester-spawned sessions", () => {
+    expect(resolveSessionSelectorAuthorization({ ...base, visibility: "tree" })).toEqual({
+      kind: "spawned",
+      spawnedBy: "agent:main:main",
+    });
+  });
+
+  it.each(["self", "agent"] as const)(
+    "requires a pre-resolution denial for %s visibility",
+    (visibility) => {
+      expect(resolveSessionSelectorAuthorization({ ...base, visibility })).toEqual({
+        kind: "deny-before-resolution",
+        targetSessionKey: "agent:other:main",
+      });
+    },
+  );
+});
 
 describe("resolveMainSessionAlias", () => {
   it("uses normalized main key and global alias for global scope", () => {

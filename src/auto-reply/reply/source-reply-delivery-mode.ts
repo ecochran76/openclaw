@@ -88,16 +88,17 @@ export function resolveSourceReplyDeliveryMode(params: {
   ) {
     return params.requested;
   }
-  if (isExplicitSourceReplyCommand(params.ctx, params.cfg)) {
-    return "automatic";
-  }
-  const chatType = normalizeChatType(params.ctx.ChatType);
   if (
-    (chatType === "group" || chatType === "channel") &&
+    (normalizeChatType(params.ctx.ChatType) === "group" ||
+      normalizeChatType(params.ctx.ChatType) === "channel") &&
     isUnauthorizedTextSlashCommand(params.ctx)
   ) {
     return "message_tool_only";
   }
+  if (isExplicitSourceReplyCommand(params.ctx, params.cfg)) {
+    return "automatic";
+  }
+  const chatType = normalizeChatType(params.ctx.ChatType);
   let mode: SourceReplyDeliveryMode;
   if (chatType === "group" || chatType === "channel") {
     const configuredMode =

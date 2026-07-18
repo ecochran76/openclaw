@@ -15,8 +15,13 @@ import { formatErrorMessage } from "../../infra/errors.js";
 import {
   listSpawnedSessionKeys,
   sessionVisibilityGatewayTesting,
+  type SessionToolsVisibility,
 } from "../../plugin-sdk/session-visibility.js";
-import { isAcpSessionKey, normalizeMainKey } from "../../routing/session-key.js";
+import {
+  buildAgentMainSessionKey,
+  isAcpSessionKey,
+  normalizeMainKey,
+} from "../../routing/session-key.js";
 import { looksLikeSessionId } from "../../sessions/session-id.js";
 
 type GatewayCaller = typeof callGateway;
@@ -86,6 +91,38 @@ export function resolveCurrentSessionClientAlias(params: {
   // UI/client labels can appear next to the real session key in status text.
   // Treat them as the current requester instead of probing them as sessionIds.
   return requesterKey;
+}
+
+export type SessionSelectorAuthorization =
+  | { kind: "unrestricted" }
+  | { kind: "spawned"; spawnedBy: string }
+  | { kind: "deny-before-resolution"; targetSessionKey: string };
+
+/**
+ * Decide the authorization boundary for an explicit-agent selector before lookup.
+ * Tree visibility may resolve only requester-owned children; narrower modes must
+ * deny without asking the gateway whether a matching target exists.
+ */
+export function resolveSessionSelectorAuthorization(params: {
+  requesterAgentId: string;
+  requesterSessionKey: string;
+  targetAgentId: string;
+  mainKey: string;
+  visibility: SessionToolsVisibility;
+}): SessionSelectorAuthorization {
+  if (params.requesterAgentId === params.targetAgentId || params.visibility === "all") {
+    return { kind: "unrestricted" };
+  }
+  if (params.visibility === "tree") {
+    return { kind: "spawned", spawnedBy: params.requesterSessionKey };
+  }
+  return {
+    kind: "deny-before-resolution",
+    targetSessionKey: buildAgentMainSessionKey({
+      agentId: params.targetAgentId,
+      mainKey: params.mainKey,
+    }),
+  };
 }
 
 async function isRequesterSpawnedSessionVisible(params: {

@@ -3,11 +3,16 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import type { CallGatewayOptions } from "../../gateway/call.js";
 import { setActivePluginRegistry } from "../../plugins/runtime.js";
+import { createTestRegistry } from "../../test-utils/channel-plugins.js";
 import { createSessionConversationTestRegistry } from "../../test-utils/session-conversation-registry.js";
 import { readLatestAssistantReplySnapshot, waitForAgentRun } from "../run-wait.js";
 import { runAgentStep } from "./agent-step.js";
 import type { SessionListRow } from "./sessions-helpers.js";
-import { runSessionsSendA2AFlow, testing } from "./sessions-send-tool.a2a.js";
+import {
+  runSessionsSendA2AFlow,
+  startSessionsSendA2AFlow,
+  __testing as sessionsSendA2AStaticTesting,
+} from "./sessions-send-tool.a2a.js";
 
 const callGatewayMock = vi.hoisted(() => vi.fn());
 
@@ -66,8 +71,9 @@ describe("runSessionsSendA2AFlow announce delivery", () => {
       text: "Test announce reply",
       fingerprint: "test-announce-reply",
     });
-    testing.setDepsForTest({
+    sessionsSendA2AStaticTesting.setDepsForTest({
       callGateway,
+      runAgentStep: async (...args) => await vi.mocked(runAgentStep)(...args),
     });
   });
 
@@ -80,7 +86,7 @@ describe("runSessionsSendA2AFlow announce delivery", () => {
   }
 
   afterEach(() => {
-    testing.setDepsForTest();
+    sessionsSendA2AStaticTesting.setDepsForTest();
     vi.restoreAllMocks();
   });
 
@@ -358,7 +364,7 @@ describe("runSessionsSendA2AFlow announce delivery", () => {
       targetSessionKey: "agent:main:discord:group:dev",
       displayKey: "agent:main:discord:group:dev",
       message: "Test message",
-      announceTimeoutMs: 10_000,
+      announceTimeoutMs: 300_000,
       maxPingPongTurns: 2,
       requesterSessionKey: "agent:main:discord:group:req",
       requesterChannel: "discord",
@@ -370,6 +376,7 @@ describe("runSessionsSendA2AFlow announce delivery", () => {
     });
 
     expect(firstMockArg(vi.mocked(waitForAgentRun), "agent run wait").runId).toBe("run-delayed");
+    expect(firstMockArg(vi.mocked(waitForAgentRun), "agent run wait").timeoutMs).toBe(300_000);
     expect(
       firstMockArg(vi.mocked(readLatestAssistantReplySnapshot), "assistant reply snapshot")
         .sessionKey,
@@ -413,6 +420,233 @@ describe("runSessionsSendA2AFlow announce delivery", () => {
     expect(stepInput.message).toContain("sessions_send delivery to");
     expect(stepInput.message).toContain("SessionWriteLockTimeoutError");
     expect(gatewayCalls.find((call) => call.method === "send")).toBeUndefined();
+  });
+
+  it("validates a required request relay before waiting and blocks when its reply is unavailable", async () => {
+    const events: string[] = [];
+    vi.mocked(waitForAgentRun).mockImplementationOnce(async () => {
+      events.push("wait");
+      return { status: "timeout", timeoutPhase: "provider", providerStarted: true };
+    });
+    sessionsSendA2AStaticTesting.setDepsForTest({
+      callGateway: async (opts) => {
+        if (opts.method !== "send") {
+          throw new Error(`unexpected gateway call: ${opts.method}`);
+        }
+        events.push("relay");
+        return { messageId: "relay-message" } as never;
+      },
+      runAgentStep: async (...args) => await vi.mocked(runAgentStep)(...args),
+    });
+
+    const result = await runSessionsSendA2AFlow({
+      runContextId: "run-required-relay",
+      targetSessionKey: "agent:worker:discord:group:dev",
+      displayKey: "agent:worker:discord:group:dev",
+      message: "Test message",
+      announceTimeoutMs: 10_000,
+      maxPingPongTurns: 0,
+      requesterSessionKey: "agent:main:discord:group:req",
+      requesterChannel: "discord",
+      waitRunId: "run-required-relay",
+      relayPolicy: {
+        enabled: true,
+        mode: "target-only",
+        mirrorTurns: "round1",
+        verbosity: "full-payload",
+        requireDelivery: true,
+      },
+      targetRelayTarget: {
+        channel: "discord",
+        to: "group:dev",
+      },
+    });
+
+    expect(events).toEqual(["relay", "wait"]);
+    expect(result?.relay).toMatchObject({
+      status: "blocked",
+      targets: [{ role: "target", status: "sent", messageId: "relay-message" }],
+    });
+  });
+
+  it("settles the strict request relay handle while target waiting remains pending", async () => {
+    const events: string[] = [];
+    vi.mocked(waitForAgentRun).mockImplementationOnce(
+      async () =>
+        await new Promise<never>(() => {
+          events.push("wait");
+        }),
+    );
+    sessionsSendA2AStaticTesting.setDepsForTest({
+      callGateway: async (opts) => {
+        if (opts.method !== "send") {
+          throw new Error(`unexpected gateway call: ${opts.method}`);
+        }
+        events.push("relay");
+        return { messageId: "relay-message" } as never;
+      },
+      runAgentStep: async (...args) => await vi.mocked(runAgentStep)(...args),
+    });
+
+    const started = await Promise.race([
+      startSessionsSendA2AFlow({
+        runContextId: "run-required-relay-detached",
+        targetSessionKey: "agent:worker:discord:group:dev",
+        displayKey: "agent:worker:discord:group:dev",
+        message: "Test message",
+        announceTimeoutMs: 10_000,
+        maxPingPongTurns: 0,
+        requesterSessionKey: "agent:main:discord:group:req",
+        requesterChannel: "discord",
+        waitRunId: "run-required-relay-detached",
+        relayPolicy: {
+          enabled: true,
+          mode: "target-only",
+          mirrorTurns: "round1",
+          verbosity: "full-payload",
+          requireDelivery: true,
+        },
+        targetRelayTarget: {
+          channel: "discord",
+          to: "group:dev",
+        },
+      }),
+      new Promise<never>((_, reject) => {
+        setTimeout(() => reject(new Error("initial relay handle did not settle")), 250);
+      }),
+    ]);
+
+    expect(events).toEqual(["relay", "wait"]);
+    expect(started.relay).toMatchObject({
+      status: "sent",
+      targets: [{ role: "target", status: "sent", messageId: "relay-message" }],
+    });
+    expect(started.completion).toBeInstanceOf(Promise);
+    expect(events.filter((event) => event === "relay")).toHaveLength(1);
+  });
+
+  it("keeps a successful strict relay continuation sent", async () => {
+    const result = await runSessionsSendA2AFlow({
+      runContextId: "run-strict-success",
+      targetSessionKey: "agent:worker:discord:group:dev",
+      displayKey: "agent:worker:discord:group:dev",
+      message: "Test message",
+      announceTimeoutMs: 10_000,
+      maxPingPongTurns: 0,
+      requesterSessionKey: "agent:main:discord:group:req",
+      requesterChannel: "discord",
+      waitRunId: "run-strict-success",
+      relayPolicy: {
+        enabled: true,
+        mode: "dual-channel",
+        mirrorTurns: "round1",
+        verbosity: "full-payload",
+        requireDelivery: true,
+      },
+      sourceRelayTarget: { channel: "discord", to: "group:req" },
+      targetRelayTarget: { channel: "discord", to: "group:dev" },
+    });
+
+    expect(result?.relay.status).toBe("sent");
+    expect(result?.relay.targets).toHaveLength(4);
+    expect(result?.relay.targets.every((target) => target.status === "sent")).toBe(true);
+  });
+
+  it("blocks a required unresolved request relay without waiting for the target run", async () => {
+    const result = await runSessionsSendA2AFlow({
+      runContextId: "run-blocked-relay",
+      targetSessionKey: "agent:worker:discord:group:dev",
+      displayKey: "agent:worker:discord:group:dev",
+      message: "Test message",
+      announceTimeoutMs: 10_000,
+      maxPingPongTurns: 0,
+      waitRunId: "run-blocked-relay",
+      relayPolicy: {
+        enabled: true,
+        mode: "target-only",
+        mirrorTurns: "round1",
+        verbosity: "full-payload",
+        requireDelivery: true,
+      },
+    });
+
+    expect(waitForAgentRun).not.toHaveBeenCalled();
+    expect(result?.relay).toMatchObject({
+      status: "blocked",
+      targets: [
+        {
+          role: "target",
+          status: "blocked",
+          error: "No relay target could be resolved.",
+        },
+      ],
+    });
+  });
+
+  it("does not summarize a strict relay as successful when continuation fails", async () => {
+    vi.mocked(waitForAgentRun).mockRejectedValueOnce(new Error("continuation failed"));
+
+    const result = await runSessionsSendA2AFlow({
+      runContextId: "run-strict-continuation-failure",
+      targetSessionKey: "agent:worker:discord:group:dev",
+      displayKey: "agent:worker:discord:group:dev",
+      message: "Test message",
+      announceTimeoutMs: 10_000,
+      maxPingPongTurns: 1,
+      requesterSessionKey: "agent:main:discord:group:req",
+      requesterChannel: "discord",
+      waitRunId: "run-strict-continuation-failure",
+      relayPolicy: {
+        enabled: true,
+        mode: "target-only",
+        mirrorTurns: "round1",
+        verbosity: "full-payload",
+        requireDelivery: true,
+      },
+      targetRelayTarget: {
+        channel: "discord",
+        to: "group:dev",
+      },
+    });
+
+    expect(result?.relay).toMatchObject({
+      status: "blocked",
+      targets: [{ role: "target", status: "sent" }],
+    });
+  });
+
+  it("blocks strict round-one relay when the reply wait times out", async () => {
+    vi.mocked(waitForAgentRun).mockResolvedValueOnce({
+      status: "timeout",
+      timeoutPhase: "provider",
+      providerStarted: true,
+    });
+
+    const result = await runSessionsSendA2AFlow({
+      runContextId: "run-strict-reply-timeout",
+      targetSessionKey: "agent:worker:discord:group:dev",
+      displayKey: "agent:worker:discord:group:dev",
+      message: "Test message",
+      announceTimeoutMs: 10_000,
+      maxPingPongTurns: 1,
+      waitRunId: "run-strict-reply-timeout",
+      relayPolicy: {
+        enabled: true,
+        mode: "target-only",
+        mirrorTurns: "round1",
+        verbosity: "full-payload",
+        requireDelivery: true,
+      },
+      targetRelayTarget: {
+        channel: "discord",
+        to: "group:dev",
+      },
+    });
+
+    expect(result?.relay).toMatchObject({
+      status: "blocked",
+      targets: [{ role: "target", status: "sent" }],
+    });
   });
 
   it("does not notify the requester for waited sends that already returned the error inline", async () => {
@@ -552,4 +786,159 @@ describe("runSessionsSendA2AFlow announce delivery", () => {
       expect(gatewayCalls.find((call) => call.method === "send")).toBeUndefined();
     },
   );
+});
+
+const dynamicCallGatewayMock = vi.fn();
+const runAgentStepMock = vi.fn();
+let announceTargetTesting: (typeof import("./sessions-announce-target.js"))["__testing"];
+let resolveAnnounceTarget: (typeof import("./sessions-announce-target.js"))["resolveAnnounceTarget"];
+let sessionsSendA2ADynamicTesting: (typeof import("./sessions-send-tool.a2a.js"))["__testing"];
+let runSessionsSendA2AFlowDynamic: (typeof import("./sessions-send-tool.a2a.js"))["runSessionsSendA2AFlow"];
+
+async function loadFreshModules() {
+  vi.resetModules();
+  vi.doMock("../../gateway/call.js", () => ({
+    callGateway: (opts: unknown) => dynamicCallGatewayMock(opts),
+  }));
+  vi.doMock("./agent-step.js", () => ({
+    readLatestAssistantReply: vi.fn(),
+    runAgentStep: (...args: unknown[]) => runAgentStepMock(...args),
+  }));
+  ({ __testing: announceTargetTesting, resolveAnnounceTarget } =
+    await import("./sessions-announce-target.js"));
+  ({
+    __testing: sessionsSendA2ADynamicTesting,
+    runSessionsSendA2AFlow: runSessionsSendA2AFlowDynamic,
+  } = await import("./sessions-send-tool.a2a.js"));
+}
+
+describe("sessions-send-tool.a2a announce target injection", () => {
+  beforeEach(async () => {
+    dynamicCallGatewayMock.mockReset();
+    runAgentStepMock.mockReset();
+    setActivePluginRegistry(createTestRegistry([]));
+    await loadFreshModules();
+    sessionsSendA2ADynamicTesting.setDepsForTest();
+    announceTargetTesting.setDepsForTest();
+  });
+
+  it("uses the injected announce target resolver instead of the built-in resolver", async () => {
+    const resolveAnnounceTargetMock = vi.fn(async () => ({
+      channel: "discord",
+      to: "group:dev",
+      accountId: "default",
+      threadId: "7",
+    }));
+
+    sessionsSendA2ADynamicTesting.setDepsForTest({
+      callGateway: async (opts) => await dynamicCallGatewayMock(opts),
+      resolveAnnounceTarget: resolveAnnounceTargetMock,
+      runAgentStep: async (...args) => await runAgentStepMock(...args),
+    });
+    dynamicCallGatewayMock.mockImplementation(async (request: { method?: string }) => {
+      if (request.method === "send") {
+        return { messageId: "msg-1" };
+      }
+      throw new Error(`unexpected gateway call: ${request.method ?? "unknown"}`);
+    });
+    runAgentStepMock.mockResolvedValue("announce payload");
+
+    await runSessionsSendA2AFlowDynamic({
+      targetSessionKey: "agent:main:main",
+      displayKey: "agent:main:main",
+      message: "hello",
+      announceTimeoutMs: 1_000,
+      maxPingPongTurns: 0,
+      roundOneReply: "round one reply",
+    });
+
+    expect(resolveAnnounceTargetMock).toHaveBeenCalledTimes(1);
+    expect(resolveAnnounceTargetMock).toHaveBeenCalledWith(
+      {
+        sessionKey: "agent:main:main",
+        displayKey: "agent:main:main",
+      },
+      {
+        callGateway: expect.any(Function),
+      },
+    );
+    expect(dynamicCallGatewayMock).toHaveBeenCalledTimes(1);
+    expect(dynamicCallGatewayMock).toHaveBeenCalledWith({
+      method: "send",
+      params: {
+        to: "group:dev",
+        message: "announce payload",
+        channel: "discord",
+        accountId: "default",
+        threadId: "7",
+        idempotencyKey: expect.any(String),
+      },
+      timeoutMs: 10_000,
+    });
+  });
+
+  it("hydrates announce targets through the injected callGateway dependency", async () => {
+    setActivePluginRegistry(
+      createTestRegistry([
+        {
+          pluginId: "whatsapp",
+          source: "test",
+          plugin: {
+            id: "whatsapp",
+            meta: {
+              id: "whatsapp",
+              label: "WhatsApp",
+              selectionLabel: "WhatsApp",
+              docsPath: "/channels/whatsapp",
+              blurb: "WhatsApp test stub.",
+              preferSessionLookupForAnnounceTarget: true,
+            },
+            capabilities: { chatTypes: ["direct", "group"] },
+            config: {
+              listAccountIds: () => ["default"],
+              resolveAccount: () => ({}),
+            },
+          },
+        },
+      ]),
+    );
+
+    announceTargetTesting.setDepsForTest({
+      callGateway: async (opts) => await dynamicCallGatewayMock(opts),
+    });
+    dynamicCallGatewayMock.mockResolvedValueOnce({
+      sessions: [
+        {
+          key: "agent:main:whatsapp:group:123@g.us",
+          deliveryContext: {
+            channel: "whatsapp",
+            to: "123@g.us",
+            accountId: "work",
+            threadId: 42,
+          },
+        },
+      ],
+    });
+
+    const target = await resolveAnnounceTarget({
+      sessionKey: "agent:main:whatsapp:group:123@g.us",
+      displayKey: "agent:main:whatsapp:group:123@g.us",
+    });
+
+    expect(target).toEqual({
+      channel: "whatsapp",
+      to: "123@g.us",
+      accountId: "work",
+      threadId: "42",
+    });
+    expect(dynamicCallGatewayMock).toHaveBeenCalledTimes(1);
+    expect(dynamicCallGatewayMock).toHaveBeenCalledWith({
+      method: "sessions.list",
+      params: {
+        includeGlobal: true,
+        includeUnknown: true,
+        limit: 200,
+      },
+    });
+  });
 });

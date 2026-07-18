@@ -3,7 +3,15 @@
  *
  * Keeps list/send/status tools aligned on rows, visibility context, and compact kind/channel labels.
  */
+export type {
+  AgentToAgentPolicy,
+  SessionAccessAction,
+  SessionAccessPermissionRequest,
+  SessionAccessResult,
+  SessionToolsVisibility,
+} from "./sessions-access.js";
 export {
+  checkAgentToAgentAccess,
   createAgentToAgentPolicy,
   createSessionVisibilityGuard,
   createSessionVisibilityRowChecker,
@@ -17,6 +25,7 @@ export {
   resolveInternalSessionKey,
   resolveMainSessionAlias,
   resolveSessionReference,
+  resolveSessionSelectorAuthorization,
   resolveVisibleSessionReference,
   shouldResolveSessionIdInput,
 } from "./sessions-resolution.js";
@@ -48,7 +57,9 @@ export type SessionListRow = {
   channel: string;
   origin?: {
     provider?: string;
+    to?: string;
     accountId?: string;
+    threadId?: string | number;
   };
   spawnedBy?: string;
   label?: string;

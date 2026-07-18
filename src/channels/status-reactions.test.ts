@@ -209,8 +209,7 @@ describe("createStatusReactionController", () => {
   it("should call setReaction with initialEmoji for setQueued immediately", async () => {
     const { calls, controller } = createEnabledController();
 
-    void controller.setQueued();
-    await vi.runAllTimersAsync();
+    await controller.setQueued();
 
     expectSetEmojiCall(calls, "👀");
   });
@@ -559,6 +558,14 @@ describe("createStatusReactionController", () => {
     await vi.advanceTimersByTimeAsync(delayMs);
 
     expectSetEmojiCall(calls, expected);
+  });
+
+  it("should start stall timers when the queued reaction is already active", async () => {
+    const { calls } = createEnabledController({ initialActive: true });
+
+    await vi.advanceTimersByTimeAsync(DEFAULT_TIMING.stallSoftMs);
+
+    expectSetEmojiCall(calls, DEFAULT_EMOJIS.stallSoft);
   });
 
   const stallResetCases = [

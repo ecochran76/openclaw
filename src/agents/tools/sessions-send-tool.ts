@@ -20,7 +20,10 @@ import {
   resolveAgentIdFromSessionKey,
   toAgentStoreSessionKey,
 } from "../../routing/session-key.js";
-import { annotateInterSessionPromptText } from "../../sessions/input-provenance.js";
+import {
+  annotateInterSessionPromptText,
+  hasInterSessionUserProvenance,
+} from "../../sessions/input-provenance.js";
 import { isCronRunSessionKey, parseAgentSessionKey } from "../../sessions/session-key-utils.js";
 import { SESSION_LABEL_MAX_LENGTH } from "../../sessions/session-label.js";
 import { registerSessionStateWatch } from "../../sessions/session-state-events.js";
@@ -29,6 +32,7 @@ import {
   type GatewayMessageChannel,
   INTERNAL_MESSAGE_CHANNEL,
 } from "../../utils/message-channel.js";
+import { attemptIngressEcho } from "../a2a/ingress-echo.js";
 import { listAgentIds } from "../agent-scope.js";
 import {
   type EmbeddedAgentQueueMessageOptions,
@@ -49,25 +53,111 @@ import {
   SESSIONS_SEND_TOOL_DISPLAY_SUMMARY,
 } from "../tool-description-presets.js";
 import type { AnyAgentTool } from "./common.js";
-import { jsonResult, readNonNegativeIntegerParam, readStringParam } from "./common.js";
 import {
+  jsonResult,
+  readNumberParam,
+  readNonNegativeIntegerParam,
+  readStringArrayParam,
+  readStringOrNumberParam,
+  readStringParam,
+} from "./common.js";
+import { resolveAnnounceTarget } from "./sessions-announce-target.js";
+import {
+  checkAgentToAgentAccess,
   createSessionVisibilityGuard,
   createAgentToAgentPolicy,
   resolveEffectiveSessionToolsVisibility,
   resolveSessionReference,
+  resolveSessionSelectorAuthorization,
   resolveSessionToolContext,
   resolveVisibleSessionReference,
 } from "./sessions-helpers.js";
-import { buildAgentToAgentMessageContext, resolvePingPongTurns } from "./sessions-send-helpers.js";
-import { runSessionsSendA2AFlow } from "./sessions-send-tool.a2a.js";
+import { buildPendingSessionApprovalOutput } from "./sessions-pending-approvals.js";
+import { prepareSessionsSendA2AFlow } from "./sessions-send-a2a-prepare.js";
+import {
+  buildAgentToAgentMessageContext,
+  clampA2ATimeoutSeconds,
+  clampPingPongTurns,
+  resolveIngressEchoPolicy,
+  resolvePingPongTurns,
+  resolveRelayPolicy,
+} from "./sessions-send-helpers.js";
+import { runSessionsSendA2AFlow, startSessionsSendA2AFlow } from "./sessions-send-tool.a2a.js";
+
+function parseNaturalSessionSelector(value?: string): {
+  agentId?: string;
+  search?: string;
+  searchFields?: string[];
+  selection?: "most-recent" | "least-recent";
+  threadPolicy?: "prefer-thread";
+} | null {
+  const raw = value?.trim();
+  if (!raw) {
+    return null;
+  }
+  const normalized = raw.replace(/\s+/g, " ").trim();
+  const lower = normalized.toLowerCase();
+
+  const managedByMatch = normalized.match(/\bmanaged by\s+([a-z0-9][a-z0-9_-]*)\b/i);
+  const selection = lower.includes("most recent")
+    ? "most-recent"
+    : lower.includes("least recent")
+      ? "least-recent"
+      : undefined;
+
+  let search = normalized;
+  if (managedByMatch) {
+    search = search.replace(managedByMatch[0], " ").replace(/\s+/g, " ").trim();
+  }
+  search = search
+    .replace(/^the\s+/i, "")
+    .replace(/^(most|least)\s+recent\s+/i, "")
+    .replace(/\bsession\b/gi, " ")
+    .replace(/\s+/g, " ")
+    .trim();
+
+  const wantsDerivedTitle = /\ba2a\b|\bfeature\b|\bdev\b/i.test(search);
+  const shouldTreatAsNaturalSelector =
+    Boolean(managedByMatch) || Boolean(selection) || /\bmanaged by\b/i.test(lower);
+  if (!shouldTreatAsNaturalSelector) {
+    return null;
+  }
+
+  return {
+    agentId: managedByMatch?.[1] ? normalizeAgentId(managedByMatch[1]) : undefined,
+    search: search || undefined,
+    searchFields: search && wantsDerivedTitle ? ["derivedTitle"] : undefined,
+    selection,
+    threadPolicy: "prefer-thread",
+  };
+}
 
 const SessionsSendToolSchema = Type.Object({
   sessionKey: Type.Optional(Type.String()),
   label: Type.Optional(Type.String({ minLength: 1, maxLength: SESSION_LABEL_MAX_LENGTH })),
   agentId: Type.Optional(Type.String({ minLength: 1, maxLength: 64 })),
+  channel: Type.Optional(Type.String({ minLength: 1 })),
+  to: Type.Optional(Type.String({ minLength: 1 })),
+  accountId: Type.Optional(Type.String({ minLength: 1 })),
+  threadId: Type.Optional(Type.Union([Type.String({ minLength: 1 }), Type.Number()])),
+  threadPolicy: Type.Optional(
+    Type.Union([
+      Type.Literal("exact"),
+      Type.Literal("prefer-thread"),
+      Type.Literal("most-recent"),
+      Type.Literal("channel-root"),
+    ]),
+  ),
+  allowChannelRootFallback: Type.Optional(Type.Boolean()),
+  activeMinutes: Type.Optional(Type.Number({ minimum: 1 })),
+  search: Type.Optional(Type.String()),
+  searchFields: Type.Optional(Type.Array(Type.String({ minLength: 1 }), { minItems: 1 })),
+  selection: Type.Optional(Type.Union([Type.Literal("most-recent"), Type.Literal("least-recent")])),
   message: Type.String(),
   timeoutSeconds: Type.Optional(Type.Integer({ minimum: 0 })),
   watch: Type.Optional(Type.Boolean()),
+  maxPingPongTurns: Type.Optional(Type.Number({ minimum: 0, maximum: 5 })),
+  a2aTimeoutSeconds: Type.Optional(Type.Number({ minimum: 1, maximum: 300 })),
 });
 
 type GatewayCaller = typeof callGateway;
@@ -110,6 +200,10 @@ function resolveConfiguredAgentMainSessionKey(params: {
     requestKey: "main",
     mainKey: params.mainKey,
   });
+}
+
+function isNoSessionSelectorMatchError(message: string): boolean {
+  return message.trim().startsWith("No session matched selector filters");
 }
 
 function isConfiguredAgentMainSessionKey(params: {
@@ -246,6 +340,7 @@ function shouldFallbackCronRunScopedActiveDelivery(
 
 async function startAgentRun(params: {
   callGateway: GatewayCaller;
+  extraResult?: Record<string, unknown>;
   runId: string;
   sendParams: Record<string, unknown>;
   sessionKey: string;
@@ -340,6 +435,7 @@ async function startAgentRun(params: {
         status: "error",
         error: messageText,
         sessionKey: params.sessionKey,
+        ...params.extraResult,
       }),
     };
   }
@@ -363,7 +459,6 @@ export function createSessionsSendTool(opts?: {
       const params = normalizeSessionsSendArguments(args);
       const gatewayCall = opts?.callGateway ?? callGateway;
       const message = readStringParam(params, "message", { required: true });
-      const timeoutSeconds = readNonNegativeIntegerParam(params, "timeoutSeconds") ?? 30;
       const { cfg, mainKey, alias, effectiveRequesterKey, restrictToSpawned } =
         resolveSessionToolContext(opts);
 
@@ -374,70 +469,249 @@ export function createSessionsSendTool(opts?: {
       });
 
       const sessionKeyParam = readStringParam(params, "sessionKey");
-      const labelParam = normalizeOptionalString(readStringParam(params, "label"));
-      const labelAgentIdParam = normalizeOptionalString(readStringParam(params, "agentId"));
-
-      let sessionKey = sessionKeyParam;
-      if (!sessionKey && !labelParam && labelAgentIdParam) {
-        const agentMainKey = resolveConfiguredAgentMainSessionKey({
-          cfg,
-          agentId: labelAgentIdParam,
-          mainKey,
+      const naturalSessionSelector = parseNaturalSessionSelector(sessionKeyParam);
+      const labelParam = readStringParam(params, "label")?.trim() || undefined;
+      const requestedAgentIdParam = readStringParam(params, "agentId")?.trim() || undefined;
+      const selectorChannelParam = readStringParam(params, "channel")?.trim() || undefined;
+      const selectorToParam = readStringParam(params, "to")?.trim() || undefined;
+      const selectorAccountIdParam = readStringParam(params, "accountId")?.trim() || undefined;
+      const selectorThreadIdParam = readStringOrNumberParam(params, "threadId");
+      if (selectorChannelParam?.toLowerCase() === "slack" && typeof params.threadId === "number") {
+        return jsonResult({
+          runId: crypto.randomUUID(),
+          status: "error",
+          error: "Slack threadId must be a string to preserve timestamp precision.",
         });
-        if (!agentMainKey) {
-          return jsonResult({
-            runId: crypto.randomUUID(),
-            status: "error",
-            error: `agent not found: ${labelAgentIdParam}`,
-          });
-        }
-        sessionKey = agentMainKey;
       }
-      if (!sessionKey && labelParam) {
-        const requesterAgentId = resolveAgentIdFromSessionKey(effectiveRequesterKey);
-        const requestedAgentId = labelAgentIdParam
-          ? normalizeAgentId(labelAgentIdParam)
+      const selectorThreadPolicyParam =
+        readStringParam(params, "threadPolicy")?.trim() || undefined;
+      const selectorSearchParam = readStringParam(params, "search")?.trim() || undefined;
+      const selectorSearchFieldsParam = readStringArrayParam(params, "searchFields")
+        ?.map((value) => value.trim())
+        .filter(Boolean);
+      const selectorSelectionParam = readStringParam(params, "selection")?.trim() || undefined;
+      const selectorActiveMinutesParam = readNumberParam(params, "activeMinutes", {
+        integer: true,
+      });
+      const selectorAllowChannelRootFallback =
+        typeof params.allowChannelRootFallback === "boolean"
+          ? params.allowChannelRootFallback
           : undefined;
+      const hasSelectorParams = Boolean(
+        selectorChannelParam ||
+        selectorToParam ||
+        selectorAccountIdParam ||
+        selectorThreadIdParam !== undefined ||
+        selectorThreadPolicyParam ||
+        selectorSearchParam ||
+        (selectorSearchFieldsParam?.length ?? 0) > 0 ||
+        selectorSelectionParam ||
+        selectorActiveMinutesParam !== undefined ||
+        selectorAllowChannelRootFallback === true,
+      );
+      const hasNaturalSelector = Boolean(
+        naturalSessionSelector && !hasSelectorParams && !labelParam,
+      );
+      const hasAgentIdOnlySelector = Boolean(
+        requestedAgentIdParam &&
+        !sessionKeyParam &&
+        !labelParam &&
+        !hasSelectorParams &&
+        !hasNaturalSelector,
+      );
+      const hasSelectorTarget = hasSelectorParams || hasNaturalSelector || hasAgentIdOnlySelector;
+      const targetModeCount = [
+        Boolean(sessionKeyParam && !hasNaturalSelector),
+        Boolean(labelParam && !sessionKeyParam),
+        hasSelectorTarget,
+      ].filter(Boolean).length;
+      if (targetModeCount > 1) {
+        return jsonResult({
+          runId: crypto.randomUUID(),
+          status: "error",
+          error: "Provide either sessionKey, label, or selector fields (not multiple).",
+        });
+      }
 
-        if (restrictToSpawned && requestedAgentId && requestedAgentId !== requesterAgentId) {
+      const requesterResolutionAgentId = resolveAgentIdFromSessionKey(effectiveRequesterKey);
+      const requestedAgentId = requestedAgentIdParam
+        ? normalizeAgentId(requestedAgentIdParam)
+        : undefined;
+      const effectiveRequestedAgentId = requestedAgentId ?? naturalSessionSelector?.agentId;
+      // Unqualified selectors are requester-scoped. Resolving globally and denying only after a
+      // match lets callers distinguish a hidden match from no match by the response status.
+      const selectorResolutionAgentId =
+        effectiveRequestedAgentId ??
+        (hasSelectorTarget || labelParam ? requesterResolutionAgentId : undefined);
+      let selectorAuthorization: ReturnType<typeof resolveSessionSelectorAuthorization> = {
+        kind: "unrestricted",
+      };
+      if ((labelParam || hasSelectorTarget) && restrictToSpawned && effectiveRequestedAgentId) {
+        if (effectiveRequestedAgentId !== requesterResolutionAgentId) {
           return jsonResult({
             runId: crypto.randomUUID(),
             status: "forbidden",
-            error: "Sandboxed sessions_send label lookup is limited to this agent",
+            error: "Sandboxed sessions_send target resolution is limited to this agent",
           });
         }
-
-        if (requesterAgentId && requestedAgentId && requestedAgentId !== requesterAgentId) {
-          if (!a2aPolicy.enabled) {
+      }
+      if (
+        (labelParam || hasSelectorTarget) &&
+        requesterResolutionAgentId &&
+        effectiveRequestedAgentId
+      ) {
+        if (effectiveRequestedAgentId !== requesterResolutionAgentId) {
+          const access = checkAgentToAgentAccess({
+            action: "send",
+            requesterAgentId: requesterResolutionAgentId,
+            targetAgentId: effectiveRequestedAgentId,
+            a2aPolicy,
+          });
+          if (!access.allowed) {
+            const approvalOutput = await buildPendingSessionApprovalOutput({
+              permissionRequest: access.permissionRequest,
+              requesterSessionKey: opts?.agentSessionKey,
+              originalToolName: "sessions_send",
+              originalArgs: params,
+            });
             return jsonResult({
               runId: crypto.randomUUID(),
-              status: "forbidden",
-              error:
-                "Agent-to-agent messaging is disabled. Set tools.agentToAgent.enabled=true to allow cross-agent sends.",
+              status: access.status,
+              error: access.error,
+              permissionRequest: access.permissionRequest,
+              ...approvalOutput,
             });
           }
-          if (!a2aPolicy.isAllowed(requesterAgentId, requestedAgentId)) {
-            return jsonResult({
-              runId: crypto.randomUUID(),
-              status: "forbidden",
-              error: "Agent-to-agent messaging denied by tools.agentToAgent.allow.",
+          selectorAuthorization = resolveSessionSelectorAuthorization({
+            requesterAgentId: requesterResolutionAgentId,
+            requesterSessionKey: effectiveRequesterKey,
+            targetAgentId: effectiveRequestedAgentId,
+            mainKey,
+            visibility: sessionVisibility,
+          });
+          if (selectorAuthorization.kind === "deny-before-resolution") {
+            const visibilityGuard = await createSessionVisibilityGuard({
+              action: "send",
+              requesterAgentId: requesterResolutionAgentId,
+              requesterSessionKey: effectiveRequesterKey,
+              visibility: sessionVisibility,
+              a2aPolicy,
             });
+            const access = visibilityGuard.check(selectorAuthorization.targetSessionKey);
+            if (!access.allowed) {
+              const approvalOutput = await buildPendingSessionApprovalOutput({
+                permissionRequest: access.permissionRequest,
+                requesterSessionKey: opts?.agentSessionKey,
+                originalToolName: "sessions_send",
+                originalArgs: params,
+              });
+              return jsonResult({
+                runId: crypto.randomUUID(),
+                status: access.status,
+                error: access.error,
+                permissionRequest: access.permissionRequest,
+                ...approvalOutput,
+              });
+            }
           }
         }
+      }
 
+      const effectiveSelectorSearch = selectorSearchParam ?? naturalSessionSelector?.search;
+      const effectiveSelectorSearchFields = selectorSearchFieldsParam?.length
+        ? selectorSearchFieldsParam
+        : naturalSessionSelector?.searchFields;
+      const effectiveSelectorSelection =
+        selectorSelectionParam ?? naturalSessionSelector?.selection;
+      const effectiveSelectorThreadPolicy =
+        selectorThreadPolicyParam ?? naturalSessionSelector?.threadPolicy;
+
+      let sessionKey = hasNaturalSelector ? undefined : sessionKeyParam;
+      let resolvedTarget:
+        | {
+            sessionKey: string;
+            agentId?: string;
+            deliveryContext?: {
+              channel?: string;
+              to?: string;
+              accountId?: string;
+              threadId?: string;
+            };
+            resolution?: {
+              matchedBy?: string;
+              threadPolicy?: string;
+              selection?: string;
+              fallbackUsed?: boolean;
+              search?: string;
+              searchFields?: string[];
+            };
+          }
+        | undefined;
+      if (!sessionKey && (labelParam || hasSelectorTarget)) {
         const resolveParams: Record<string, unknown> = {
-          label: labelParam,
-          ...(requestedAgentId ? { agentId: requestedAgentId } : {}),
-          ...(restrictToSpawned ? { spawnedBy: effectiveRequesterKey } : {}),
+          ...(labelParam ? { label: labelParam } : {}),
+          ...(selectorResolutionAgentId ? { agentId: selectorResolutionAgentId } : {}),
+          ...(selectorChannelParam ? { channel: selectorChannelParam } : {}),
+          ...(selectorToParam ? { to: selectorToParam } : {}),
+          ...(selectorAccountIdParam ? { accountId: selectorAccountIdParam } : {}),
+          ...(selectorThreadIdParam !== undefined
+            ? { threadId: String(selectorThreadIdParam) }
+            : {}),
+          ...(effectiveSelectorThreadPolicy ? { threadPolicy: effectiveSelectorThreadPolicy } : {}),
+          ...(effectiveSelectorSearch ? { search: effectiveSelectorSearch } : {}),
+          ...(effectiveSelectorSearchFields?.length
+            ? { searchFields: effectiveSelectorSearchFields }
+            : {}),
+          ...(effectiveSelectorSelection ? { selection: effectiveSelectorSelection } : {}),
+          ...(selectorActiveMinutesParam !== undefined
+            ? { activeMinutes: selectorActiveMinutesParam }
+            : {}),
+          ...(selectorAllowChannelRootFallback === true ? { allowChannelRootFallback: true } : {}),
+          ...(restrictToSpawned
+            ? { spawnedBy: effectiveRequesterKey }
+            : selectorAuthorization.kind === "spawned"
+              ? { spawnedBy: selectorAuthorization.spawnedBy }
+              : {}),
         };
         let resolvedKey;
         try {
-          const resolved = await gatewayCall<{ key: string }>({
+          const resolved = (await gatewayCall({
             method: "sessions.resolve",
             params: resolveParams,
             timeoutMs: 10_000,
-          });
-          resolvedKey = normalizeOptionalString(resolved?.key) ?? "";
+          })) as {
+            key?: string;
+            agentId?: string;
+            deliveryContext?: {
+              channel?: string;
+              to?: string;
+              accountId?: string;
+              threadId?: string;
+            };
+            resolution?: {
+              matchedBy?: string;
+              threadPolicy?: string;
+              selection?: string;
+              fallbackUsed?: boolean;
+              search?: string;
+              searchFields?: string[];
+            };
+          };
+          resolvedKey = typeof resolved?.key === "string" ? resolved.key.trim() : "";
+          if (resolvedKey) {
+            resolvedTarget = {
+              sessionKey: resolvedKey,
+              agentId: typeof resolved?.agentId === "string" ? resolved.agentId : undefined,
+              deliveryContext:
+                resolved?.deliveryContext && typeof resolved.deliveryContext === "object"
+                  ? resolved.deliveryContext
+                  : undefined,
+              resolution:
+                resolved?.resolution && typeof resolved.resolution === "object"
+                  ? resolved.resolution
+                  : undefined,
+            };
+          }
         } catch (err) {
           const msg = formatErrorMessage(err);
           if (restrictToSpawned) {
@@ -447,11 +721,43 @@ export function createSessionsSendTool(opts?: {
               error: "Session not visible from this sandboxed agent session.",
             });
           }
-          return jsonResult({
-            runId: crypto.randomUUID(),
-            status: "error",
-            error: msg || `No session found with label: ${labelParam}`,
-          });
+          const configuredAgentMainKey =
+            hasAgentIdOnlySelector &&
+            effectiveRequestedAgentId &&
+            isNoSessionSelectorMatchError(msg)
+              ? resolveConfiguredAgentMainSessionKey({
+                  cfg,
+                  agentId: effectiveRequestedAgentId,
+                  mainKey,
+                })
+              : undefined;
+          if (configuredAgentMainKey) {
+            resolvedKey = configuredAgentMainKey;
+          } else {
+            return jsonResult({
+              runId: crypto.randomUUID(),
+              status: "error",
+              error:
+                msg ||
+                (labelParam
+                  ? `No session found with label: ${labelParam}`
+                  : "No session matched selector filters."),
+            });
+          }
+        }
+
+        if (!resolvedKey) {
+          const configuredAgentMainKey =
+            hasAgentIdOnlySelector && effectiveRequestedAgentId
+              ? resolveConfiguredAgentMainSessionKey({
+                  cfg,
+                  agentId: effectiveRequestedAgentId,
+                  mainKey,
+                })
+              : undefined;
+          if (configuredAgentMainKey) {
+            resolvedKey = configuredAgentMainKey;
+          }
         }
 
         if (!resolvedKey) {
@@ -465,7 +771,9 @@ export function createSessionsSendTool(opts?: {
           return jsonResult({
             runId: crypto.randomUUID(),
             status: "error",
-            error: `No session found with label: ${labelParam}`,
+            error: labelParam
+              ? `No session found with label: ${labelParam}`
+              : "No session matched selector filters.",
           });
         }
         sessionKey = resolvedKey;
@@ -475,7 +783,7 @@ export function createSessionsSendTool(opts?: {
         return jsonResult({
           runId: crypto.randomUUID(),
           status: "error",
-          error: "Either sessionKey or label is required",
+          error: "Either sessionKey, label, or selector fields are required",
         });
       }
       const resolvedSession = await resolveSessionReference({
@@ -510,14 +818,30 @@ export function createSessionsSendTool(opts?: {
       // Normalize sessionKey/sessionId input into a canonical session key.
       const resolvedKey = visibleSession.key;
       const displayKey = visibleSession.displayKey;
+      const resolvedTargetDisplay = resolvedTarget
+        ? { ...resolvedTarget, sessionKey: displayKey }
+        : undefined;
+      const timeoutSeconds = readNonNegativeIntegerParam(params, "timeoutSeconds") ?? 30;
       const timeoutMs =
         finiteSecondsToTimerSafeMilliseconds(timeoutSeconds, {
           floorSeconds: true,
         }) ?? 0;
       const announceTimeoutMs = timeoutSeconds === 0 ? 30_000 : timeoutMs;
+      const maxPingPongTurns = clampPingPongTurns(
+        typeof params.maxPingPongTurns === "number" ? params.maxPingPongTurns : undefined,
+        resolvePingPongTurns(cfg),
+      );
+      const a2aTimeoutMs =
+        clampA2ATimeoutSeconds(
+          typeof params.a2aTimeoutSeconds === "number" ? params.a2aTimeoutSeconds : undefined,
+        ) * 1000;
+      const a2aStepTimeoutMs = a2aTimeoutMs;
       const idempotencyKey = crypto.randomUUID();
       let runId: string = idempotencyKey;
-      if (parseSessionThreadInfo(resolvedKey).threadId) {
+      if (
+        parseSessionThreadInfo(resolvedKey).threadId &&
+        !(hasSelectorTarget && resolvedTarget?.deliveryContext)
+      ) {
         return jsonResult({
           runId: crypto.randomUUID(),
           status: "error",
@@ -534,26 +858,29 @@ export function createSessionsSendTool(opts?: {
       });
       const access = visibilityGuard.check(resolvedKey);
       if (!access.allowed) {
+        // Authorization failures may echo an explicit caller-supplied key, but
+        // selector resolution and hydrated delivery metadata stay private until allowed.
+        const accessDeniedDisplayKey =
+          sessionKeyParam && !naturalSessionSelector ? sessionKeyParam : undefined;
+        const redactResolvedTarget =
+          hasSelectorTarget || Boolean(labelParam) || resolvedSession.resolvedViaSessionId;
+        const approvalOutput = redactResolvedTarget
+          ? undefined
+          : await buildPendingSessionApprovalOutput({
+              permissionRequest: access.permissionRequest,
+              requesterSessionKey: opts?.agentSessionKey,
+              originalToolName: "sessions_send",
+              originalArgs: params,
+            });
         return jsonResult({
           runId: crypto.randomUUID(),
           status: access.status,
-          error: access.error,
-          sessionKey: unresolvedDisplayKey,
-        });
-      }
-
-      const ensuredSession = await ensureConfiguredAgentMainSession({
-        cfg,
-        callGateway: gatewayCall,
-        sessionKey: resolvedKey,
-        mainKey,
-      });
-      if (!ensuredSession.ok) {
-        return jsonResult({
-          runId: crypto.randomUUID(),
-          status: "error",
-          error: ensuredSession.error,
-          sessionKey: displayKey,
+          error: redactResolvedTarget ? "sessions_send access denied." : access.error,
+          ...(accessDeniedDisplayKey ? { sessionKey: accessDeniedDisplayKey } : {}),
+          ...(!redactResolvedTarget && access.permissionRequest
+            ? { permissionRequest: access.permissionRequest }
+            : {}),
+          ...(approvalOutput ?? {}),
         });
       }
 
@@ -579,6 +906,23 @@ export function createSessionsSendTool(opts?: {
         timeoutSeconds === 0 && isIsolatedCronRequester
           ? resolveCronRunScopedFallbackSessionKey(displayKey)
           : undefined;
+
+      if (!sameSessionA2A) {
+        const ensuredSession = await ensureConfiguredAgentMainSession({
+          cfg,
+          callGateway: gatewayCall,
+          sessionKey: resolvedKey,
+          mainKey,
+        });
+        if (!ensuredSession.ok) {
+          return jsonResult({
+            runId: crypto.randomUUID(),
+            status: "error",
+            error: ensuredSession.error,
+            sessionKey: displayKey,
+          });
+        }
+      }
 
       // Capture the pre-run assistant snapshot before starting the nested run.
       // Fast in-process test doubles and short-circuit agent paths can finish
@@ -611,6 +955,85 @@ export function createSessionsSendTool(opts?: {
               callGateway: gatewayCall,
             }).catch(() => undefined)
           : undefined;
+      const allowNestedSessionsSend =
+        cfg.session?.agentToAgent?.guard?.allowNestedSessionsSend === true;
+      if (!allowNestedSessionsSend && opts?.agentSessionKey) {
+        try {
+          const currentHistory = (await gatewayCall({
+            method: "chat.history",
+            params: { sessionKey: opts.agentSessionKey, limit: 200 },
+            timeoutMs: 10_000,
+          })) as { messages?: Array<Record<string, unknown>> };
+          const messages = Array.isArray(currentHistory?.messages) ? currentHistory.messages : [];
+          const latestUser = [...messages].toReversed().find((entry) => entry?.role === "user");
+          if (!latestUser && resolvedKey !== effectiveRequesterKey) {
+            throw new Error("latest caller user message was not available in bounded history");
+          }
+          const provenance = latestUser?.provenance as Record<string, unknown> | undefined;
+          if (
+            provenance !== undefined &&
+            !hasInterSessionUserProvenance(latestUser as { role?: unknown; provenance?: unknown })
+          ) {
+            throw new Error("latest caller user provenance was incomplete");
+          }
+          if (
+            hasInterSessionUserProvenance(latestUser as { role?: unknown; provenance?: unknown }) &&
+            provenance?.sourceTool === "sessions_send"
+          ) {
+            return jsonResult({
+              runId: crypto.randomUUID(),
+              status: "forbidden",
+              error:
+                "Nested sessions_send relay blocked by session.agentToAgent.guard.allowNestedSessionsSend=false.",
+              sessionKey: displayKey,
+              resolvedTarget: resolvedTargetDisplay,
+            });
+          }
+        } catch (error) {
+          if (resolvedKey === effectiveRequesterKey) {
+            // Same-session delivery cannot create the recursive inter-session fan-out guarded here.
+            // Preserve its fire-and-forget path when optional baseline history is unavailable.
+          } else {
+            return jsonResult({
+              runId: crypto.randomUUID(),
+              status: "forbidden",
+              error: `Nested sessions_send guard could not verify caller provenance: ${formatErrorMessage(error)}`,
+              sessionKey: displayKey,
+              resolvedTarget: resolvedTargetDisplay,
+            });
+          }
+        }
+      }
+
+      const ingressEchoPolicy = resolveIngressEchoPolicy(cfg);
+      const ingressEchoExecution = await attemptIngressEcho(
+        {
+          policy: ingressEchoPolicy,
+          sessionKey: resolvedKey,
+          displayKey,
+          message,
+          requesterSessionKey: opts?.agentSessionKey,
+          requesterChannel: opts?.agentChannel,
+        },
+        {
+          callGateway: gatewayCall,
+          resolveAnnounceTarget,
+        },
+      );
+      const ingressEcho: Record<string, unknown> = ingressEchoExecution.ingressEcho;
+      if (ingressEchoExecution.requiredFailure) {
+        return jsonResult({
+          runId: crypto.randomUUID(),
+          status: "error",
+          error:
+            typeof ingressEchoExecution.ingressEcho.error === "string"
+              ? ingressEchoExecution.ingressEcho.error
+              : "Ingress echo delivery failed.",
+          sessionKey: displayKey,
+          resolvedTarget: resolvedTargetDisplay,
+          ingressEcho,
+        });
+      }
 
       const agentMessageContext = buildAgentToAgentMessageContext({
         requesterSessionKey,
@@ -634,8 +1057,24 @@ export function createSessionsSendTool(opts?: {
         extraSystemPrompt: agentMessageContext,
         inputProvenance,
       };
-      const maxPingPongTurns = resolvePingPongTurns(cfg);
-
+      const relayPolicy = resolveRelayPolicy(cfg);
+      const { flowParams, defaultRelay } = await prepareSessionsSendA2AFlow(
+        {
+          targetSessionKey: resolvedKey,
+          displayKey,
+          message,
+          announceTimeoutMs: a2aStepTimeoutMs,
+          maxPingPongTurns: isIsolatedCronRequester ? 0 : maxPingPongTurns,
+          timeoutSeconds,
+          relayPolicy,
+          requesterSessionKey,
+          requesterChannel,
+        },
+        {
+          callGateway: gatewayCall,
+          resolveAnnounceTarget,
+        },
+      );
       // Skip the A2A ping-pong + announce flow when the current caller is the
       // parent of a parent-owned child session it spawned itself and another
       // parent-visible result path already exists.
@@ -678,8 +1117,32 @@ export function createSessionsSendTool(opts?: {
       const delivery = skipA2AFlow
         ? ({ status: "skipped", mode: "announce" } as const)
         : ({ status: "pending", mode: "announce" } as const);
-
-      const startA2AFlow = (
+      const effectiveDefaultRelay = skipA2AFlow
+        ? ({ ...defaultRelay, status: "not_applicable" } as const)
+        : defaultRelay;
+      const resolveA2AFlowParams = async (flowTargetSessionKey: string, flowDisplayKey: string) =>
+        flowTargetSessionKey === resolvedKey && flowDisplayKey === displayKey
+          ? flowParams
+          : (
+              await prepareSessionsSendA2AFlow(
+                {
+                  targetSessionKey: flowTargetSessionKey,
+                  displayKey: flowDisplayKey,
+                  message,
+                  announceTimeoutMs: a2aStepTimeoutMs,
+                  maxPingPongTurns: isIsolatedCronRequester ? 0 : maxPingPongTurns,
+                  timeoutSeconds,
+                  relayPolicy,
+                  requesterSessionKey,
+                  requesterChannel,
+                },
+                {
+                  callGateway: gatewayCall,
+                  resolveAnnounceTarget,
+                },
+              )
+            ).flowParams;
+      const startA2AFlow = async (
         roundOneReply?: string,
         waitRunId?: string,
         flowTargetSessionKey = resolvedKey,
@@ -687,25 +1150,24 @@ export function createSessionsSendTool(opts?: {
         notifyRequesterOnWaitFailure = false,
       ) => {
         if (skipA2AFlow) {
-          return;
+          return { relay: effectiveDefaultRelay };
         }
+        const effectiveFlowParams = await resolveA2AFlowParams(
+          flowTargetSessionKey,
+          flowDisplayKey,
+        );
         const flowBaseline =
           flowTargetSessionKey === fallbackA2ASessionKey ? fallbackBaselineReply : baselineReply;
-        void runSessionsSendA2AFlow({
-          targetSessionKey: flowTargetSessionKey,
-          displayKey: flowDisplayKey,
-          message,
-          announceTimeoutMs,
-          // Cron runs are isolated jobs; target replies must not become new
-          // requester turns, but the target-side announce still runs.
-          maxPingPongTurns: isIsolatedCronRequester ? 0 : maxPingPongTurns,
-          requesterSessionKey,
-          requesterChannel,
-          baseline: flowBaseline,
-          roundOneReply,
-          waitRunId,
-          notifyRequesterOnWaitFailure,
-        });
+        return (
+          (await runSessionsSendA2AFlow({
+            ...effectiveFlowParams,
+            runContextId: runId,
+            baseline: flowBaseline,
+            roundOneReply,
+            waitRunId,
+            notifyRequesterOnWaitFailure,
+          })) ?? { relay: effectiveDefaultRelay }
+        );
       };
 
       if (timeoutSeconds === 0) {
@@ -716,20 +1178,68 @@ export function createSessionsSendTool(opts?: {
           sessionKey: displayKey,
           deliveryTimeoutMs: announceTimeoutMs,
           allowActiveRunQueueDelivery: true,
+          extraResult: {
+            resolvedTarget: resolvedTargetDisplay,
+            ingressEcho,
+          },
         });
         if (!start.ok) {
           return start.result;
         }
         runId = start.runId;
-        const watchField = registerWatchIfRequested(start.a2aSessionKey ?? resolvedKey);
-        if (!start.activeRunQueue) {
-          startA2AFlow(undefined, runId, start.a2aSessionKey, start.a2aDisplayKey, true);
+        const a2aSessionKey = start.a2aSessionKey ?? resolvedKey;
+        const a2aDisplayKey = start.a2aDisplayKey ?? displayKey;
+        const watchField = registerWatchIfRequested(a2aSessionKey);
+        const requiresRelayDelivery = relayPolicy.enabled && relayPolicy.requireDelivery;
+        const shouldRunA2AFlow = !skipA2AFlow && (!start.activeRunQueue || requiresRelayDelivery);
+        let relay = effectiveDefaultRelay;
+        if (shouldRunA2AFlow) {
+          if (requiresRelayDelivery) {
+            const effectiveFlowParams = await resolveA2AFlowParams(a2aSessionKey, a2aDisplayKey);
+            const startedFlow = await startSessionsSendA2AFlow({
+              ...effectiveFlowParams,
+              runContextId: runId,
+              baseline:
+                a2aSessionKey === fallbackA2ASessionKey ? fallbackBaselineReply : baselineReply,
+              waitRunId: start.activeRunQueue ? undefined : runId,
+              notifyRequesterOnWaitFailure: true,
+            });
+            relay = startedFlow.relay;
+            if (relay.status !== "sent") {
+              return jsonResult({
+                runId,
+                status: "error",
+                error: "Required relay delivery failed.",
+                sentBeforeError: true,
+                sessionKey: displayKey,
+                resolvedTarget: resolvedTargetDisplay,
+                delivery,
+                ingressEcho,
+                relay,
+                ...watchField,
+              });
+            }
+            // Strict mode only gates acceptance on the request relay. Target reply waiting,
+            // mirrored reply turns, and announcement delivery remain fire-and-forget.
+            void startedFlow.completion;
+          } else {
+            void startA2AFlow(
+              undefined,
+              start.activeRunQueue ? undefined : runId,
+              a2aSessionKey,
+              a2aDisplayKey,
+              true,
+            );
+          }
         }
         return jsonResult({
           runId,
           status: "accepted",
           sessionKey: displayKey,
+          resolvedTarget: resolvedTargetDisplay,
           delivery,
+          ingressEcho,
+          relay,
           ...watchField,
         });
       }
@@ -740,12 +1250,43 @@ export function createSessionsSendTool(opts?: {
         sendParams,
         sessionKey: displayKey,
         deliveryTimeoutMs: announceTimeoutMs,
+        extraResult: {
+          resolvedTarget: resolvedTargetDisplay,
+          ingressEcho,
+        },
       });
       if (!start.ok) {
         return start.result;
       }
       runId = start.runId;
       const watchField = registerWatchIfRequested(resolvedKey);
+      const requiresRelayDelivery =
+        !skipA2AFlow && relayPolicy.enabled && relayPolicy.requireDelivery;
+      let requiredA2AFlow: Awaited<ReturnType<typeof startSessionsSendA2AFlow>> | undefined;
+      if (requiresRelayDelivery) {
+        const effectiveFlowParams = await resolveA2AFlowParams(resolvedKey, displayKey);
+        requiredA2AFlow = await startSessionsSendA2AFlow({
+          ...effectiveFlowParams,
+          runContextId: runId,
+          baseline: baselineReply,
+          waitRunId: runId,
+          notifyRequesterOnWaitFailure: false,
+        });
+        if (requiredA2AFlow.relay.status !== "sent") {
+          return jsonResult({
+            runId,
+            status: "error",
+            error: "Required relay delivery failed.",
+            sentBeforeError: true,
+            sessionKey: displayKey,
+            resolvedTarget: resolvedTargetDisplay,
+            delivery,
+            ingressEcho,
+            relay: requiredA2AFlow.relay,
+            ...watchField,
+          });
+        }
+      }
       const result = await waitForAgentRunAndReadUpdatedAssistantReply({
         runId,
         sessionKey: resolvedKey,
@@ -757,7 +1298,9 @@ export function createSessionsSendTool(opts?: {
 
       if (result.status === "timeout") {
         if (isPendingErrorAgentWaitTimeout(result)) {
-          startA2AFlow(undefined, runId);
+          if (!requiresRelayDelivery) {
+            void startA2AFlow(undefined, runId);
+          }
           return jsonResult({
             runId,
             status: "timeout",
@@ -765,16 +1308,32 @@ export function createSessionsSendTool(opts?: {
             sentBeforeError: true,
             sessionKey: displayKey,
             delivery,
+            relay: requiredA2AFlow?.relay,
             ...watchField,
           });
         }
         if (!isTerminalAgentWaitTimeout(result)) {
-          startA2AFlow(undefined, runId, resolvedKey, displayKey, true);
+          if (requiresRelayDelivery) {
+            return jsonResult({
+              runId,
+              status: "accepted",
+              sessionKey: displayKey,
+              resolvedTarget: resolvedTargetDisplay,
+              delivery,
+              ingressEcho,
+              relay: requiredA2AFlow?.relay,
+              ...watchField,
+            });
+          }
+          void startA2AFlow(undefined, runId, resolvedKey, displayKey, true);
           return jsonResult({
             runId,
             status: "accepted",
             sessionKey: displayKey,
+            resolvedTarget: resolvedTargetDisplay,
             delivery,
+            ingressEcho,
+            relay: defaultRelay,
             ...watchField,
           });
         }
@@ -784,6 +1343,9 @@ export function createSessionsSendTool(opts?: {
           error: result.error,
           sentBeforeError: true,
           sessionKey: displayKey,
+          resolvedTarget: resolvedTargetDisplay,
+          ingressEcho,
+          relay: requiredA2AFlow?.relay,
           ...watchField,
         });
       }
@@ -794,18 +1356,54 @@ export function createSessionsSendTool(opts?: {
           error: result.error ?? "agent error",
           sentBeforeError: true,
           sessionKey: displayKey,
+          resolvedTarget: resolvedTargetDisplay,
+          ingressEcho,
+          relay: requiredA2AFlow?.relay,
           ...watchField,
         });
       }
       const reply = result.replyText;
-      startA2AFlow(reply ?? undefined);
+      if (!requiresRelayDelivery) {
+        void startA2AFlow(reply ?? undefined);
+        return jsonResult({
+          runId,
+          status: "ok",
+          reply,
+          sessionKey: displayKey,
+          resolvedTarget: resolvedTargetDisplay,
+          delivery,
+          ingressEcho,
+          relay: effectiveDefaultRelay,
+          ...watchField,
+        });
+      }
+
+      const completedA2AFlow = await requiredA2AFlow?.completion;
+      const relay = completedA2AFlow?.relay ?? requiredA2AFlow?.relay ?? effectiveDefaultRelay;
+      if (relay.status !== "sent") {
+        return jsonResult({
+          runId,
+          status: "error",
+          error: "Required relay delivery failed.",
+          reply,
+          sessionKey: displayKey,
+          resolvedTarget: resolvedTargetDisplay,
+          delivery,
+          ingressEcho,
+          relay,
+          ...watchField,
+        });
+      }
 
       return jsonResult({
         runId,
         status: "ok",
         reply,
         sessionKey: displayKey,
+        resolvedTarget: resolvedTargetDisplay,
         delivery,
+        ingressEcho,
+        relay,
         ...watchField,
       });
     },

@@ -1613,6 +1613,20 @@ describe("tryDispatchAcpReply", () => {
     expect(runTurnCall().text).toBe("test");
   });
 
+  it("allows normalized wildcard runtime toolsAllow through ACP dispatch", async () => {
+    setReadyAcpResolution();
+    const { dispatcher } = createDispatcher();
+
+    await runDispatch({
+      bodyForAgent: "test",
+      dispatcher,
+      toolsAllow: ["message", " * "],
+    });
+
+    expect(managerMocks.runTurn).toHaveBeenCalledOnce();
+    expect(runTurnCall().text).toBe("test");
+  });
+
   it("does not unbind stale bindings when ACP dispatch is disabled by policy", async () => {
     managerMocks.resolveSession.mockReturnValue({
       kind: "stale",

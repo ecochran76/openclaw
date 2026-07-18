@@ -52,9 +52,11 @@ import {
   resolveEffectiveSessionToolsVisibility,
   resolveInternalSessionKey,
   resolveSandboxedSessionToolContext,
+  type SessionAccessResult,
   type SessionListRow,
   type SessionRunStatus,
 } from "./sessions-helpers.js";
+import { buildPendingSessionApprovalOutput } from "./sessions-pending-approvals.js";
 
 const SessionsListToolSchema = Type.Object({
   kinds: Type.Optional(Type.Array(Type.String())),
@@ -81,6 +83,17 @@ function readSessionRunStatus(value: unknown): SessionRunStatus | undefined {
     value === "timeout"
     ? value
     : undefined;
+}
+
+function normalizeThreadId(value: unknown): string | undefined {
+  if (typeof value === "number" && Number.isFinite(value)) {
+    return String(Math.trunc(value));
+  }
+  if (typeof value === "string") {
+    const trimmed = value.trim();
+    return trimmed || undefined;
+  }
+  return undefined;
 }
 
 /** Creates the sessions-list tool with gateway-backed listing and local transcript enrichment. */
@@ -125,6 +138,7 @@ export function createSessionsListTool(opts?: {
       const messageLimit = Math.min(messageLimitRaw, 20);
       const label = readStringParam(params, "label");
       const agentId = readStringParam(params, "agentId");
+      const requestedAgentId = normalizeOptionalLowercaseString(agentId);
       const search = readStringParam(params, "search");
       const archived = params.archived === true;
       const includeDerivedTitles = params.includeDerivedTitles === true;
@@ -132,6 +146,45 @@ export function createSessionsListTool(opts?: {
       const gatewayCall = opts?.callGateway ?? callGateway;
       const a2aPolicy = createAgentToAgentPolicy(cfg);
       const hydrateTranscriptFieldsAfterFiltering = includeDerivedTitles || includeLastMessage;
+      const visibilityGuard = createSessionVisibilityRowChecker({
+        action: "list",
+        requesterSessionKey: effectiveRequesterKey,
+        visibility,
+        a2aPolicy,
+      });
+      const buildDeniedResult = async (
+        access: Extract<SessionAccessResult, { allowed: false }>,
+      ) => {
+        const approvalOutput = access.permissionRequest
+          ? await buildPendingSessionApprovalOutput({
+              permissionRequest: access.permissionRequest,
+              requesterSessionKey: opts?.agentSessionKey,
+              originalToolName: "sessions_list",
+              originalArgs: params,
+            })
+          : {};
+        return jsonResult({
+          status: access.status,
+          error: access.error,
+          ...(access.permissionRequest ? { permissionRequest: access.permissionRequest } : {}),
+          ...approvalOutput,
+        });
+      };
+
+      const requesterAgentId = normalizeOptionalLowercaseString(
+        resolveAgentIdFromSessionKey(effectiveRequesterKey),
+      );
+      if (requestedAgentId && requestedAgentId !== requesterAgentId) {
+        // An explicit cross-agent filter must pass policy before it reaches the gateway;
+        // otherwise empty and denied listings expose whether the hidden agent has rows.
+        const access = visibilityGuard.check({
+          key: `agent:${requestedAgentId}:main`,
+          agentId: requestedAgentId,
+        });
+        if (!access.allowed) {
+          return await buildDeniedResult(access);
+        }
+      }
 
       const list = await gatewayCall<{ sessions: Array<SessionListRow>; path: string }>({
         method: "sessions.list",
@@ -167,12 +220,6 @@ export function createSessionsListTool(opts?: {
         ),
       );
       const storePath = typeof list?.path === "string" ? list.path : undefined;
-      const visibilityGuard = createSessionVisibilityRowChecker({
-        action: "list",
-        requesterSessionKey: effectiveRequesterKey,
-        visibility,
-        a2aPolicy,
-      });
       const rows: SessionListRow[] = [];
       const historyTargets: Array<{ row: SessionListRow; resolvedKey: string }> = [];
       const titleTargets: Array<{
@@ -204,7 +251,15 @@ export function createSessionsListTool(opts?: {
             typeof entry.parentSessionKey === "string" ? entry.parentSessionKey : undefined,
         });
         if (!access.allowed) {
-          continue;
+          if (
+            !access.permissionRequest ||
+            !requestedAgentId ||
+            normalizeOptionalLowercaseString(access.permissionRequest.targetAgentId) !==
+              requestedAgentId
+          ) {
+            continue;
+          }
+          return await buildDeniedResult(access);
         }
 
         // Gateway listings include pseudo/global rows for UI callers. The tool only exposes real
@@ -239,12 +294,7 @@ export function createSessionsListTool(opts?: {
         const deliveryChannel = readStringValue(deliveryContext?.channel);
         const deliveryTo = readStringValue(deliveryContext?.to);
         const deliveryAccountId = readStringValue(deliveryContext?.accountId);
-        const deliveryThreadId =
-          typeof deliveryContext?.threadId === "string" ||
-          (typeof deliveryContext?.threadId === "number" &&
-            Number.isFinite(deliveryContext.threadId))
-            ? deliveryContext.threadId
-            : undefined;
+        const deliveryThreadId = normalizeThreadId(deliveryContext?.threadId);
         const lastChannel = deliveryChannel ?? readStringValue(entry.lastChannel);
         const lastAccountId = deliveryAccountId ?? readStringValue(entry.lastAccountId);
         const derivedChannel = deriveChannel({

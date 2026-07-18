@@ -1,5 +1,6 @@
 // Tracks session metadata mutations made by command handlers during a turn.
 import { normalizeOptionalString } from "@openclaw/normalization-core/string-coerce";
+import { resolveGlobalSingleton } from "../../shared/global-singleton.js";
 import type { HandleCommandsParams } from "./commands-types.js";
 
 export type CommandSessionMetadataChange = {
@@ -8,10 +9,54 @@ export type CommandSessionMetadataChange = {
   reason: "command-metadata";
 };
 
-const commandSessionMetadataChanges = new WeakMap<object, CommandSessionMetadataChange[]>();
+// Commands and reply dispatch can be loaded in separate runtime chunks. One
+// process-wide WeakMap makes a consumed change disappear for every module copy.
+const commandSessionMetadataChanges = resolveGlobalSingleton(
+  Symbol.for("openclaw.commandSessionMetadataChanges.store"),
+  () => new WeakMap<object, CommandSessionMetadataChange[]>(),
+);
+const commandSessionMetadataChangesKey: unique symbol = Symbol.for(
+  "openclaw.commandSessionMetadataChanges",
+);
+
+type CommandSessionMetadataTarget = {
+  [commandSessionMetadataChangesKey]?: CommandSessionMetadataChange[];
+};
+
+function readSymbolChanges(target: object): CommandSessionMetadataChange[] | undefined {
+  try {
+    return (target as CommandSessionMetadataTarget)[commandSessionMetadataChangesKey];
+  } catch {
+    return undefined;
+  }
+}
+
+function attachSymbolChanges(target: object, changes: CommandSessionMetadataChange[]): void {
+  try {
+    if (!Object.isExtensible(target)) {
+      return;
+    }
+    Object.defineProperty(target, commandSessionMetadataChangesKey, {
+      configurable: true,
+      value: changes,
+    });
+  } catch {
+    // The WeakMap remains authoritative when a proxy rejects reflection or writes.
+  }
+}
+
+function deleteSymbolChanges(target: object): void {
+  try {
+    delete (target as CommandSessionMetadataTarget)[commandSessionMetadataChangesKey];
+  } catch {
+    // Consuming the authoritative WeakMap entry must not fail on frozen or proxy targets.
+  }
+}
 
 function addChange(target: object, change: CommandSessionMetadataChange): void {
-  const changes = commandSessionMetadataChanges.get(target) ?? [];
+  const changes = [
+    ...(commandSessionMetadataChanges.get(target) ?? readSymbolChanges(target) ?? []),
+  ];
   if (
     !changes.some(
       (candidate) =>
@@ -23,6 +68,7 @@ function addChange(target: object, change: CommandSessionMetadataChange): void {
     changes.push(change);
   }
   commandSessionMetadataChanges.set(target, changes);
+  attachSymbolChanges(target, changes);
 }
 
 export function markCommandSessionMetadataChanged(
@@ -52,8 +98,9 @@ export function markCommandSessionMetadataChanged(
 export function takeCommandSessionMetadataChanges(
   target: object,
 ): CommandSessionMetadataChange[] | undefined {
-  const changes = commandSessionMetadataChanges.get(target);
+  const changes = commandSessionMetadataChanges.get(target) ?? readSymbolChanges(target);
   commandSessionMetadataChanges.delete(target);
+  deleteSymbolChanges(target);
   return changes && changes.length > 0 ? changes : undefined;
 }
 

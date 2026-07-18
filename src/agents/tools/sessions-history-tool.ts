@@ -35,6 +35,7 @@ import {
   resolveSandboxedSessionToolContext,
   resolveVisibleSessionReference,
 } from "./sessions-helpers.js";
+import { buildPendingSessionApprovalOutput } from "./sessions-pending-approvals.js";
 
 const SessionsHistoryToolSchema = Type.Object({
   sessionKey: Type.String(),
@@ -409,9 +410,22 @@ export function createSessionsHistoryTool(opts?: {
       });
       const access = visibilityGuard.check(resolvedKey);
       if (!access.allowed) {
+        const redactResolvedTarget = resolvedSession.resolvedViaSessionId;
+        const approvalOutput = redactResolvedTarget
+          ? undefined
+          : await buildPendingSessionApprovalOutput({
+              permissionRequest: access.permissionRequest,
+              requesterSessionKey: opts?.agentSessionKey,
+              originalToolName: "sessions_history",
+              originalArgs: params,
+            });
         return jsonResult({
           status: access.status,
-          error: access.error,
+          error: redactResolvedTarget ? "sessions_history access denied." : access.error,
+          ...(!redactResolvedTarget && access.permissionRequest
+            ? { permissionRequest: access.permissionRequest }
+            : {}),
+          ...(approvalOutput ?? {}),
         });
       }
 

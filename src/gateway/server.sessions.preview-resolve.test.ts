@@ -4,10 +4,12 @@
 import path from "node:path";
 import { expect, test } from "vitest";
 import { clearSessionStoreCacheForTest } from "../config/sessions.js";
+import { resolveStorePath } from "../config/sessions/paths.js";
 import {
   applySessionEntryLifecycleMutation,
   listSessionEntries,
   loadSessionEntry,
+  updateSessionLastRoute,
 } from "../config/sessions/session-accessor.js";
 import type { SessionEntry } from "../config/sessions/types.js";
 import { createToolSummaryPreviewTranscriptLines } from "./session-preview.test-helpers.js";
@@ -319,4 +321,195 @@ test("sessions.resolve by key respects spawnedBy visibility filters", async () =
   expect(resolved.error?.message).toContain(
     "No session found: agent:main:subagent:shared-child-key-filter",
   );
+});
+
+test("sessions.resolve supports delivery-target, thread-policy, and search selectors", async () => {
+  await createSessionStoreDir();
+  testState.agentsConfig = { list: [{ id: "dev-openclaw", default: true }] };
+  const now = Date.now();
+  const rootKey = "agent:dev-openclaw:slack:channel:c0ag96mgjtv";
+  const threadOldKey = "agent:dev-openclaw:slack:channel:c0ag96mgjtv:thread:1773000000.111111";
+  const threadNewKey = "agent:dev-openclaw:slack:channel:c0ag96mgjtv:thread:1773000000.222222";
+  const rootOnlyKey = "agent:dev-openclaw:slack:channel:c0onlyroot";
+
+  await writeSessionStore({
+    entries: {
+      [rootKey]: {
+        sessionId: "sess-root",
+        updatedAt: now - 40_000,
+        deliveryContext: {
+          channel: "slack",
+          to: "channel:C0AG96MGJTV",
+        },
+      },
+      [threadOldKey]: {
+        sessionId: "sess-thread-old",
+        updatedAt: now - 20_000,
+        deliveryContext: {
+          channel: "slack",
+          to: "channel:C0AG96MGJTV",
+          threadId: "1773000000.111111",
+        },
+      },
+      [threadNewKey]: {
+        sessionId: "sess-thread-new",
+        updatedAt: now - 10_000,
+        deliveryContext: {
+          channel: "slack",
+          to: "channel:C0AG96MGJTV",
+          threadId: "1773000000.222222",
+        },
+      },
+      [rootOnlyKey]: {
+        sessionId: "sess-root-only",
+        updatedAt: now - 5_000,
+        deliveryContext: {
+          channel: "slack",
+          to: "channel:C0ONLYROOT",
+        },
+      },
+    },
+  });
+
+  await Promise.all([
+    seedSessionTranscript({
+      agentId: "dev-openclaw",
+      sessionId: "sess-root",
+      sessionKey: rootKey,
+      storePath: testState.sessionStorePath,
+      messages: [{ role: "user", content: "a2a feature dev root kickoff" }],
+    }),
+    seedSessionTranscript({
+      agentId: "dev-openclaw",
+      sessionId: "sess-thread-old",
+      sessionKey: threadOldKey,
+      storePath: testState.sessionStorePath,
+      messages: [{ role: "user", content: "a2a feature dev thread old" }],
+    }),
+    seedSessionTranscript({
+      agentId: "dev-openclaw",
+      sessionId: "sess-thread-new",
+      sessionKey: threadNewKey,
+      storePath: testState.sessionStorePath,
+      messages: [{ role: "user", content: "a2a feature dev thread new" }],
+    }),
+    seedSessionTranscript({
+      agentId: "dev-openclaw",
+      sessionId: "sess-root-only",
+      sessionKey: rootOnlyKey,
+      storePath: testState.sessionStorePath,
+      messages: [{ role: "user", content: "root only fallback target" }],
+    }),
+  ]);
+
+  const devStorePath = resolveStorePath(undefined, { agentId: "dev-openclaw" });
+  await Promise.all([
+    updateSessionLastRoute({
+      storePath: devStorePath,
+      sessionKey: rootKey,
+      deliveryContext: { channel: "slack", to: "channel:C0AG96MGJTV" },
+    }),
+    updateSessionLastRoute({
+      storePath: devStorePath,
+      sessionKey: threadOldKey,
+      deliveryContext: {
+        channel: "slack",
+        to: "channel:C0AG96MGJTV",
+        threadId: "1773000000.111111",
+      },
+    }),
+    updateSessionLastRoute({
+      storePath: devStorePath,
+      sessionKey: threadNewKey,
+      deliveryContext: {
+        channel: "slack",
+        to: "channel:C0AG96MGJTV",
+        threadId: "1773000000.222222",
+      },
+    }),
+    updateSessionLastRoute({
+      storePath: devStorePath,
+      sessionKey: rootOnlyKey,
+      deliveryContext: { channel: "slack", to: "channel:C0ONLYROOT" },
+    }),
+  ]);
+
+  const { ws } = await openClient();
+
+  const resolvedMostRecentThread = await rpcReq<{
+    ok: true;
+    key: string;
+    deliveryContext?: { channel?: string; to?: string; threadId?: string };
+    resolution?: { matchedBy?: string; threadPolicy?: string; fallbackUsed?: boolean };
+  }>(ws, "sessions.resolve", {
+    channel: "slack",
+    to: "channel:C0AG96MGJTV",
+    threadPolicy: "most-recent",
+    includeGlobal: false,
+    includeUnknown: false,
+  });
+  expect(resolvedMostRecentThread.ok).toBe(true);
+  expect(resolvedMostRecentThread.payload?.key).toBe(threadNewKey);
+  expect(resolvedMostRecentThread.payload?.deliveryContext).toEqual({
+    channel: "slack",
+    to: "channel:C0AG96MGJTV",
+    threadId: "1773000000.222222",
+  });
+  expect(resolvedMostRecentThread.payload?.resolution).toMatchObject({
+    matchedBy: "delivery-target",
+    threadPolicy: "most-recent",
+  });
+
+  const resolvedBySearch = await rpcReq<{
+    ok: true;
+    key: string;
+    resolution?: { matchedBy?: string; threadPolicy?: string; selection?: string };
+  }>(ws, "sessions.resolve", {
+    agentId: "dev-openclaw",
+    search: "a2a feature dev",
+    searchFields: ["derivedTitle"],
+    selection: "most-recent",
+    threadPolicy: "prefer-thread",
+    includeGlobal: false,
+    includeUnknown: false,
+  });
+  expect(resolvedBySearch.ok).toBe(true);
+  expect(resolvedBySearch.payload?.key).toBe(threadNewKey);
+  expect(resolvedBySearch.payload?.resolution).toMatchObject({
+    matchedBy: "search",
+    threadPolicy: "prefer-thread",
+    selection: "most-recent",
+  });
+
+  const resolvedWithFallback = await rpcReq<{
+    ok: true;
+    key: string;
+    resolution?: { fallbackUsed?: boolean; threadPolicy?: string };
+  }>(ws, "sessions.resolve", {
+    channel: "slack",
+    to: "channel:C0ONLYROOT",
+    threadPolicy: "most-recent",
+    allowChannelRootFallback: true,
+    includeGlobal: false,
+    includeUnknown: false,
+  });
+  expect(resolvedWithFallback.ok).toBe(true);
+  expect(resolvedWithFallback.payload?.key).toBe(rootOnlyKey);
+  expect(resolvedWithFallback.payload?.resolution).toMatchObject({
+    threadPolicy: "most-recent",
+    fallbackUsed: true,
+  });
+
+  const ambiguous = await rpcReq(ws, "sessions.resolve", {
+    agentId: "dev-openclaw",
+    search: "a2a feature dev",
+    searchFields: ["derivedTitle"],
+    threadPolicy: "prefer-thread",
+    includeGlobal: false,
+    includeUnknown: false,
+  });
+  expect(ambiguous.ok).toBe(false);
+  expect(ambiguous.error?.message ?? "").toMatch(/Multiple sessions matched selector filters/i);
+
+  ws.close();
 });

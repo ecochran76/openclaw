@@ -25,7 +25,11 @@ vi.mock("../config/config.js", () => ({
     session: {
       mainKey: "main",
       scope: "per-sender",
-      agentToAgent: { maxPingPongTurns: 2 },
+      agentToAgent: {
+        maxPingPongTurns: 2,
+        // Nested-guard behavior has dedicated coverage in sessions.test.ts.
+        guard: { allowNestedSessionsSend: true },
+      },
     },
     tools: {
       // Keep sessions tools permissive in this suite; dedicated visibility tests cover defaults.
@@ -47,14 +51,17 @@ import { createSessionsHistoryTool } from "./tools/sessions-history-tool.js";
 import { createSessionsListTool } from "./tools/sessions-list-tool.js";
 import { testing as sessionsResolutionTesting } from "./tools/sessions-resolution.js";
 import { createSessionsSearchTool } from "./tools/sessions-search-tool.js";
-import { testing as sessionsSendA2ATesting } from "./tools/sessions-send-tool.a2a.js";
+import { __testing as sessionsSendA2ATesting } from "./tools/sessions-send-tool.a2a.js";
 import { createSessionsSendTool } from "./tools/sessions-send-tool.js";
 
 const TEST_CONFIG = {
   session: {
     mainKey: "main",
     scope: "per-sender",
-    agentToAgent: { maxPingPongTurns: 2 },
+    agentToAgent: {
+      maxPingPongTurns: 2,
+      guard: { allowNestedSessionsSend: true },
+    },
   },
   tools: {
     sessions: { visibility: "all" },
@@ -1302,6 +1309,56 @@ describe("sessions tools", () => {
     expect(request.params?.sessionKey).toBe(targetKey);
   });
 
+  it("sessions_send does not expose selector resolution metadata before authorization", async () => {
+    const resolvedKey = "agent:other:slack:channel:C-secret";
+    callGatewayMock.mockImplementation(async (opts: unknown) => {
+      const request = opts as { method?: string };
+      if (request.method === "sessions.resolve") {
+        return {
+          key: resolvedKey,
+          agentId: "other",
+          deliveryContext: {
+            channel: "slack",
+            to: "channel:C-secret",
+            accountId: "private-account",
+            threadId: "private-thread",
+          },
+          resolution: { matchedBy: "search" },
+        };
+      }
+      return {};
+    });
+
+    const tool = createOpenClawTools({
+      agentSessionKey: "agent:main:main",
+      agentChannel: "slack",
+      config: {
+        ...TEST_CONFIG,
+        tools: {
+          sessions: { visibility: "self" },
+          agentToAgent: { enabled: true },
+        },
+      } as OpenClawConfig,
+    }).find((candidate) => candidate.name === "sessions_send");
+    if (!tool) {
+      throw new Error("missing sessions_send tool");
+    }
+
+    const result = await tool.execute("call-forbidden-selector", {
+      channel: "slack",
+      search: "private work",
+      message: "ping",
+    });
+    const details = result.details as Record<string, unknown>;
+    expect(details.status).toBe("forbidden");
+    expect(details.sessionKey).toBeUndefined();
+    expect(details.resolvedTarget).toBeUndefined();
+    expect(JSON.stringify(details)).not.toContain(resolvedKey);
+    expect(JSON.stringify(details)).not.toContain("C-secret");
+    expect(JSON.stringify(details)).not.toContain("private-account");
+    expect(JSON.stringify(details)).not.toContain("private-thread");
+  });
+
   it("sessions_send runs ping-pong then announces", async () => {
     const calls: Array<{ method?: string; params?: unknown }> = [];
     let agentCallCount = 0;
@@ -1486,7 +1543,10 @@ describe("sessions tools", () => {
         ...TEST_CONFIG,
         session: {
           ...TEST_CONFIG.session,
-          agentToAgent: { maxPingPongTurns: 1 },
+          agentToAgent: {
+            maxPingPongTurns: 1,
+            guard: { allowNestedSessionsSend: true },
+          },
         },
       },
     }).find((candidate) => candidate.name === "sessions_send");
@@ -1575,7 +1635,10 @@ describe("sessions tools", () => {
         ...TEST_CONFIG,
         session: {
           ...TEST_CONFIG.session,
-          agentToAgent: { maxPingPongTurns: 0 },
+          agentToAgent: {
+            maxPingPongTurns: 0,
+            guard: { allowNestedSessionsSend: true },
+          },
         },
       },
     }).find((candidate) => candidate.name === "sessions_send");
@@ -1639,7 +1702,10 @@ describe("sessions tools", () => {
         ...TEST_CONFIG,
         session: {
           ...TEST_CONFIG.session,
-          agentToAgent: { maxPingPongTurns: 0 },
+          agentToAgent: {
+            maxPingPongTurns: 0,
+            guard: { allowNestedSessionsSend: true },
+          },
         },
       },
     }).find((candidate) => candidate.name === "sessions_send");
@@ -1695,7 +1761,10 @@ describe("sessions tools", () => {
         ...TEST_CONFIG,
         session: {
           ...TEST_CONFIG.session,
-          agentToAgent: { maxPingPongTurns: 0 },
+          agentToAgent: {
+            maxPingPongTurns: 0,
+            guard: { allowNestedSessionsSend: true },
+          },
         },
       },
     }).find((candidate) => candidate.name === "sessions_send");
@@ -1772,7 +1841,10 @@ describe("sessions tools", () => {
         ...TEST_CONFIG,
         session: {
           ...TEST_CONFIG.session,
-          agentToAgent: { maxPingPongTurns: 0 },
+          agentToAgent: {
+            maxPingPongTurns: 0,
+            guard: { allowNestedSessionsSend: true },
+          },
         },
       },
     }).find((candidate) => candidate.name === "sessions_send");
@@ -1850,7 +1922,10 @@ describe("sessions tools", () => {
         ...TEST_CONFIG,
         session: {
           ...TEST_CONFIG.session,
-          agentToAgent: { maxPingPongTurns: 0 },
+          agentToAgent: {
+            maxPingPongTurns: 0,
+            guard: { allowNestedSessionsSend: true },
+          },
         },
       },
     }).find((candidate) => candidate.name === "sessions_send");

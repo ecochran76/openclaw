@@ -137,6 +137,7 @@ describe("resolveSourceReplyDeliveryMode", () => {
           Provider: "webchat",
           Surface: "webchat",
         },
+        defaultVisibleReplies: "message_tool",
       }),
     ).toBe("automatic");
   });
@@ -204,7 +205,7 @@ describe("resolveSourceReplyDeliveryMode", () => {
     ).toBe("automatic");
   });
 
-  it("treats native and authorized text commands as explicit replies in groups", () => {
+  it("treats native and text commands as explicit replies in groups", () => {
     expect(
       resolveSourceReplyDeliveryMode({
         cfg: emptyConfig,
@@ -371,9 +372,39 @@ describe("resolveSourceReplyDeliveryMode", () => {
       }),
     ).toBe("message_tool_only");
   });
+
+  it("treats text commands as explicit replies in groups", () => {
+    expect(
+      resolveSourceReplyDeliveryMode({
+        cfg: emptyConfig,
+        ctx: { ChatType: "group", CommandSource: "text" },
+      }),
+    ).toBe("automatic");
+  });
 });
 
 describe("resolveSourceReplyVisibilityPolicy", () => {
+  it("keeps internal WebChat turns automatic ahead of a message-tool harness default", () => {
+    expectPolicyFields(
+      resolveSourceReplyVisibilityPolicy({
+        cfg: emptyConfig,
+        ctx: {
+          ChatType: "direct",
+          Provider: "webchat",
+          Surface: "webchat",
+        },
+        sendPolicy: "allow",
+        defaultVisibleReplies: "message_tool",
+      }),
+      {
+        sourceReplyDeliveryMode: "automatic",
+        sessionStableSourceReplyDeliveryMode: "automatic",
+        suppressAutomaticSourceDelivery: false,
+        suppressDelivery: false,
+      },
+    );
+  });
+
   it("allows direct automatic delivery without suppressing typing", () => {
     expectPolicyFields(
       resolveSourceReplyVisibilityPolicy({
@@ -482,6 +513,22 @@ describe("resolveSourceReplyVisibilityPolicy", () => {
         },
       );
     }
+  });
+
+  it("keeps text command replies visible in groups", () => {
+    expect(
+      resolveSourceReplyVisibilityPolicy({
+        cfg: emptyConfig,
+        ctx: { ChatType: "group", CommandSource: "text" },
+        sendPolicy: "allow",
+      }),
+    ).toMatchObject({
+      sourceReplyDeliveryMode: "automatic",
+      suppressAutomaticSourceDelivery: false,
+      suppressDelivery: false,
+      suppressHookReplyLifecycle: false,
+      suppressTyping: false,
+    });
   });
 
   it("keeps configured automatic group delivery visible", () => {

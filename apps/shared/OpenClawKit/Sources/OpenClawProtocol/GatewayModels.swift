@@ -3216,6 +3216,16 @@ public struct SessionsResolveParams: Codable, Sendable {
     public let includeglobal: Bool?
     public let includeunknown: Bool?
     public let allowmissing: Bool?
+    public let channel: String?
+    public let to: String?
+    public let accountid: String?
+    public let threadid: String?
+    public let threadpolicy: AnyCodable?
+    public let allowchannelrootfallback: Bool?
+    public let activeminutes: Int?
+    public let search: String?
+    public let searchfields: [AnyCodable]?
+    public let selection: AnyCodable?
 
     public init(
         key: String? = nil,
@@ -3225,7 +3235,17 @@ public struct SessionsResolveParams: Codable, Sendable {
         spawnedby: String? = nil,
         includeglobal: Bool? = nil,
         includeunknown: Bool? = nil,
-        allowmissing: Bool? = nil)
+        allowmissing: Bool? = nil,
+        channel: String? = nil,
+        to: String? = nil,
+        accountid: String? = nil,
+        threadid: String? = nil,
+        threadpolicy: AnyCodable? = nil,
+        allowchannelrootfallback: Bool? = nil,
+        activeminutes: Int? = nil,
+        search: String? = nil,
+        searchfields: [AnyCodable]? = nil,
+        selection: AnyCodable? = nil)
     {
         self.key = key
         self.sessionid = sessionid
@@ -3235,6 +3255,16 @@ public struct SessionsResolveParams: Codable, Sendable {
         self.includeglobal = includeglobal
         self.includeunknown = includeunknown
         self.allowmissing = allowmissing
+        self.channel = channel
+        self.to = to
+        self.accountid = accountid
+        self.threadid = threadid
+        self.threadpolicy = threadpolicy
+        self.allowchannelrootfallback = allowchannelrootfallback
+        self.activeminutes = activeminutes
+        self.search = search
+        self.searchfields = searchfields
+        self.selection = selection
     }
 
     private enum CodingKeys: String, CodingKey {
@@ -3246,6 +3276,16 @@ public struct SessionsResolveParams: Codable, Sendable {
         case includeglobal = "includeGlobal"
         case includeunknown = "includeUnknown"
         case allowmissing = "allowMissing"
+        case channel
+        case to
+        case accountid = "accountId"
+        case threadid = "threadId"
+        case threadpolicy = "threadPolicy"
+        case allowchannelrootfallback = "allowChannelRootFallback"
+        case activeminutes = "activeMinutes"
+        case search
+        case searchfields = "searchFields"
+        case selection
     }
 }
 

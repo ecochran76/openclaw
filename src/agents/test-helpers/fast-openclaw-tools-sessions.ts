@@ -53,6 +53,11 @@ vi.mock("../tools/update-plan-tool.js", () => ({
 
 vi.mock("../../channels/plugins/index.js", () => ({
   getChannelPlugin: () => null,
+  getLoadedChannelPlugin: () => ({
+    conversationBindings: {
+      defaultTopLevelPlacement: "child",
+    },
+  }),
   normalizeChannelId: (channel?: string) => normalizeOptionalLowercaseString(channel),
   listChannelPlugins: () => [],
 }));

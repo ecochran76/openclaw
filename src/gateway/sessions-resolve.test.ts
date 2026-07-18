@@ -215,6 +215,263 @@ describe("resolveSessionKeyFromResolveParams", () => {
     });
   });
 
+  it("resolves agentId-only selectors to the most recent deliverable channel root", async () => {
+    const targetKey = "agent:crm:slack:channel:c09rasaadde";
+    hoisted.listAgentIdsMock.mockReturnValue(["main", "crm"]);
+    hoisted.loadCombinedSessionStoreForGatewayMock.mockReturnValue({
+      storePath,
+      store: {
+        [targetKey]: { sessionId: "sess-crm-root", updatedAt: 10 },
+        "agent:crm:monitor-dispatch:latest": {
+          sessionId: "sess-crm-monitor",
+          updatedAt: 30,
+        },
+      },
+    });
+    hoisted.listSessionsFromStoreMock.mockReturnValue({
+      sessions: [
+        {
+          key: "agent:crm:monitor-dispatch:latest",
+          sessionId: "sess-crm-monitor",
+          updatedAt: 30,
+        },
+        {
+          key: targetKey,
+          sessionId: "sess-crm-root",
+          updatedAt: 10,
+          deliveryContext: {
+            channel: "slack",
+            to: "channel:C09RASAADDE",
+            accountId: "soylei",
+          },
+        },
+      ],
+    });
+
+    const result = await resolveSessionKeyFromResolveParams({
+      cfg: { agents: { list: [{ id: "main" }, { id: "crm" }] } },
+      p: { agentId: "crm" },
+    });
+    expect(result).toMatchObject({
+      ok: true,
+      key: targetKey,
+      agentId: "crm",
+      deliveryContext: {
+        channel: "slack",
+        to: "channel:C09RASAADDE",
+        accountId: "soylei",
+      },
+      resolution: {
+        matchedBy: "selector",
+        selection: "most-recent",
+      },
+    });
+    expect(hoisted.listSessionsFromStoreMock).toHaveBeenCalledWith({
+      cfg: { agents: { list: [{ id: "main" }, { id: "crm" }] } },
+      storePath,
+      store: expect.any(Object),
+      opts: expect.objectContaining({
+        agentId: "crm",
+      }),
+    });
+  });
+
+  it.each([
+    ["most-recent", "agent:crm:slack:channel:newer"],
+    ["least-recent", "agent:crm:slack:channel:older"],
+  ] as const)("applies %s ordering to an agentId-only selector", async (selection, expectedKey) => {
+    const olderKey = "agent:crm:slack:channel:older";
+    const newerKey = "agent:crm:slack:channel:newer";
+    hoisted.listAgentIdsMock.mockReturnValue(["main", "crm"]);
+    hoisted.loadCombinedSessionStoreForGatewayMock.mockReturnValue({
+      storePath,
+      store: {
+        [olderKey]: { sessionId: "sess-crm-older", updatedAt: 10 },
+        [newerKey]: { sessionId: "sess-crm-newer", updatedAt: 20 },
+      },
+    });
+    hoisted.listSessionsFromStoreMock.mockReturnValue({
+      sessions: [
+        {
+          key: newerKey,
+          sessionId: "sess-crm-newer",
+          updatedAt: 20,
+          deliveryContext: { channel: "slack", to: "channel:NEWER" },
+        },
+        {
+          key: olderKey,
+          sessionId: "sess-crm-older",
+          updatedAt: 10,
+          deliveryContext: { channel: "slack", to: "channel:OLDER" },
+        },
+      ],
+    });
+
+    await expect(
+      resolveSessionKeyFromResolveParams({
+        cfg: { agents: { list: [{ id: "main" }, { id: "crm" }] } },
+        p: { agentId: "crm", selection },
+      }),
+    ).resolves.toMatchObject({
+      ok: true,
+      key: expectedKey,
+      agentId: "crm",
+      resolution: {
+        matchedBy: "selector",
+        selection,
+      },
+    });
+  });
+
+  it("rejects contradictory most-recent thread policy and least-recent selection", async () => {
+    const result = await resolveSessionKeyFromResolveParams({
+      cfg: { agents: { list: [{ id: "crm" }] } },
+      p: {
+        agentId: "crm",
+        channel: "slack",
+        threadPolicy: "most-recent",
+        selection: "least-recent",
+      },
+    });
+
+    expect(result).toMatchObject({
+      ok: false,
+      error: {
+        message: "threadPolicy=most-recent cannot be combined with selection=least-recent",
+      },
+    });
+  });
+
+  it.each([
+    [{ key: canonicalKey, channel: "slack" }, "key and channel"],
+    [{ sessionId: "sess-1", search: "customer" }, "sessionId and search"],
+    [{ label: "customer", to: "channel:C1" }, "label and delivery target"],
+  ])("rejects mixed base selectors: %s (%s)", async (p) => {
+    await expect(resolveSessionKeyFromResolveParams({ cfg: {}, p })).resolves.toEqual({
+      ok: false,
+      error: {
+        code: ErrorCodes.INVALID_REQUEST,
+        message: "Provide either key, sessionId, label, or selector filters (not multiple)",
+      },
+    });
+  });
+
+  it("preserves canonical Slack timestamp strings when matching and returning delivery context", async () => {
+    const targetKey = "agent:main:thread-test";
+    hoisted.loadCombinedSessionStoreForGatewayMock.mockReturnValue({
+      storePath,
+      store: {
+        [targetKey]: { sessionId: "sess-thread", updatedAt: 10 },
+      },
+    });
+    hoisted.listSessionsFromStoreMock.mockReturnValue({
+      sessions: [
+        {
+          key: targetKey,
+          sessionId: "sess-thread",
+          updatedAt: 10,
+          deliveryContext: {
+            channel: "slack",
+            to: "channel:C123",
+            threadId: "1712345678.000100",
+          },
+        },
+      ],
+    });
+
+    const result = await resolveSessionKeyFromResolveParams({
+      cfg: {},
+      p: {
+        channel: "slack",
+        to: "channel:C123",
+        threadId: "1712345678.000100",
+      },
+    });
+    expect(result).toMatchObject({
+      ok: true,
+      key: targetKey,
+      deliveryContext: {
+        threadId: "1712345678.000100",
+      },
+      resolution: {
+        matchedBy: "delivery-target",
+        threadPolicy: "exact",
+      },
+    });
+  });
+
+  it("normalizes finite numeric stored thread IDs for selector matching", async () => {
+    const targetKey = "agent:main:numeric-thread-test";
+    hoisted.loadCombinedSessionStoreForGatewayMock.mockReturnValue({
+      storePath,
+      store: { [targetKey]: { sessionId: "sess-numeric-thread", updatedAt: 10 } },
+    });
+    hoisted.listSessionsFromStoreMock.mockReturnValue({
+      sessions: [
+        {
+          key: targetKey,
+          sessionId: "sess-numeric-thread",
+          updatedAt: 10,
+          deliveryContext: { channel: "telegram", to: "group:123", threadId: 42 },
+        },
+      ],
+    });
+
+    await expect(
+      resolveSessionKeyFromResolveParams({
+        cfg: {},
+        p: { channel: "telegram", to: "group:123", threadId: "42" },
+      }),
+    ).resolves.toMatchObject({
+      ok: true,
+      key: targetKey,
+      deliveryContext: { threadId: "42" },
+    });
+  });
+
+  it("matches an omitted row account to an explicit default account selector", async () => {
+    const targetKey = "agent:main:default-account";
+    hoisted.loadCombinedSessionStoreForGatewayMock.mockReturnValue({
+      storePath,
+      store: { [targetKey]: { sessionId: "sess-default", updatedAt: 10 } },
+    });
+    hoisted.listSessionsFromStoreMock.mockReturnValue({
+      sessions: [
+        {
+          key: targetKey,
+          sessionId: "sess-default",
+          updatedAt: 10,
+          deliveryContext: { channel: "slack", to: "channel:C123" },
+        },
+      ],
+    });
+
+    await expect(
+      resolveSessionKeyFromResolveParams({
+        cfg: {},
+        p: { channel: "slack", to: "channel:C123", accountId: "default" },
+      }),
+    ).resolves.toMatchObject({ ok: true, key: targetKey });
+  });
+
+  it("rejects numeric thread selectors before they can lose Slack timestamp precision", async () => {
+    await expect(
+      resolveSessionKeyFromResolveParams({
+        cfg: {},
+        p: {
+          channel: "slack",
+          threadId: 1712345678.0001,
+        } as never,
+      }),
+    ).resolves.toEqual({
+      ok: false,
+      error: {
+        code: ErrorCodes.INVALID_REQUEST,
+        message: "threadId must be a string",
+      },
+    });
+  });
+
   it("rejects non-alias agent:main sessions when main is no longer configured", async () => {
     const staleMainKey = "agent:main:guildchat:direct:u1";
     targetStore = {
