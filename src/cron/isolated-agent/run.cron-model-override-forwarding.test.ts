@@ -184,6 +184,37 @@ describe("runCronIsolatedAgentTurn — cron model override forwarding (#58065)",
     expect(embeddedCall.model).toBe("gemini-2.0-flash");
   });
 
+  it("passes internal stream token limits to the embedded agent runner", async () => {
+    runWithModelFallbackMock.mockImplementation(async ({ provider, model, run }) => {
+      const result = await run(provider, model);
+      return { result, provider, model, attempts: [] };
+    });
+    runEmbeddedAgentMock.mockResolvedValue({
+      payloads: [{ text: "summary done" }],
+      meta: { agentMeta: { usage: { input: 10, output: 20 } } },
+    });
+
+    await runCronIsolatedAgentTurn(makeParams({ streamParams: { maxTokens: 7_500 } }));
+
+    expect(firstMockArg(runEmbeddedAgentMock).streamParams).toEqual({ maxTokens: 7_500 });
+  });
+
+  it("passes internal stream token limits to the CLI agent runner", async () => {
+    isCliProviderMock.mockReturnValue(true);
+    runWithModelFallbackMock.mockImplementation(async ({ provider, model, run }) => {
+      const result = await run(provider, model);
+      return { result, provider, model, attempts: [] };
+    });
+    runCliAgentMock.mockResolvedValue({
+      payloads: [{ text: "summary done" }],
+      meta: { agentMeta: { usage: { input: 10, output: 20 } } },
+    });
+
+    await runCronIsolatedAgentTurn(makeParams({ streamParams: { maxTokens: 7_500 } }));
+
+    expect(firstMockArg(runCliAgentMock).streamParams).toEqual({ maxTokens: 7_500 });
+  });
+
   it("forwards isolated cron execution phase updates from embedded runs", async () => {
     runWithModelFallbackMock.mockImplementation(async ({ provider, model, run }) => {
       const result = await run(provider, model);

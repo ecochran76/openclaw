@@ -269,4 +269,16 @@ describe("models cli", () => {
       expect(error.exitCode).toBe(0);
     }
   });
+
+  it("uses provider-generic auth profile examples in help text", () => {
+    const program = createProgram();
+    const models = program.commands.find((cmd) => cmd.name() === "models");
+    const auth = models?.commands.find((cmd) => cmd.name() === "auth");
+    const sync = auth?.commands.find((cmd) => cmd.name() === "sync");
+    const order = auth?.commands.find((cmd) => cmd.name() === "order");
+    const set = order?.commands.find((cmd) => cmd.name() === "set");
+
+    expect(sync).toBeUndefined();
+    expect(set?.helpInformation()).toContain("<provider>:default");
+  });
 });

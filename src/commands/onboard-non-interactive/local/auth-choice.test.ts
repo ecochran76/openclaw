@@ -186,6 +186,65 @@ describe("applyNonInteractiveAuthChoice", () => {
     ]);
   });
 
+  it("rejects deprecated claude-cli with provider-aware non-interactive guidance", async () => {
+    const runtime = createRuntime();
+    const nextConfig = { agents: { defaults: {} } } as OpenClawConfig;
+
+    const result = await applyNonInteractiveAuthChoice({
+      nextConfig,
+      authChoice: "claude-cli",
+      opts: {} as never,
+      runtime: runtime as never,
+      baseConfig: nextConfig,
+    });
+    expect(result).toBeNull();
+    expect(runtime.error).toHaveBeenCalledWith(
+      ['Auth choice "claude-cli" is deprecated.', 'Use "--auth-choice anthropic-cli".'].join("\n"),
+    );
+    expect(runtime.exit).toHaveBeenCalledWith(1);
+  });
+
+  it("rejects deprecated codex-cli with provider-aware non-interactive guidance", async () => {
+    const runtime = createRuntime();
+    const nextConfig = { agents: { defaults: {} } } as OpenClawConfig;
+
+    const result = await applyNonInteractiveAuthChoice({
+      nextConfig,
+      authChoice: "codex-cli",
+      opts: {} as never,
+      runtime: runtime as never,
+      baseConfig: nextConfig,
+    });
+
+    expect(result).toBeNull();
+    expect(runtime.error).toHaveBeenCalledWith(
+      ['Auth choice "codex-cli" is deprecated.', 'Use "--auth-choice openai".'].join("\n"),
+    );
+    expect(runtime.exit).toHaveBeenCalledWith(1);
+  });
+
+  it("keeps setup-token non-interactive guidance generic", async () => {
+    const runtime = createRuntime();
+    const nextConfig = { agents: { defaults: {} } } as OpenClawConfig;
+
+    const result = await applyNonInteractiveAuthChoice({
+      nextConfig,
+      authChoice: "setup-token",
+      opts: {} as never,
+      runtime: runtime as never,
+      baseConfig: nextConfig,
+    });
+
+    expect(result).toBeNull();
+    expect(runtime.error).toHaveBeenCalledWith(
+      [
+        'Auth choice "setup-token" requires interactive mode.',
+        'Use "--auth-choice token" with --token or choose a provider-specific non-interactive auth choice.',
+      ].join("\n"),
+    );
+    expect(runtime.exit).toHaveBeenCalledWith(1);
+  });
+
   it("infers image-capable non-interactive custom provider models by known model id", async () => {
     const runtime = createRuntime();
     const nextConfig = { agents: { defaults: {} } } as OpenClawConfig;

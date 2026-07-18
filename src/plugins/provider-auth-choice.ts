@@ -6,6 +6,7 @@ import {
   resolveAgentWorkspaceDir,
 } from "../agents/agent-scope.js";
 import { upsertAuthProfileWithLock } from "../agents/auth-profiles.js";
+import { normalizeRequestedProfileId } from "../agents/auth-profiles/profile-id.js";
 import { formatLiteralProviderPrefixedModelRef } from "../agents/model-ref-shared.js";
 import { resolveDefaultAgentWorkspaceDir } from "../agents/workspace.js";
 import { normalizeAgentModelRefForConfig } from "../config/model-input.js";
@@ -238,6 +239,7 @@ export async function runProviderPluginAuthMethodUnpersisted(params: {
   method: ProviderAuthMethod;
   agentDir: string;
   workspaceDir: string;
+  requestedProfileId?: string;
   secretInputMode?: ProviderAuthOptionBag["secretInputMode"];
   allowSecretRefPrompt?: boolean;
   opts?: Partial<ProviderAuthOptionBag>;
@@ -247,6 +249,7 @@ export async function runProviderPluginAuthMethodUnpersisted(params: {
     env: params.env,
     agentDir: params.agentDir,
     workspaceDir: params.workspaceDir,
+    ...(params.requestedProfileId ? { profileId: params.requestedProfileId } : {}),
     prompter: params.prompter,
     runtime: params.runtime,
     ...(params.signal ? { signal: params.signal } : {}),
@@ -306,6 +309,7 @@ export async function runProviderPluginAuthMethod(params: {
   agentId?: string;
   workspaceDir?: string;
   emitNotes?: boolean;
+  requestedProfileId?: string;
   secretInputMode?: ProviderAuthOptionBag["secretInputMode"];
   allowSecretRefPrompt?: boolean;
   opts?: Partial<ProviderAuthOptionBag>;
@@ -324,6 +328,7 @@ export async function runProviderPluginAuthMethod(params: {
     method: params.method,
     agentDir,
     workspaceDir,
+    requestedProfileId: params.requestedProfileId,
     secretInputMode: params.secretInputMode,
     allowSecretRefPrompt: params.allowSecretRefPrompt,
     opts: params.opts,
@@ -480,6 +485,7 @@ export async function applyAuthChoiceLoadedPluginProvider(
     agentDir: params.agentDir,
     agentId: params.agentId,
     workspaceDir,
+    requestedProfileId: normalizeRequestedProfileId(resolved.provider.id, params.opts?.profileId),
     secretInputMode: params.opts?.secretInputMode,
     allowSecretRefPrompt: false,
     opts: params.opts,

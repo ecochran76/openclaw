@@ -161,6 +161,43 @@ describe("writeOAuthCredentials", () => {
     await expectMissingFile(fs.readFile(path.join(env.agentDir, "auth-profiles.json"), "utf8"));
   });
 
+  it("rejects an explicit profile id for another provider before writing credentials", async () => {
+    const env = await setupAuthTestEnv("openclaw-oauth-profile-provider-");
+    lifecycle.setStateDir(env.stateDir);
+    const defaultAgentDir = path.join(env.stateDir, "agents", "main", "agent");
+
+    await expect(
+      writeOAuthCredentials(
+        "openai",
+        { refresh: "refresh-token", access: "access-token", expires: Date.now() + 60_000 },
+        undefined,
+        { profileId: "anthropic:work" },
+      ),
+    ).rejects.toThrow('Auth profile "anthropic:work" is for provider "anthropic", not "openai".');
+    await expectMissingFile(fs.readFile(authProfilePathFor(defaultAgentDir), "utf8"));
+  });
+
+  it("accepts an explicit profile id whose provider prefix is an auth alias", async () => {
+    const env = await setupAuthTestEnv("openclaw-oauth-profile-alias-");
+    lifecycle.setStateDir(env.stateDir);
+    const defaultAgentDir = path.join(env.stateDir, "agents", "main", "agent");
+
+    await writeOAuthCredentials(
+      "zai",
+      { refresh: "refresh-token", access: "access-token", expires: Date.now() + 60_000 },
+      undefined,
+      { profileId: "z-ai:work" },
+    );
+
+    const parsed = await readAuthProfilesForAgent<{
+      profiles?: Record<string, OAuthCredentials & { type?: string; provider?: string }>;
+    }>(defaultAgentDir);
+    expectFields(parsed.profiles?.["z-ai:work"], {
+      type: "oauth",
+      provider: "zai",
+    });
+  });
+
   it("writes OAuth credentials to all sibling agent dirs when syncSiblingAgents=true", async () => {
     tempStateDir = await fs.mkdtemp(path.join(os.tmpdir(), "openclaw-oauth-sync-"));
     lifecycle.setStateDir(tempStateDir);
@@ -442,6 +479,21 @@ describe("upsertApiKeyProfile", () => {
     });
 
     await expectMissingFile(fs.readFile(path.join(env.agentDir, "auth-profiles.json"), "utf8"));
+  });
+
+  it("rejects an explicit profile id for another provider before writing credentials", async () => {
+    const env = await setupAuthTestEnv("openclaw-api-key-profile-provider-");
+    lifecycle.setStateDir(env.stateDir);
+    const defaultAgentDir = path.join(env.stateDir, "agents", "main", "agent");
+
+    expect(() =>
+      upsertApiKeyProfile({
+        provider: "openai",
+        profileId: "anthropic:work",
+        input: "sk-openai-test",
+      }),
+    ).toThrow('Auth profile "anthropic:work" is for provider "anthropic", not "openai".');
+    await expectMissingFile(fs.readFile(path.join(defaultAgentDir, "auth-profiles.json"), "utf8"));
   });
 });
 

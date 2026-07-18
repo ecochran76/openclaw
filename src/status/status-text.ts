@@ -8,7 +8,15 @@ import {
   resolveSessionAgentId,
   resolveAgentModelFallbacksOverride,
 } from "../agents/agent-scope.js";
-import { ensureAuthProfileStore } from "../agents/auth-profiles/store.js";
+import { resolveAuthProfileDisplayLabel } from "../agents/auth-profiles/display.js";
+import { resolveAuthProfileOrder } from "../agents/auth-profiles/order.js";
+import { resolveMainAgentDir } from "../agents/auth-profiles/paths.js";
+import { loadPersistedAuthProfileState } from "../agents/auth-profiles/state.js";
+import {
+  ensureAuthProfileStore,
+  loadAuthProfileStoreWithoutExternalProfiles,
+} from "../agents/auth-profiles/store.js";
+import type { AuthProfileFailureReason, ProfileUsageStats } from "../agents/auth-profiles/types.js";
 import { resolveContextTokensForModel, waitForContextWindowCacheLoad } from "../agents/context.js";
 import { resolveFastModeState } from "../agents/fast-mode.js";
 import { resolveModelAuthLabel } from "../agents/model-auth-label.js";
@@ -16,7 +24,10 @@ import {
   areRuntimeModelRefsEquivalent,
   shouldPreferActiveRuntimeAliasAuthLabel,
 } from "../agents/model-runtime-aliases.js";
-import { resolveDefaultModelForAgent } from "../agents/model-selection.js";
+import {
+  findNormalizedProviderValue,
+  resolveDefaultModelForAgent,
+} from "../agents/model-selection.js";
 import { listOpenAIAuthProfileProvidersForAgentRuntime } from "../agents/openai-routing.js";
 import { resolveProviderIdForAuth } from "../agents/provider-auth-aliases.js";
 import { resolveSessionRuntimeOverrideForProvider } from "../agents/session-runtime-compat.js";
@@ -27,10 +38,13 @@ import {
 import { normalizeGroupActivation } from "../auto-reply/group-activation.js";
 import { resolveSelectedAndActiveModel } from "../auto-reply/model-runtime.js";
 import { resolveSupportedThinkingLevel, type ThinkLevel } from "../auto-reply/thinking.js";
+import { getLatestAutomationRunForRequester } from "../automation/registry.js";
+import { buildAutomationCompactStatusLine } from "../automation/status.js";
 import { toAgentModelListLike } from "../config/model-input.js";
 import type { SessionEntry } from "../config/sessions.js";
 import { hasSessionAutoModelFallbackProvenance } from "../config/sessions/model-override-provenance.js";
 import type { OpenClawConfig } from "../config/types.openclaw.js";
+import { formatDurationCompact } from "../infra/format-time/format-duration.js";
 import {
   formatUsageWindowSummary,
   loadProviderUsageSummary,
@@ -68,6 +82,152 @@ const USAGE_OAUTH_ONLY_PROVIDERS = new Set([
   "openai",
 ]);
 const CODEX_APP_SERVER_HOME_DIRNAME = "codex-home";
+
+function formatStatusAuthFailureNote(stats: ProfileUsageStats | undefined): string | undefined {
+  if (!stats) {
+    return undefined;
+  }
+  const reason: AuthProfileFailureReason | undefined =
+    stats.disabledReason === "auth" || stats.disabledReason === "auth_permanent"
+      ? stats.disabledReason
+      : (stats.failureCounts?.auth_permanent ?? 0) > 0
+        ? "auth_permanent"
+        : (stats.failureCounts?.auth ?? 0) > 0
+          ? "auth"
+          : undefined;
+  if (!reason) {
+    return undefined;
+  }
+  const label = reason.replaceAll("_", " ");
+  const now = Date.now();
+  if (typeof stats.disabledUntil === "number" && stats.disabledUntil > now) {
+    const remaining = formatDurationCompact(stats.disabledUntil - now) ?? "0s";
+    return `auth disabled: ${label} for ${remaining}`;
+  }
+  if (typeof stats.lastFailureAt === "number" && stats.lastFailureAt > 0) {
+    const age = formatDurationCompact(Math.max(0, now - stats.lastFailureAt)) ?? "0s";
+    return `last auth failure: ${label} ${age} ago`;
+  }
+  return `last auth failure: ${label}`;
+}
+
+function resolveStatusAuthStore(params: { agentDir?: string; includeExternalProfiles?: boolean }) {
+  return params.includeExternalProfiles === false
+    ? loadAuthProfileStoreWithoutExternalProfiles(params.agentDir)
+    : ensureAuthProfileStore(params.agentDir, { allowKeychainPrompt: false });
+}
+
+function resolveSelectedStatusAuthProfileId(params: {
+  provider?: string;
+  acceptedProviderIds?: readonly string[];
+  cfg?: OpenClawConfig;
+  sessionEntry?: Partial<Pick<SessionEntry, "authProfileOverride">>;
+  agentDir?: string;
+  includeExternalProfiles?: boolean;
+}): string | undefined {
+  const provider = params.provider?.trim();
+  if (!provider) {
+    return undefined;
+  }
+  const store = resolveStatusAuthStore(params);
+  const profileOverride = params.sessionEntry?.authProfileOverride?.trim();
+  const providers = params.acceptedProviderIds?.length ? params.acceptedProviderIds : [provider];
+  const order = [
+    ...new Set(
+      providers.flatMap((candidateProvider) =>
+        resolveAuthProfileOrder({
+          cfg: params.cfg,
+          store,
+          provider: candidateProvider,
+          preferredProfile: profileOverride,
+        }),
+      ),
+    ),
+  ];
+  const candidates = [...new Set([profileOverride, ...order].filter(Boolean))] as string[];
+  const rawProviders = new Set(providers.map((value) => value.trim()));
+  const authProviders = new Set(
+    providers.map((value) => resolveProviderIdForAuth(value, { config: params.cfg })),
+  );
+  return candidates.find((profileId) => {
+    const profile = store.profiles[profileId];
+    return (
+      profile &&
+      (rawProviders.has(profile.provider) ||
+        authProviders.has(resolveProviderIdForAuth(profile.provider, { config: params.cfg })))
+    );
+  });
+}
+
+export function resolveStatusModelAuthLabel(params: {
+  provider?: string;
+  acceptedProviderIds?: readonly string[];
+  cfg?: OpenClawConfig;
+  sessionEntry?: Partial<Pick<SessionEntry, "authProfileOverride">>;
+  agentDir?: string;
+  workspaceDir?: string;
+  codexCliCredentialsHome?: string;
+  includeExternalProfiles?: boolean;
+}): string | undefined {
+  const base = resolveModelAuthLabel(params);
+  const provider = params.provider?.trim();
+  if (!provider || !params.agentDir) {
+    return base;
+  }
+  const store = resolveStatusAuthStore(params);
+  const profileId = resolveSelectedStatusAuthProfileId(params);
+  const profile = profileId ? store.profiles[profileId] : undefined;
+  if (!profileId || !profile) {
+    return base;
+  }
+  const profileLabel = resolveAuthProfileDisplayLabel({ cfg: params.cfg, store, profileId });
+  const displaySuffix = profileLabel ? ` (${profileLabel})` : "";
+  const authLabel =
+    profile.type === "oauth"
+      ? `oauth${displaySuffix}`
+      : profile.type === "token"
+        ? `token${displaySuffix}`
+        : `api-key${displaySuffix}`;
+  if (authLabel !== base) {
+    return base;
+  }
+  const failureNote = formatStatusAuthFailureNote(store.usageStats?.[profileId]);
+  const mainAgentDir = resolveMainAgentDir();
+  if (params.agentDir === mainAgentDir) {
+    return [authLabel, failureNote].filter(Boolean).join(" · ");
+  }
+  const providerKeys = [provider, ...(params.acceptedProviderIds ?? [])];
+  const authKeys = providerKeys.map((value) =>
+    resolveProviderIdForAuth(value, { config: params.cfg }),
+  );
+  const currentState = loadPersistedAuthProfileState(params.agentDir);
+  const mainState = loadPersistedAuthProfileState(mainAgentDir);
+  const currentOrder = providerKeys
+    .map((key) => findNormalizedProviderValue(currentState.order, key)?.[0])
+    .find(Boolean);
+  const mainOrder = providerKeys
+    .map(
+      (key) =>
+        findNormalizedProviderValue(mainState.order, key)?.[0] ??
+        findNormalizedProviderValue(params.cfg?.auth?.order, key)?.[0],
+    )
+    .find(Boolean);
+  const currentLastGood = authKeys
+    .map((key) => findNormalizedProviderValue(currentState.lastGood, key))
+    .find(Boolean);
+  const mainLastGood = authKeys
+    .map((key) => findNormalizedProviderValue(mainState.lastGood, key))
+    .find(Boolean);
+  const driftNote =
+    currentOrder && mainLastGood && currentOrder !== mainLastGood
+      ? `agent order prefers ${currentOrder}; main last-good ${mainLastGood}`
+      : currentOrder && mainOrder && currentOrder !== mainOrder
+        ? `agent order prefers ${currentOrder}; main order prefers ${mainOrder}`
+        : currentLastGood && mainLastGood && currentLastGood !== mainLastGood
+          ? `agent last-good ${currentLastGood}; main last-good ${mainLastGood}`
+          : undefined;
+  return [authLabel, failureNote, driftNote].filter(Boolean).join(" · ");
+}
 
 function resolveStatusChannelFeatureLine(params: {
   cfg: OpenClawConfig;
@@ -357,7 +517,7 @@ export async function buildStatusText(params: BuildStatusTextParams): Promise<st
   });
   let selectedModelAuth = Object.hasOwn(params, "modelAuthOverride")
     ? params.modelAuthOverride
-    : resolveModelAuthLabel({
+    : resolveStatusModelAuthLabel({
         provider: selectedStatusProvider,
         acceptedProviderIds: selectedAuthProviders,
         cfg,
@@ -370,7 +530,7 @@ export async function buildStatusText(params: BuildStatusTextParams): Promise<st
   const activeModelAuth = Object.hasOwn(params, "activeModelAuthOverride")
     ? params.activeModelAuthOverride
     : modelRefs.activeDiffers
-      ? resolveModelAuthLabel({
+      ? resolveStatusModelAuthLabel({
           provider: activeStatusProvider,
           acceptedProviderIds: activeAuthProviders,
           cfg,
@@ -503,6 +663,7 @@ export async function buildStatusText(params: BuildStatusTextParams): Promise<st
 
   let subagentsLine: string | undefined;
   let taskLine: string | undefined;
+  let automationLine: string | undefined;
   if (sessionKey) {
     const { mainKey, alias } = resolveMainSessionAlias(cfg);
     const requesterKey = resolveInternalSessionKey({ key: sessionKey, alias, mainKey });
@@ -513,6 +674,10 @@ export async function buildStatusText(params: BuildStatusTextParams): Promise<st
       : (params.taskLineOverride ?? formatSessionTaskLine(requesterKey));
     if (!taskLine && !params.skipDefaultTaskLookup) {
       taskLine = formatAgentTaskCountsLine(statusAgentId);
+    }
+    const automationRun = getLatestAutomationRunForRequester(requesterKey);
+    if (automationRun) {
+      automationLine = buildAutomationCompactStatusLine({ run: automationRun });
     }
     const { buildSubagentsStatusLine, countPendingDescendantRuns, listControlledSubagentRuns } =
       await loadStatusSubagentsRuntime();
@@ -648,6 +813,7 @@ export async function buildStatusText(params: BuildStatusTextParams): Promise<st
     },
     subagentsLine,
     taskLine,
+    automationLine,
     pluginHealthLine,
     channelFeatureLine,
     mediaDecisions: params.mediaDecisions,

@@ -4,7 +4,14 @@ import {
   resolveManifestDeprecatedProviderAuthChoice,
   resolveManifestProviderAuthChoices,
 } from "../plugins/provider-auth-choices.js";
+import {
+  isDeprecatedOpenAICodexAuthChoice,
+  normalizeOpenAICodexAuthChoice,
+  OPENAI_CODEX_LEGACY_AUTH_CHOICE,
+} from "../plugins/provider-openai-codex-auth-choice.js";
 import type { AuthChoice } from "./onboard-types.js";
+
+export type DeprecatedAuthChoice = "claude-cli" | "codex-cli";
 
 const LEGACY_REPLACEMENT_AUTH_CHOICES = new Set(["claude-cli"]);
 
@@ -36,7 +43,13 @@ export function resolveLegacyAuthChoiceAliasesForCli(params?: {
     .flatMap((choice) => choice.deprecatedChoiceIds ?? [])
     .filter((choice): choice is AuthChoice => LEGACY_REPLACEMENT_AUTH_CHOICES.has(choice))
     .toSorted((left, right) => left.localeCompare(right));
-  return Array.from(new Set(manifestCliAliases));
+  const aliases = Array.from(
+    new Set<AuthChoice>(["setup-token", "oauth", "claude-cli", ...manifestCliAliases]),
+  );
+  if (!aliases.includes(OPENAI_CODEX_LEGACY_AUTH_CHOICE)) {
+    aliases.push(OPENAI_CODEX_LEGACY_AUTH_CHOICE);
+  }
+  return Array.from(new Set(aliases));
 }
 
 /** Map old onboard auth choices to their current provider-backed choices. */
@@ -52,6 +65,13 @@ export function normalizeLegacyOnboardAuthChoice(
     return "setup-token";
   }
   if (typeof authChoice === "string") {
+    if (authChoice === "claude-cli") {
+      return "anthropic-cli";
+    }
+    const normalizedOpenAICodex = normalizeOpenAICodexAuthChoice(authChoice);
+    if (normalizedOpenAICodex && normalizedOpenAICodex !== authChoice) {
+      return normalizedOpenAICodex as AuthChoice;
+    }
     const deprecatedChoice = resolveLegacyCliBackendChoice(authChoice, params);
     if (deprecatedChoice) {
       return deprecatedChoice.choiceId as AuthChoice;
@@ -70,7 +90,10 @@ export function isDeprecatedAuthChoice(
   },
 ): authChoice is AuthChoice {
   return (
-    typeof authChoice === "string" && Boolean(resolveLegacyCliBackendChoice(authChoice, params))
+    typeof authChoice === "string" &&
+    (authChoice === "claude-cli" ||
+      isDeprecatedOpenAICodexAuthChoice(authChoice) ||
+      Boolean(resolveLegacyCliBackendChoice(authChoice, params)))
   );
 }
 
@@ -91,6 +114,19 @@ export function resolveDeprecatedAuthChoiceReplacement(
   if (typeof authChoice !== "string") {
     return undefined;
   }
+  if (authChoice === "claude-cli") {
+    return {
+      normalized: "anthropic-cli",
+      message: 'Auth choice "claude-cli" is deprecated; using Anthropic Claude CLI setup instead.',
+    };
+  }
+  const normalizedOpenAICodex = normalizeOpenAICodexAuthChoice(authChoice);
+  if (normalizedOpenAICodex && normalizedOpenAICodex !== authChoice) {
+    return {
+      normalized: normalizedOpenAICodex as AuthChoice,
+      message: `Auth choice "${authChoice}" is deprecated; using OpenAI Codex OAuth instead.`,
+    };
+  }
   const deprecatedChoice = resolveLegacyCliBackendChoice(authChoice, params);
   if (!deprecatedChoice) {
     return undefined;
@@ -100,6 +136,35 @@ export function resolveDeprecatedAuthChoiceReplacement(
     normalized: deprecatedChoice.choiceId as AuthChoice,
     message: `Auth choice "${authChoice}" is deprecated; using ${replacementLabel} setup instead.`,
   };
+}
+
+export function formatDeprecatedAuthChoiceMigrationLog(
+  authChoice: AuthChoice,
+  params?: {
+    config?: OpenClawConfig;
+    workspaceDir?: string;
+    env?: NodeJS.ProcessEnv;
+  },
+): string {
+  return (
+    resolveDeprecatedAuthChoiceReplacement(authChoice, params)?.message ??
+    `Auth choice "${authChoice}" is deprecated; use the current provider-specific setup instead.`
+  );
+}
+
+export function formatDeprecatedNonInteractiveAuthChoiceHint(
+  authChoice: AuthChoice,
+  params?: {
+    config?: OpenClawConfig;
+    workspaceDir?: string;
+    env?: NodeJS.ProcessEnv;
+  },
+): string {
+  const replacement = resolveDeprecatedAuthChoiceReplacement(authChoice, params);
+  if (!replacement) {
+    return "Use the replacement provider-specific auth choice instead.";
+  }
+  return `Use "--auth-choice ${replacement.normalized}".`;
 }
 
 /** Format the non-interactive error shown when a deprecated auth choice was supplied. */

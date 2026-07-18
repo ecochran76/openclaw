@@ -491,7 +491,7 @@ export function registerModelsCli(program: Command) {
     .description("Set per-agent auth order override (writes auth-state.json)")
     .requiredOption("--provider <name>", "Provider id (e.g. anthropic)")
     .option("--agent <id>", "Agent id (default: configured default agent)")
-    .argument("<profileIds...>", "Auth profile ids (e.g. anthropic:default)")
+    .argument("<profileIds...>", "Auth profile ids (e.g. <provider>:default)")
     .action(async (profileIds: string[], opts, command) => {
       await withModelsRuntime(async ({ defaultRuntime, resolveModelAgentOption }) => {
         const agent = resolveModelAgentOption(command, opts);

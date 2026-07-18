@@ -576,6 +576,16 @@ export async function createModelSelectionState(params: {
       defaultThinkingLevels.set(cacheKey, configuredThinkingDefault);
       return configuredThinkingDefault;
     }
+    const resolvedWithoutCatalog = resolveThinkingDefault({
+      cfg,
+      provider: selectedProvider,
+      model: selectedModel,
+      agentRuntime: selection?.agentRuntime,
+    });
+    if (resolvedWithoutCatalog !== "off") {
+      defaultThinkingLevels.set(cacheKey, resolvedWithoutCatalog);
+      return resolvedWithoutCatalog;
+    }
     const catalogForThinking = await resolveThinkingCatalog();
     const resolved = resolveThinkingDefault({
       cfg,

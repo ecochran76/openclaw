@@ -10,6 +10,7 @@ import {
   resolveAuthProfileOrder,
 } from "../../agents/auth-profiles.js";
 import { isMalformedApiKeyInput } from "../../agents/auth-profiles/credential-state.js";
+import { normalizeRequestedProfileId } from "../../agents/auth-profiles/profile-id.js";
 import { resolveEnvApiKey } from "../../agents/model-auth.js";
 import { formatCliCommand } from "../../cli/command-format.js";
 import type { OpenClawConfig } from "../../config/types.openclaw.js";
@@ -32,8 +33,27 @@ async function resolveApiKeyFromProfiles(params: {
   provider: string;
   cfg: OpenClawConfig;
   agentDir?: string;
+  profileId?: string;
 }): Promise<string | null> {
   const store = ensureAuthProfileStore(params.agentDir);
+  const requestedProfileId = normalizeRequestedProfileId(params.provider, params.profileId);
+  if (requestedProfileId) {
+    const requestedCredential = store.profiles[requestedProfileId];
+    if (
+      requestedCredential?.type === "api_key" &&
+      requestedCredential.provider === params.provider
+    ) {
+      const resolved = await resolveApiKeyForProfile({
+        cfg: params.cfg,
+        store,
+        profileId: requestedProfileId,
+        agentDir: params.agentDir,
+      });
+      if (resolved?.apiKey) {
+        return resolved.apiKey;
+      }
+    }
+  }
   const order = resolveAuthProfileOrder({
     cfg: params.cfg,
     store,
@@ -63,6 +83,7 @@ async function resolveApiKeyFromProfiles(params: {
 export async function resolveNonInteractiveApiKey(params: {
   provider: string;
   cfg: OpenClawConfig;
+  profileId?: string;
   flagValue?: string;
   flagName: string;
   envVar: string;
@@ -143,6 +164,7 @@ export async function resolveNonInteractiveApiKey(params: {
       provider: params.provider,
       cfg: params.cfg,
       agentDir: params.agentDir,
+      profileId: params.profileId,
     });
     if (profileKey) {
       return { key: profileKey, source: "profile" };

@@ -510,6 +510,59 @@ describe("applyAuthChoiceLoadedPluginProvider", () => {
     });
   });
 
+  it("forwards normalized requested profile ids to plugin auth methods", async () => {
+    const run = vi.fn(async ({ profileId }: { profileId?: string }) => ({
+      profiles: [
+        {
+          profileId: profileId ?? "local-profile-provider:default",
+          credential: {
+            type: "api_key" as const,
+            provider: "local-profile-provider",
+            key: "local-profile-provider-key",
+          },
+        },
+      ],
+    }));
+    const provider: ProviderPlugin = {
+      id: "local-profile-provider",
+      label: "Local Profile Provider",
+      auth: [
+        {
+          id: "local",
+          label: "Local Profile Provider",
+          kind: "custom",
+          run,
+        },
+      ],
+    };
+    resolvePluginProviders.mockReturnValue([provider]);
+    resolveProviderPluginChoice.mockReturnValue({
+      provider,
+      method: provider.auth?.[0],
+    });
+
+    await applyAuthChoiceLoadedPluginProvider(
+      buildParams({
+        opts: { profileId: "work" } as never,
+      }),
+    );
+
+    expect(run).toHaveBeenCalledWith(
+      expect.objectContaining({
+        profileId: "local-profile-provider:work",
+      }),
+    );
+    expect(upsertAuthProfile).toHaveBeenCalledWith({
+      profileId: "local-profile-provider:work",
+      credential: {
+        type: "api_key",
+        provider: "local-profile-provider",
+        key: "local-profile-provider-key",
+      },
+      agentDir: "/tmp/agent",
+    });
+  });
+
   it("merges provider config patches and emits provider notes", async () => {
     applyAuthProfileConfig.mockImplementation(((
       config: {

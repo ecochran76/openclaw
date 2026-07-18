@@ -11,10 +11,11 @@ import type { RuntimeEnv } from "../runtime.js";
 import { defaultRuntime } from "../runtime.js";
 import { resolveUserPath } from "../utils.js";
 import {
+  formatDeprecatedAuthChoiceMigrationLog,
+  formatDeprecatedNonInteractiveAuthChoiceHint,
   formatDeprecatedNonInteractiveAuthChoiceError,
   isDeprecatedAuthChoice,
   normalizeLegacyOnboardAuthChoice,
-  resolveDeprecatedAuthChoiceReplacement,
 } from "./auth-choice-legacy.js";
 import { runGuidedOnboarding } from "./onboard-guided.js";
 import { DEFAULT_WORKSPACE, handleReset } from "./onboard-helpers.js";
@@ -77,15 +78,19 @@ export async function setupWizardCommand(
     runtime.error(
       formatDeprecatedNonInteractiveAuthChoiceError(originalAuthChoice, {
         env: process.env,
-      })!,
+      }) ??
+        [
+          `Auth choice "${String(originalAuthChoice)}" is deprecated.`,
+          formatDeprecatedNonInteractiveAuthChoiceHint(originalAuthChoice, {
+            env: process.env,
+          }),
+        ].join("\n"),
     );
     runtime.exit(1);
     return;
   }
   if (isDeprecatedAuthChoice(originalAuthChoice, { env: process.env })) {
-    runtime.log(
-      resolveDeprecatedAuthChoiceReplacement(originalAuthChoice, { env: process.env })!.message,
-    );
+    runtime.log(formatDeprecatedAuthChoiceMigrationLog(originalAuthChoice, { env: process.env }));
   }
   const flow = opts.flow === "manual" ? ("advanced" as const) : opts.flow;
   const normalizedOpts =

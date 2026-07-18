@@ -120,6 +120,10 @@ export function registerOnboardAuthOptions(command: Command): Command {
       "--token-profile-id <id>",
       "Auth profile id (non-interactive; default: <provider>:manual)",
     )
+    .option(
+      "--profile-id <id>",
+      "Auth profile id (non-interactive provider/API-key setup; default: provider-specific)",
+    )
     .option("--token-expires-in <duration>", "Optional token expiry duration (e.g. 365d, 12h)")
     .option(
       "--secret-input-mode <mode>",
@@ -155,6 +159,7 @@ export function pickOnboardAuthOptionValues(
     token: opts.token as string | undefined,
     tokenProfileId: opts.tokenProfileId as string | undefined,
     tokenExpiresIn: opts.tokenExpiresIn as string | undefined,
+    profileId: opts.profileId as string | undefined,
     secretInputMode: opts.secretInputMode as SecretInputMode | undefined,
     ...pickOnboardProviderAuthOptionValues(opts),
     cloudflareAiGatewayAccountId: opts.cloudflareAiGatewayAccountId as string | undefined,

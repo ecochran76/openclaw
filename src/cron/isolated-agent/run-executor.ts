@@ -3,6 +3,7 @@ import { createHash } from "node:crypto";
 import { normalizeOptionalString } from "@openclaw/normalization-core/string-coerce";
 import type { BootstrapContextMode } from "../../agents/bootstrap-files.js";
 import { resolveCliRuntimeToolsAllow } from "../../agents/cli-runner/tool-policy.js";
+import type { AgentStreamParams } from "../../agents/command/shared-types.js";
 import type { FastModeAutoProgressState } from "../../agents/fast-mode.js";
 import { runAgentHarnessBeforeMessageWriteHook } from "../../agents/harness/hook-helpers.js";
 import type { ModelCatalogEntry } from "../../agents/model-catalog.types.js";
@@ -210,6 +211,7 @@ function createCronPromptExecutor(params: {
   timeoutMs: number;
   /** Set when the cron payload's `timeoutSeconds` was explicitly configured. */
   runTimeoutOverrideMs?: number;
+  streamParams?: AgentStreamParams;
   suppressExecNotifyOnExit: boolean;
   resolvedDelivery: {
     channel?: string;
@@ -446,6 +448,7 @@ function createCronPromptExecutor(params: {
                 model: modelOverride,
                 thinkLevel: candidateThinkLevel,
                 timeoutMs: params.timeoutMs,
+                streamParams: params.streamParams,
                 runId,
                 lane: resolveCronAgentLane(params.lane),
                 allowEmptyAssistantReplyAsSilent,
@@ -553,6 +556,7 @@ function createCronPromptExecutor(params: {
           })(),
           verboseLevel: params.resolvedVerboseLevel,
           timeoutMs: params.timeoutMs,
+          streamParams: params.streamParams,
           runTimeoutOverrideMs: params.runTimeoutOverrideMs,
           bootstrapContextMode,
           bootstrapContextRunKind: "cron",
@@ -659,6 +663,7 @@ export async function executeCronRun(params: {
   timeoutMs: number;
   /** Set when the cron payload's `timeoutSeconds` was explicitly configured. */
   runTimeoutOverrideMs?: number;
+  streamParams?: AgentStreamParams;
   suppressExecNotifyOnExit: boolean;
   runStartedAt?: number;
 }): Promise<CronExecutionResult> {
@@ -695,6 +700,7 @@ export async function executeCronRun(params: {
     thinkingCatalog: params.thinkingCatalog,
     timeoutMs: params.timeoutMs,
     runTimeoutOverrideMs: params.runTimeoutOverrideMs,
+    streamParams: params.streamParams,
     suppressExecNotifyOnExit: params.suppressExecNotifyOnExit,
     resolvedDelivery: params.resolvedDelivery,
     resolvedDeliveryOk: params.resolvedDeliveryOk,
