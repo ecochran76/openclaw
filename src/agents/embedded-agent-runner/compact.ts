@@ -1463,7 +1463,7 @@ async function compactEmbeddedAgentSessionDirectOnce(
         }),
       });
 
-      const { customTools } = splitSdkTools({
+      const { builtInTools, customTools } = splitSdkTools({
         tools: effectiveTools,
         sandboxEnabled: Boolean(sandbox?.enabled),
         toolHookContext: {
@@ -1500,7 +1500,7 @@ async function compactEmbeddedAgentSessionDirectOnce(
             modelRegistry,
             model: effectiveModel,
             thinkingLevel: mapThinkingLevel(thinkLevel),
-            tools: sessionToolAllowlist,
+            tools: builtInTools,
             customTools,
             sessionManager,
             settingsManager,

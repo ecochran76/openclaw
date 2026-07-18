@@ -26,6 +26,7 @@ vi.mock("../effective-tool-policy.js", () => ({
 
 vi.mock("./attempt-tool-construction-plan.js", () => ({
   applyEmbeddedAttemptToolsAllow: vi.fn((tools: unknown[]) => tools),
+  collectSpecificBundleMcpServerAllowlist: vi.fn(() => undefined),
   shouldCreateBundleLspRuntimeForAttempt: vi.fn(() => true),
   shouldCreateBundleMcpRuntimeForAttempt: vi.fn(() => true),
 }));

@@ -3,6 +3,7 @@ import { describe, expect, it } from "vitest";
 import { CORE_TOOL_FACTORY_DESCRIPTORS } from "../../core-tool-factory-descriptors.js";
 import {
   applyEmbeddedAttemptToolsAllow,
+  collectSpecificBundleMcpServerAllowlist,
   mergeForcedEmbeddedAttemptToolsAllow,
   resolveEmbeddedAttemptToolConstructionPlan,
   shouldCreateBundleLspRuntimeForAttempt,
@@ -539,6 +540,123 @@ describe("shouldCreateBundleMcpRuntimeForAttempt", () => {
         toolsAllow: ["strict__strict_probe"],
       }),
     ).toBe(true);
+  });
+
+  it("skips bundle MCP startup when effective policy denies bundle MCP", () => {
+    expect(
+      shouldCreateBundleMcpRuntimeForAttempt({
+        toolsEnabled: true,
+        config: {
+          tools: { deny: ["bundle-mcp"] },
+        },
+      }),
+    ).toBe(false);
+    expect(
+      shouldCreateBundleMcpRuntimeForAttempt({
+        toolsEnabled: true,
+        toolsAllow: ["bundle-mcp"],
+        config: {
+          tools: { deny: ["group:plugins"] },
+        },
+      }),
+    ).toBe(false);
+  });
+
+  it("creates bundle MCP for specific MCP tools added through profile alsoAllow", () => {
+    expect(
+      shouldCreateBundleMcpRuntimeForAttempt({
+        toolsEnabled: true,
+        agentId: "graphiti",
+        config: {
+          agents: {
+            list: [
+              {
+                id: "graphiti",
+                tools: { profile: "minimal", alsoAllow: ["graphiti__get_status"] },
+              },
+            ],
+          },
+        },
+      }),
+    ).toBe(true);
+  });
+
+  it("still skips specific MCP tools when bundle MCP is denied", () => {
+    expect(
+      shouldCreateBundleMcpRuntimeForAttempt({
+        toolsEnabled: true,
+        agentId: "graphiti",
+        config: {
+          agents: {
+            list: [
+              {
+                id: "graphiti",
+                tools: {
+                  profile: "minimal",
+                  alsoAllow: ["graphiti__get_status"],
+                  deny: ["bundle-mcp"],
+                },
+              },
+            ],
+          },
+        },
+      }),
+    ).toBe(false);
+  });
+});
+
+describe("collectSpecificBundleMcpServerAllowlist", () => {
+  it("extracts specific MCP server prefixes from explicit runtime allowlists", () => {
+    expect(
+      collectSpecificBundleMcpServerAllowlist({
+        toolsAllow: ["imcli__*", "graphiti__get_status", "group:memory"],
+      }),
+    ).toEqual(["graphiti", "imcli"]);
+  });
+
+  it("does not narrow broad bundle MCP allowances", () => {
+    expect(
+      collectSpecificBundleMcpServerAllowlist({
+        toolsAllow: ["bundle-mcp"],
+      }),
+    ).toBeUndefined();
+    expect(
+      collectSpecificBundleMcpServerAllowlist({
+        toolsAllow: ["group:plugins"],
+      }),
+    ).toBeUndefined();
+    expect(
+      collectSpecificBundleMcpServerAllowlist({
+        toolsAllow: ["*"],
+      }),
+    ).toBeUndefined();
+  });
+
+  it("intersects a broad global allowance with a specific agent allowance", () => {
+    expect(
+      collectSpecificBundleMcpServerAllowlist({
+        agentId: "graphiti",
+        config: {
+          tools: { allow: ["bundle-mcp"] },
+          agents: {
+            list: [{ id: "graphiti", tools: { allow: ["graphiti__get_status"] } }],
+          },
+        },
+      }),
+    ).toEqual(["graphiti"]);
+  });
+
+  it("keeps every specific candidate that survives the effective intersection", () => {
+    const params = {
+      toolsEnabled: true,
+      agentId: "beta",
+      config: {
+        tools: { allow: ["alpha__x", "beta__y"] },
+        agents: { list: [{ id: "beta", tools: { allow: ["beta__y"] } }] },
+      },
+    };
+    expect(shouldCreateBundleMcpRuntimeForAttempt(params)).toBe(true);
+    expect(collectSpecificBundleMcpServerAllowlist(params)).toEqual(["beta"]);
   });
 });
 

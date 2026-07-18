@@ -1,7 +1,9 @@
 /**
  * Plans which core, bundle MCP, and bundle LSP tools an attempt should build.
  */
+import type { OpenClawConfig } from "../../../config/types.openclaw.js";
 import { TOOL_NAME_SEPARATOR } from "../../agent-bundle-mcp-names.js";
+import { resolveEffectiveToolPolicy } from "../../agent-tools.policy.js";
 import {
   type CoreToolFactoryFamily,
   type OpenClawCodingToolConstructionPlan,
@@ -12,8 +14,10 @@ import {
   buildPluginToolGroups,
   expandPolicyWithPluginGroups,
   expandToolGroups,
+  mergeAlsoAllowPolicy,
   normalizeToolList,
   normalizeToolName,
+  resolveToolProfilePolicy,
 } from "../../tool-policy.js";
 
 const ALL_CODING_TOOL_CONSTRUCTION_PLAN: OpenClawCodingToolConstructionPlan = {
@@ -45,6 +49,110 @@ function isBundleMcpAllowlistName(normalized: string): boolean {
 
 function isPluginGroupAllowlistName(normalized: string): boolean {
   return normalized === "group:plugins";
+}
+
+type BundleMcpPolicyParams = {
+  toolsAllow?: string[];
+  config?: OpenClawConfig;
+  sessionKey?: string;
+  agentId?: string;
+  modelProvider?: string;
+  modelId?: string;
+};
+
+function resolveBundleMcpPolicyContext(params: BundleMcpPolicyParams) {
+  const effective = resolveEffectiveToolPolicy({
+    config: params.config,
+    sessionKey: params.sessionKey,
+    agentId: params.agentId,
+    modelProvider: params.modelProvider,
+    modelId: params.modelId,
+  });
+  const policies = [
+    params.toolsAllow ? { allow: params.toolsAllow } : undefined,
+    mergeAlsoAllowPolicy(resolveToolProfilePolicy(effective.profile), effective.profileAlsoAllow),
+    mergeAlsoAllowPolicy(
+      resolveToolProfilePolicy(effective.providerProfile),
+      effective.providerProfileAlsoAllow,
+    ),
+    effective.globalPolicy,
+    effective.globalProviderPolicy,
+    effective.agentPolicy,
+    effective.agentProviderPolicy,
+  ];
+  const candidates = policies.flatMap((policy) => policy?.allow ?? []).map(normalizeToolName);
+  return { candidates, policies };
+}
+
+function isBroadBundleMcpPolicyName(toolName: string): boolean {
+  const normalized = normalizeToolName(toolName);
+  return normalized === "*" || normalized === "bundle-mcp" || normalized === "group:plugins";
+}
+
+function isBundleMcpCandidateAllowedByPolicy(
+  toolName: string,
+  policy: { allow?: string[]; deny?: string[] } | undefined,
+): boolean {
+  if (!policy) {
+    return true;
+  }
+  if (policy.deny?.some(isBroadBundleMcpPolicyName)) {
+    return false;
+  }
+  if (!isToolAllowedByPolicyName(toolName, { deny: policy.deny })) {
+    return false;
+  }
+  if (!policy.allow || policy.allow.length === 0) {
+    return true;
+  }
+  return (
+    policy.allow.some(isBroadBundleMcpPolicyName) ||
+    isToolAllowedByPolicyName(toolName, { allow: policy.allow })
+  );
+}
+
+function doesPolicyAllowAllBundleMcpTools(
+  policy: { allow?: string[]; deny?: string[] } | undefined,
+): boolean {
+  if (!policy) {
+    return true;
+  }
+  if (policy.deny?.some(isBroadBundleMcpPolicyName)) {
+    return false;
+  }
+  return (
+    !policy.allow || policy.allow.length === 0 || policy.allow.some(isBroadBundleMcpPolicyName)
+  );
+}
+
+function resolveAllowedBundleMcpCandidates(params: BundleMcpPolicyParams) {
+  const { candidates, policies } = resolveBundleMcpPolicyContext(params);
+  const specificCandidates = [...new Set(candidates)]
+    .filter((toolName) => toolName.includes(TOOL_NAME_SEPARATOR))
+    .filter((toolName) =>
+      policies.every((policy) => isBundleMcpCandidateAllowedByPolicy(toolName, policy)),
+    );
+  return {
+    allowsAll: policies.every(doesPolicyAllowAllBundleMcpTools),
+    specificCandidates,
+  };
+}
+
+export function collectSpecificBundleMcpServerAllowlist(
+  params: BundleMcpPolicyParams,
+): string[] | undefined {
+  const { allowsAll, specificCandidates } = resolveAllowedBundleMcpCandidates(params);
+  if (allowsAll) {
+    return undefined;
+  }
+  const servers = new Set<string>();
+  for (const toolName of specificCandidates) {
+    const separatorIndex = toolName.indexOf(TOOL_NAME_SEPARATOR);
+    if (separatorIndex > 0) {
+      servers.add(toolName.slice(0, separatorIndex));
+    }
+  }
+  return [...servers].sort();
 }
 
 function hasWildcardToolAllowlist(toolsAllow: string[]): boolean {
@@ -229,10 +337,21 @@ export function shouldCreateBundleMcpRuntimeForAttempt(params: {
   toolsEnabled: boolean;
   disableTools?: boolean;
   toolsAllow?: string[];
+  config?: OpenClawConfig;
+  sessionKey?: string;
+  agentId?: string;
+  modelProvider?: string;
+  modelId?: string;
 }): boolean {
-  return shouldCreateBundleRuntimeForAttempt(params, (normalized) => {
-    return isBundleMcpAllowlistName(normalized) || isPluginGroupAllowlistName(normalized);
-  });
+  if (
+    !shouldCreateBundleRuntimeForAttempt(params, (normalized) => {
+      return isBundleMcpAllowlistName(normalized) || isPluginGroupAllowlistName(normalized);
+    })
+  ) {
+    return false;
+  }
+  const { allowsAll, specificCandidates } = resolveAllowedBundleMcpCandidates(params);
+  return allowsAll || specificCandidates.length > 0;
 }
 
 /**

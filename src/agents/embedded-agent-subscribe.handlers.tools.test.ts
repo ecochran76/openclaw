@@ -2719,6 +2719,172 @@ describe("handleToolExecutionEnd derived tool events", () => {
   });
 });
 
+describe("handleToolExecutionEnd A2A approval prompts", () => {
+  it("emits a deterministic approval payload for config-fixable A2A denials", async () => {
+    const { ctx } = createTestContext();
+    const onToolResult = vi.fn();
+    ctx.params.onToolResult = onToolResult;
+
+    await handleToolExecutionEnd(
+      ctx as never,
+      {
+        type: "tool_execution_end",
+        toolName: "sessions_send",
+        toolCallId: "tool-a2a-approval",
+        isError: false,
+        result: {
+          details: {
+            status: "forbidden",
+            permissionRequest: {
+              kind: "config_permission_request",
+              reason: "agent_to_agent_allow",
+              action: "send",
+              requesterAgentId: "dev-agent",
+              targetAgentId: "gpod",
+              retryable: true,
+              askUser: "Allow agent-to-agent send for dev-agent -> gpod?",
+              missingAllowAgents: ["dev-agent"],
+              suggestedChanges: [
+                {
+                  path: "tools.agentToAgent.allow",
+                  value: ["gpod", "dev-agent"],
+                },
+              ],
+            },
+            pendingApproval: {
+              approvalId: "approval-123",
+              state: "pending",
+              expiresAt: 1_800_000_000_000,
+            },
+          },
+        },
+      } as never,
+    );
+
+    const payload = onToolResult.mock.calls[0]?.[0];
+    expect(payload).toEqual(
+      expect.objectContaining({
+        text: expect.stringContaining(
+          "`dev-agent -> gpod` is blocked by `tools.agentToAgent.allow`",
+        ),
+        channelData: {
+          a2aApproval: {
+            approvalId: "approval-123",
+            requesterAgentId: "dev-agent",
+            targetAgentId: "gpod",
+            reason: "agent_to_agent_allow",
+            action: "send",
+            expiresAt: 1_800_000_000_000,
+          },
+        },
+      }),
+    );
+    expect(payload?.interactive).toBeUndefined();
+    expect(ctx.state.deterministicApprovalPromptSent).toBe(true);
+  });
+
+  it("falls back to plain text when the session is not Slack-scoped", async () => {
+    const { ctx } = createTestContext();
+    ctx.params.sessionKey = "agent:main:telegram:chat:123";
+    const onToolResult = vi.fn();
+    ctx.params.onToolResult = onToolResult;
+
+    await handleToolExecutionEnd(
+      ctx as never,
+      {
+        type: "tool_execution_end",
+        toolName: "session_status",
+        toolCallId: "tool-a2a-approval-plain",
+        isError: false,
+        result: {
+          details: {
+            status: "forbidden",
+            permissionRequest: {
+              kind: "config_permission_request",
+              reason: "agent_to_agent_disabled",
+              action: "status",
+              requesterAgentId: "dev-agent",
+              targetAgentId: "gpod",
+              retryable: true,
+              askUser: "Allow agent-to-agent status for dev-agent -> gpod?",
+              suggestedChanges: [
+                {
+                  path: "tools.agentToAgent.enabled",
+                  value: true,
+                },
+              ],
+            },
+            pendingApproval: {
+              approvalId: "approval-456",
+              state: "pending",
+            },
+          },
+        },
+      } as never,
+    );
+
+    const payload = onToolResult.mock.calls[0]?.[0];
+    expect(payload).toEqual(
+      expect.objectContaining({
+        text: expect.stringContaining(
+          "Approve the config change described above, then retry the request.",
+        ),
+        channelData: {
+          a2aApproval: expect.objectContaining({
+            approvalId: "approval-456",
+            reason: "agent_to_agent_disabled",
+          }),
+        },
+      }),
+    );
+    expect(payload?.interactive).toBeUndefined();
+    expect(ctx.state.deterministicApprovalPromptSent).toBe(true);
+  });
+
+  it("does not trust approval-shaped results from unrelated or mismatched tools", async () => {
+    for (const [toolName, action] of [
+      ["plugin_status", "status"],
+      ["sessions_send", "history"],
+    ] as const) {
+      const { ctx } = createTestContext();
+      const onToolResult = vi.fn();
+      ctx.params.onToolResult = onToolResult;
+
+      await handleToolExecutionEnd(
+        ctx as never,
+        {
+          type: "tool_execution_end",
+          toolName,
+          toolCallId: `tool-untrusted-${toolName}`,
+          isError: false,
+          result: {
+            details: {
+              status: "forbidden",
+              permissionRequest: {
+                kind: "config_permission_request",
+                reason: "agent_to_agent_disabled",
+                action,
+                requesterAgentId: "dev-agent",
+                targetAgentId: "gpod",
+                retryable: true,
+                suggestedChanges: [{ path: "tools.agentToAgent.enabled", value: true }],
+              },
+              pendingApproval: { approvalId: "approval-untrusted", state: "pending" },
+            },
+          },
+        } as never,
+      );
+
+      expect(onToolResult).not.toHaveBeenCalledWith(
+        expect.objectContaining({
+          channelData: expect.objectContaining({ a2aApproval: expect.anything() }),
+        }),
+      );
+      expect(ctx.state.deterministicApprovalPromptSent).toBe(false);
+    }
+  });
+});
+
 describe("messaging tool media URL tracking", () => {
   afterEach(() => {
     setActivePluginRegistry(createTestRegistry());

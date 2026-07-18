@@ -10,7 +10,7 @@ import {
 } from "../code-mode.js";
 import { resolveConversationCapabilityProfile } from "../conversation-capability-profile.js";
 import {
-  applyLocalModelLeanToolSearchDefaults,
+  applyRuntimeToolSearchDefaults,
   filterLocalModelLeanTools,
   isLocalModelLeanEnabled,
   resolveLocalModelLeanPreserveToolNames,
@@ -85,13 +85,12 @@ export function createAgentHarnessToolSurfaceRuntime(params: {
     sessionKey: params.sessionKey,
   });
   const codeModeConfig = resolveCodeModeConfig(params.config, params.agentId);
-  const toolSearchRuntimeConfig = forceDirectMessageTool
-    ? params.config
-    : applyLocalModelLeanToolSearchDefaults({
-        config: params.config,
-        agentId: params.agentId,
-        sessionKey: params.sessionKey,
-      });
+  const toolSearchRuntimeConfig = applyRuntimeToolSearchDefaults({
+    config: params.config,
+    agentId: params.agentId,
+    sessionKey: params.sessionKey,
+    modelProvider: params.modelProvider,
+  });
   const toolSearchConfig = resolveToolSearchConfig(toolSearchRuntimeConfig);
   const toolsAvailable =
     params.modelToolsEnabled &&
@@ -209,6 +208,7 @@ export function createAgentHarnessToolSurfaceRuntime(params: {
             runId: params.runId,
             catalogRef: toolSearchCatalogRef,
             toolHookContext: options.hookContext,
+            visibleToolNames: directoryRequiredToolNames,
             shouldCatalogTool:
               localModelLeanEnabled && toolSearchConfig.mode === "tools"
                 ? shouldCatalogToolForLocalModelLean

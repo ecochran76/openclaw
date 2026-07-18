@@ -22,6 +22,7 @@ export async function getOrCreateSessionMcpRuntime(params: {
   agentDir?: string;
   cfg?: OpenClawConfig;
   manifestRegistry?: Pick<PluginManifestRegistry, "plugins">;
+  includeServerNames?: ReadonlySet<string>;
   requesterSenderId?: string | null;
   agentAccountId?: string | null;
   messageChannel?: string | null;
@@ -40,6 +41,7 @@ export async function getOrCreateRequesterScopedMcpRuntime(params: {
   agentDir?: string;
   cfg?: OpenClawConfig;
   manifestRegistry?: Pick<PluginManifestRegistry, "plugins">;
+  includeServerNames?: ReadonlySet<string>;
   requesterSenderId?: string | null;
   agentAccountId?: string | null;
   messageChannel?: string | null;

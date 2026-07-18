@@ -67,9 +67,14 @@ function resolveOpenClawNativeCodexResponsesStreamFn(params: {
 export function describeEmbeddedAgentStreamStrategy(params: {
   currentStreamFn: StreamFn | undefined;
   providerStreamFn?: StreamFn;
+  shouldUseWebSocketTransport?: boolean;
+  wsApiKey?: string;
   model: EmbeddedRunAttemptParams["model"];
   resolvedApiKey?: string;
 }): string {
+  if (params.shouldUseWebSocketTransport) {
+    return "session-http-fallback";
+  }
   if (params.providerStreamFn) {
     return "provider";
   }
@@ -84,6 +89,11 @@ export function describeEmbeddedAgentStreamStrategy(params: {
   ) {
     return "openclaw-native-codex-responses";
   }
+  if (shouldPreferBoundaryAwareStreamOverSessionCustom(params.model)) {
+    return createBoundaryAwareStreamFnForModel(params.model)
+      ? `boundary-aware:${params.model.api}`
+      : "session-custom";
+  }
   if (isDefaultOpenClawStreamFnForModel(params.model, params.currentStreamFn)) {
     return createBoundaryAwareStreamFnForModel(params.model)
       ? `boundary-aware:${params.model.api}`
@@ -96,6 +106,16 @@ export function describeEmbeddedAgentStreamStrategy(params: {
     return `boundary-aware:${params.model.api}`;
   }
   return "session-custom";
+}
+
+function shouldPreferBoundaryAwareStreamOverSessionCustom(
+  model: EmbeddedRunAttemptParams["model"],
+): boolean {
+  return (
+    model.provider === "openai-codex" ||
+    model.api === "openai-codex-responses" ||
+    model.api === "openai-chatgpt-responses"
+  );
 }
 
 export async function resolveEmbeddedAgentApiKey(params: {
@@ -113,6 +133,8 @@ export async function resolveEmbeddedAgentApiKey(params: {
 export function resolveEmbeddedAgentStreamFn(params: {
   currentStreamFn: StreamFn | undefined;
   providerStreamFn?: StreamFn;
+  shouldUseWebSocketTransport?: boolean;
+  wsApiKey?: string;
   sessionId: string;
   promptCacheKey?: string;
   signal?: AbortSignal;
@@ -122,6 +144,13 @@ export function resolveEmbeddedAgentStreamFn(params: {
   authProfileId?: string;
   authStorage?: { getApiKey(provider: string): Promise<string | undefined> };
 }): StreamFn {
+  const currentStreamFn = params.currentStreamFn ?? streamSimple;
+  if (params.shouldUseWebSocketTransport) {
+    return currentStreamFn;
+  }
+
+  // An explicitly registered provider stream owns its transport contract.
+  // Codex/native shaping below is fallback behavior only.
   if (params.providerStreamFn) {
     return wrapEmbeddedAgentStreamFn(params.providerStreamFn, {
       runSignal: params.signal,
@@ -140,7 +169,6 @@ export function resolveEmbeddedAgentStreamFn(params: {
     });
   }
 
-  const currentStreamFn = params.currentStreamFn ?? streamSimple;
   if (params.model.provider === "anthropic-vertex") {
     return createAnthropicVertexStreamFnForModel(params.model);
   }
@@ -166,6 +194,28 @@ export function resolveEmbeddedAgentStreamFn(params: {
             }
           : context,
     });
+  }
+
+  if (shouldPreferBoundaryAwareStreamOverSessionCustom(params.model)) {
+    const boundaryAwareStreamFn = createBoundaryAwareStreamFnForModel(params.model);
+    if (boundaryAwareStreamFn) {
+      return wrapEmbeddedAgentStreamFn(boundaryAwareStreamFn, {
+        runSignal: params.signal,
+        resolvedApiKey: params.resolvedApiKey,
+        authProfileId: params.authProfileId,
+        authStorage: params.authStorage,
+        providerId: params.model.provider,
+        sessionId: params.sessionId,
+        promptCacheKey: params.promptCacheKey,
+        transformContext: (context) =>
+          context.systemPrompt
+            ? {
+                ...context,
+                systemPrompt: stripSystemPromptCacheBoundary(context.systemPrompt),
+              }
+            : context,
+      });
+    }
   }
 
   if (

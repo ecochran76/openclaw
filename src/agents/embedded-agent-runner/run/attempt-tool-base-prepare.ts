@@ -8,7 +8,7 @@ import { getChannelAgentToolMeta } from "../../channel-tools.js";
 import { resolveCodeModeConfig } from "../../code-mode.js";
 import { resolveConversationCapabilityProfile } from "../../conversation-capability-profile.js";
 import {
-  applyLocalModelLeanToolSearchDefaults,
+  applyRuntimeToolSearchDefaults,
   isLocalModelLeanEnabled,
   resolveLocalModelLeanPreserveToolNames,
 } from "../../local-model-lean.js";
@@ -75,13 +75,12 @@ export function prepareEmbeddedAttemptToolBase(params: {
     toolsAllow: toolsAllowWithForcedRuntimeTools,
   });
   const codeModeConfig = resolveCodeModeConfig(attempt.config, params.sessionAgentId);
-  const toolSearchRuntimeConfig = forceDirectMessageTool
-    ? attempt.config
-    : applyLocalModelLeanToolSearchDefaults({
-        config: attempt.config,
-        agentId: params.sessionAgentId,
-        sessionKey: params.sandboxSessionKey,
-      });
+  const toolSearchRuntimeConfig = applyRuntimeToolSearchDefaults({
+    config: attempt.config,
+    agentId: params.sessionAgentId,
+    sessionKey: params.sandboxSessionKey,
+    modelProvider: attempt.provider,
+  });
   const toolSearchConfig = resolveToolSearchConfig(toolSearchRuntimeConfig);
   const codeModeControlsEnabledForRun =
     toolsEnabled &&

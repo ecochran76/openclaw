@@ -130,6 +130,7 @@ export type SessionMcpRuntimeManager = {
     agentDir?: string;
     cfg?: OpenClawConfig;
     manifestRegistry?: Pick<PluginManifestRegistry, "plugins">;
+    includeServerNames?: ReadonlySet<string>;
     /** Trusted sender id; required to materialize requester-scoped MCP servers. */
     requesterSenderId?: string | null;
     agentAccountId?: string | null;
@@ -146,6 +147,7 @@ export type SessionMcpRuntimeManager = {
     agentDir?: string;
     cfg?: OpenClawConfig;
     manifestRegistry?: Pick<PluginManifestRegistry, "plugins">;
+    includeServerNames?: ReadonlySet<string>;
     requesterSenderId?: string | null;
     agentAccountId?: string | null;
     messageChannel?: string | null;

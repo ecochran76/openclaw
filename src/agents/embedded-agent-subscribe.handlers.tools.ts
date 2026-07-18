@@ -94,8 +94,10 @@ import {
 import { buildToolMutationState, isSameToolMutationAction } from "./tool-mutation.js";
 import { normalizeToolName } from "./tool-policy.js";
 import { readToolResultDetails } from "./tool-result-error.js";
+import type { SessionAccessPermissionRequest } from "./tools/sessions-access.js";
 
 type ExecApprovalReplyModule = typeof import("../infra/exec-approval-reply.js");
+type A2APermissionApprovalReplyModule = typeof import("./a2a/permission-approval-reply.js");
 type HookRunnerGlobalModule = typeof import("../plugins/hook-runner-global.js");
 type ChannelToolProgress = {
   text: string;
@@ -104,9 +106,20 @@ type ChannelToolProgress = {
 const execApprovalReplyModuleLoader = createLazyImportLoader<ExecApprovalReplyModule>(
   () => import("../infra/exec-approval-reply.js"),
 );
+const a2aPermissionApprovalReplyModuleLoader =
+  createLazyImportLoader<A2APermissionApprovalReplyModule>(
+    () => import("./a2a/permission-approval-reply.js"),
+  );
 const hookRunnerGlobalModuleLoader = createLazyImportLoader<HookRunnerGlobalModule>(
   () => import("../plugins/hook-runner-global.js"),
 );
+
+const A2A_PERMISSION_ACTION_BY_TOOL = {
+  sessions_send: "send",
+  sessions_history: "history",
+  sessions_list: "list",
+  session_status: "status",
+} as const;
 const LIVE_EXEC_UPDATE_MIN_INTERVAL_MS = 250;
 const TRACE_REQUIRED_PARAM_GROUPS = {
   read: [{ keys: ["path", "file_path"], label: "path" }],
@@ -129,6 +142,10 @@ function isMiddlewareToolResultError(result: unknown): boolean {
 
 function loadExecApprovalReply(): Promise<ExecApprovalReplyModule> {
   return execApprovalReplyModuleLoader.load();
+}
+
+function loadA2APermissionApprovalReply(): Promise<A2APermissionApprovalReplyModule> {
+  return a2aPermissionApprovalReplyModuleLoader.load();
 }
 
 function loadHookRunnerGlobal(): Promise<HookRunnerGlobalModule> {
@@ -760,6 +777,140 @@ function readExecApprovalUnavailableDetails(result: unknown): {
   };
 }
 
+function readA2APermissionApprovalDetails(
+  result: unknown,
+  toolName: string,
+): {
+  approvalId: string;
+  expiresAt?: number;
+  permissionRequest: SessionAccessPermissionRequest;
+} | null {
+  if (!result || typeof result !== "object") {
+    return null;
+  }
+  const outer = result as Record<string, unknown>;
+  const details =
+    outer.details && typeof outer.details === "object" && !Array.isArray(outer.details)
+      ? (outer.details as Record<string, unknown>)
+      : outer;
+  if (details.status !== "forbidden") {
+    return null;
+  }
+  const pendingApproval =
+    details.pendingApproval && typeof details.pendingApproval === "object"
+      ? (details.pendingApproval as Record<string, unknown>)
+      : null;
+  const permissionRequest =
+    details.permissionRequest && typeof details.permissionRequest === "object"
+      ? (details.permissionRequest as Record<string, unknown>)
+      : null;
+  const expectedAction =
+    A2A_PERMISSION_ACTION_BY_TOOL[toolName as keyof typeof A2A_PERMISSION_ACTION_BY_TOOL];
+  if (!pendingApproval || !permissionRequest || !expectedAction) {
+    return null;
+  }
+  const approvalId =
+    typeof pendingApproval.approvalId === "string" ? pendingApproval.approvalId.trim() : "";
+  const state = typeof pendingApproval.state === "string" ? pendingApproval.state.trim() : "";
+  const reason =
+    permissionRequest.reason === "agent_to_agent_disabled" ||
+    permissionRequest.reason === "agent_to_agent_allow" ||
+    permissionRequest.reason === "session_visibility"
+      ? permissionRequest.reason
+      : null;
+  const action =
+    permissionRequest.action === "send" ||
+    permissionRequest.action === "history" ||
+    permissionRequest.action === "list" ||
+    permissionRequest.action === "status"
+      ? permissionRequest.action
+      : null;
+  const requesterAgentId =
+    typeof permissionRequest.requesterAgentId === "string"
+      ? permissionRequest.requesterAgentId.trim()
+      : "";
+  const targetAgentId =
+    typeof permissionRequest.targetAgentId === "string"
+      ? permissionRequest.targetAgentId.trim()
+      : "";
+  const suggestedChanges = Array.isArray(permissionRequest.suggestedChanges)
+    ? permissionRequest.suggestedChanges
+        .map((entry) => {
+          if (!entry || typeof entry !== "object" || Array.isArray(entry)) {
+            return null;
+          }
+          const record = entry as Record<string, unknown>;
+          const path =
+            record.path === "tools.agentToAgent.enabled" ||
+            record.path === "tools.agentToAgent.allow" ||
+            record.path === "tools.sessions.visibility"
+              ? record.path
+              : null;
+          if (!path) {
+            return null;
+          }
+          const value = record.value;
+          if (typeof value !== "boolean" && typeof value !== "string" && !Array.isArray(value)) {
+            return null;
+          }
+          return {
+            path,
+            value: value as boolean | string | string[],
+          };
+        })
+        .filter(
+          (
+            entry,
+          ): entry is {
+            path:
+              | "tools.agentToAgent.enabled"
+              | "tools.agentToAgent.allow"
+              | "tools.sessions.visibility";
+            value: boolean | string | string[];
+          } => Boolean(entry),
+        )
+    : [];
+  if (
+    !approvalId ||
+    state !== "pending" ||
+    permissionRequest.kind !== "config_permission_request" ||
+    !reason ||
+    action !== expectedAction ||
+    !requesterAgentId ||
+    !targetAgentId ||
+    suggestedChanges.length === 0 ||
+    permissionRequest.retryable !== true
+  ) {
+    return null;
+  }
+  const missingAllowAgents = Array.isArray(permissionRequest.missingAllowAgents)
+    ? permissionRequest.missingAllowAgents.filter(
+        (entry): entry is string => typeof entry === "string" && entry.trim().length > 0,
+      )
+    : undefined;
+  return {
+    approvalId,
+    expiresAt:
+      typeof pendingApproval.expiresAt === "number" && Number.isFinite(pendingApproval.expiresAt)
+        ? pendingApproval.expiresAt
+        : undefined,
+    permissionRequest: {
+      kind: "config_permission_request",
+      reason,
+      action,
+      requesterAgentId,
+      targetAgentId,
+      retryable: true,
+      askUser:
+        typeof permissionRequest.askUser === "string"
+          ? permissionRequest.askUser
+          : "Ask the user to approve this agent-to-agent permission change and retry.",
+      suggestedChanges,
+      ...(missingAllowAgents?.length ? { missingAllowAgents } : {}),
+    },
+  };
+}
+
 async function emitToolResultOutput(params: {
   ctx: ToolHandlerContext;
   toolName: string;
@@ -828,6 +979,32 @@ async function emitToolResultOutput(params: {
           sentApproverDms: approvalUnavailable.sentApproverDms,
           host: approvalUnavailable.host,
           nodeId: approvalUnavailable.nodeId,
+        }),
+      );
+      ctx.state.deterministicApprovalPromptSent = true;
+    } catch {
+      ctx.state.deterministicApprovalPromptSent = false;
+    } finally {
+      ctx.state.deterministicApprovalPromptPending = false;
+    }
+    return;
+  }
+
+  const a2aApprovalPending = readA2APermissionApprovalDetails(result, rawToolName);
+  if (!isToolError && a2aApprovalPending) {
+    if (!ctx.params.onToolResult) {
+      return;
+    }
+    ctx.state.deterministicApprovalPromptPending = true;
+    try {
+      const { buildA2APermissionApprovalPendingReplyPayload } =
+        await loadA2APermissionApprovalReply();
+      await ctx.params.onToolResult(
+        buildA2APermissionApprovalPendingReplyPayload({
+          approvalId: a2aApprovalPending.approvalId,
+          permissionRequest: a2aApprovalPending.permissionRequest,
+          expiresAt: a2aApprovalPending.expiresAt,
+          sessionKey: ctx.params.sessionKey,
         }),
       );
       ctx.state.deterministicApprovalPromptSent = true;
@@ -1240,12 +1417,13 @@ export async function handleToolExecutionEnd(
   const isError = evt.isError;
   const result = evt.result;
   const toolSendReceiptResult = ctx.consumeToolSendReceipt?.(toolCallId);
+  const a2aApprovalPending = readA2APermissionApprovalDetails(result, toolName);
   const observerIsError = isError || isToolResultError(result);
   const sanitizedResult = sanitizeToolResult(result);
   const approvalUnavailable =
     isExecToolName(toolName) &&
     readExecToolDetails(sanitizedResult)?.status === "approval-unavailable";
-  const isToolError = observerIsError && !approvalUnavailable;
+  const isToolError = observerIsError && !approvalUnavailable && !a2aApprovalPending;
   try {
     ctx.params.onAgentToolResult?.({
       toolName,

@@ -15,6 +15,7 @@ import type { prepareEmbeddedAttemptSetup } from "./attempt-setup.js";
 import type { prepareEmbeddedAttemptToolBase } from "./attempt-tool-base-prepare.js";
 import {
   applyEmbeddedAttemptToolsAllow,
+  collectSpecificBundleMcpServerAllowlist,
   shouldCreateBundleLspRuntimeForAttempt,
   shouldCreateBundleMcpRuntimeForAttempt,
 } from "./attempt-tool-construction-plan.js";
@@ -72,7 +73,22 @@ export async function prepareEmbeddedAttemptBundleTools(params: {
       toolsEnabled,
       disableTools: params.attempt.disableTools || params.isRawModelRun,
       toolsAllow: params.attempt.toolsAllow,
+      config: params.attempt.config,
+      sessionKey: params.attempt.sessionKey,
+      agentId: params.sessionAgentId,
+      modelProvider: params.attempt.provider,
+      modelId: params.attempt.modelId,
     });
+  const bundleMcpAllowedServerNames = bundleMcpEnabled
+    ? collectSpecificBundleMcpServerAllowlist({
+        toolsAllow: params.attempt.toolsAllow,
+        config: params.attempt.config,
+        sessionKey: params.attempt.sessionKey,
+        agentId: params.sessionAgentId,
+        modelProvider: params.attempt.provider,
+        modelId: params.attempt.modelId,
+      })
+    : undefined;
   const bundleMetadataSnapshot = params.getCurrentAttemptPluginMetadataSnapshot();
   // Scoped registries are partial views; only complete snapshots can bypass bundle discovery.
   const bundleManifestRegistry =
@@ -87,6 +103,9 @@ export async function prepareEmbeddedAttemptBundleTools(params: {
         agentDir: params.agentDir,
         cfg: params.attempt.config,
         manifestRegistry: bundleManifestRegistry,
+        includeServerNames: bundleMcpAllowedServerNames
+          ? new Set(bundleMcpAllowedServerNames)
+          : undefined,
         // senderId is only set from the verified inbound sender (sessionCtx.SenderId
         // or the triggering run's sender on follow-ups). Cron/subagent/heartbeat runs
         // leave it unset, so requester-scoped MCP stays fail-closed for those paths.

@@ -74,8 +74,18 @@ export function createSessionMcpRuntimeManager(
       const safeServerNamesByServer = assignSafeServerNames(
         Object.keys(fullConfig.loaded.mcpServers),
       );
+      const selectedConfig = params.includeServerNames
+        ? loadSessionMcpConfig({
+            workspaceDir: params.workspaceDir,
+            cfg: params.cfg,
+            logDiagnostics: false,
+            manifestRegistry: params.manifestRegistry,
+            includeServerNames: params.includeServerNames,
+            safeServerNamesByServer,
+          })
+        : fullConfig;
       const { staticServers, requesterScopedServerNames } = partitionMcpServersByConnectionScope(
-        fullConfig.loaded.mcpServers,
+        selectedConfig.loaded.mcpServers,
       );
       const hasRequesterScoped = requesterScopedServerNames.length > 0;
 
@@ -89,6 +99,7 @@ export function createSessionMcpRuntimeManager(
           cfg: params.cfg,
           manifestRegistry: params.manifestRegistry,
           idleTtlMs,
+          includeServerNames: params.includeServerNames,
           safeServerNamesByServer,
         });
       }
@@ -107,6 +118,7 @@ export function createSessionMcpRuntimeManager(
             cfg: params.cfg,
             manifestRegistry: params.manifestRegistry,
             idleTtlMs,
+            includeServerNames: params.includeServerNames,
             excludeServerNames: scopedNameSet,
             safeServerNamesByServer,
           }),

@@ -3,6 +3,7 @@
  * Removes high-latency or channel-dependent tools for local models while
  * preserving explicitly required delivery tools.
  */
+import { normalizeProviderId } from "@openclaw/model-catalog-core/provider-id";
 import type { OpenClawConfig } from "../config/types.openclaw.js";
 import { normalizeAgentId, parseAgentSessionKey } from "../routing/session-key.js";
 import { resolveAgentConfig, resolveDefaultAgentId } from "./agent-scope-config.js";
@@ -27,6 +28,8 @@ const LOCAL_MODEL_LEAN_TOOL_SEARCH_DEFAULTS = {
   searchDefaultLimit: 5,
   maxSearchLimit: 10,
 } as const;
+const PROVIDER_TOOL_LIMIT_TOOL_SEARCH_DEFAULTS = LOCAL_MODEL_LEAN_TOOL_SEARCH_DEFAULTS;
+const PROVIDERS_WITH_STRICT_TOOL_COUNT_LIMITS = new Set(["xai"]);
 
 function resolvePreservedLocalModelLeanToolNames(names?: Iterable<string>) {
   if (!names) {
@@ -130,6 +133,35 @@ export function applyLocalModelLeanToolSearchDefaults(params: {
     tools: {
       ...params.config.tools,
       toolSearch: LOCAL_MODEL_LEAN_TOOL_SEARCH_DEFAULTS,
+    },
+  };
+}
+
+function providerNeedsToolSearchDefaults(modelProvider?: string): boolean {
+  const normalizedProvider = modelProvider ? normalizeProviderId(modelProvider) : "";
+  return PROVIDERS_WITH_STRICT_TOOL_COUNT_LIMITS.has(normalizedProvider);
+}
+
+export function applyRuntimeToolSearchDefaults(params: {
+  config?: OpenClawConfig;
+  agentId?: string;
+  sessionKey?: string;
+  modelProvider?: string;
+}): OpenClawConfig | undefined {
+  if (params.config?.tools?.toolSearch !== undefined) {
+    return params.config;
+  }
+  if (isLocalModelLeanEnabled(params)) {
+    return applyLocalModelLeanToolSearchDefaults(params);
+  }
+  if (!providerNeedsToolSearchDefaults(params.modelProvider)) {
+    return params.config;
+  }
+  return {
+    ...params.config,
+    tools: {
+      ...params.config?.tools,
+      toolSearch: PROVIDER_TOOL_LIMIT_TOOL_SEARCH_DEFAULTS,
     },
   };
 }

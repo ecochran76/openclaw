@@ -151,11 +151,25 @@ describe("formatAssistantErrorText", () => {
       "LLM request failed: provider rejected the request schema or tool payload.",
     );
   });
-  it("sanitizes Codex error-prefixed JSON payloads", () => {
+  it("sanitizes provider-prefixed JSON payloads", () => {
     const msg = makeAssistantError(
       'Codex error: {"type":"error","error":{"message":"Something exploded","type":"server_error"},"sequence_number":2}',
     );
     expect(formatAssistantErrorText(msg)).toBe("LLM error server_error: Something exploded");
+  });
+  it("returns friendly copy for provider-prefixed generic server errors", () => {
+    const msg = makeAssistantError(
+      'Codex error: {"type":"error","error":{"message":"An error occurred while processing your request.","type":"server_error"}}',
+    );
+    expect(formatAssistantErrorText(msg)).toBe(
+      "The AI service hit a temporary server error. Please try again in a moment.",
+    );
+  });
+  it("returns friendly retry copy for message-less generic server errors", () => {
+    const msg = makeAssistantError('Codex error: {"type":"error","error":{"type":"server_error"}}');
+    expect(formatAssistantErrorText(msg)).toBe(
+      "The AI service hit a temporary server error. Please try again in a moment.",
+    );
   });
   it("returns a friendly billing message for credit balance errors", () => {
     const msg = makeAssistantError("Your credit balance is too low to access the Anthropic API.");
@@ -359,6 +373,32 @@ describe("formatAssistantErrorText", () => {
     );
   });
 
+  it("returns a canonical CLI reauth hint for legacy openai-codex auth failures", () => {
+    const msg = makeAssistantError(
+      "OAuth token refresh failed for openai-codex (openai-codex:dillan): refresh_token_reused. Please try again or re-authenticate.",
+    );
+    expect(
+      formatAssistantErrorText(msg, {
+        provider: "openai-codex",
+        model: "gpt-5.4",
+        authProfileId: "openai-codex:dillan",
+      }),
+    ).toContain("openclaw models auth login --provider openai --profile-id openai-codex:dillan");
+  });
+
+  it("returns a CLI reauth hint for non-codex auth failures", () => {
+    const msg = makeAssistantError(
+      "OAuth token refresh failed for anthropic (anthropic:work): invalid_grant. Please try again or re-authenticate.",
+    );
+    expect(
+      formatAssistantErrorText(msg, {
+        provider: "anthropic",
+        model: "claude-sonnet-4",
+        authProfileId: "anthropic:work",
+      }),
+    ).toContain("openclaw models auth login --provider anthropic --profile-id anthropic:work");
+  });
+
   it("returns a friendly message for empty stream chunk errors", () => {
     const msg = makeAssistantError("request ended without sending any chunks");
     expect(formatAssistantErrorText(msg)).toBe("LLM request timed out.");
@@ -397,7 +437,7 @@ describe("formatAssistantErrorText", () => {
 
   it("returns an explicit re-authentication message for OAuth refresh failures", () => {
     const msg = makeAssistantError(
-      "OAuth token refresh failed for openai: invalid_grant. Please try again or re-authenticate.",
+      "OAuth token refresh failed for openai (openai:dillan): invalid_grant. Please try again or re-authenticate.",
     );
     expect(formatAssistantErrorText(msg)).toBe(
       "Authentication refresh failed. Re-authenticate this provider and try again.",
@@ -534,7 +574,7 @@ describe("formatAssistantErrorText", () => {
     });
     const friendly = formatAssistantErrorText(missingScope);
     expect(friendly).not.toBe(authInvalidTokenCopy);
-    expect(friendly).toContain("permission_error");
+    expect(friendly).toBe("🔐 Authentication failed. Re-authenticate and try again.");
   });
 
   it("returns a proxy-specific message for proxy misroutes", () => {
@@ -628,6 +668,14 @@ describe("formatRawAssistantErrorForUi", () => {
 
   it("renders a generic unknown error message when raw is empty", () => {
     expect(formatRawAssistantErrorForUi("")).toContain("unknown error");
+  });
+
+  it("rewrites generic provider server errors to friendly copy", () => {
+    expect(
+      formatRawAssistantErrorForUi(
+        'Codex error: {"type":"error","error":{"type":"server_error","message":"An error occurred while processing your request."},"request_id":"req_123"}',
+      ),
+    ).toBe("The AI service hit a temporary server error. Please try again in a moment.");
   });
 
   it("formats plain HTTP status lines", () => {

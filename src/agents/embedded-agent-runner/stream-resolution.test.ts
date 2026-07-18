@@ -106,6 +106,7 @@ describe("describeEmbeddedAgentStreamStrategy", () => {
     expect(
       describeEmbeddedAgentStreamStrategy({
         currentStreamFn: undefined,
+        shouldUseWebSocketTransport: false,
         model: {
           api: "openai-chatgpt-responses",
           provider: "openai",
@@ -113,6 +114,34 @@ describe("describeEmbeddedAgentStreamStrategy", () => {
         } as never,
       }),
     ).toBe("openclaw-native-codex-responses");
+  });
+
+  it("describes an explicit Codex provider stream as provider-owned", () => {
+    expect(
+      describeEmbeddedAgentStreamStrategy({
+        currentStreamFn: undefined,
+        providerStreamFn: vi.fn() as never,
+        model: {
+          api: "openai-chatgpt-responses",
+          provider: "openai",
+          id: "gpt-5.6-sol",
+        } as never,
+      }),
+    ).toBe("provider");
+  });
+
+  it("describes an explicit Anthropic Vertex provider stream as provider-owned", () => {
+    expect(
+      describeEmbeddedAgentStreamStrategy({
+        currentStreamFn: undefined,
+        providerStreamFn: vi.fn() as never,
+        model: {
+          api: "anthropic-messages",
+          provider: "anthropic-vertex",
+          id: "claude-sonnet-4-5",
+        } as never,
+      }),
+    ).toBe("provider");
   });
 
   it("keeps custom session streams labeled as custom", () => {
@@ -140,6 +169,21 @@ describe("describeEmbeddedAgentStreamStrategy", () => {
         resolvedApiKey: "runtime-key",
       }),
     ).toBe("boundary-aware:anthropic-messages");
+  });
+
+  it("prefers boundary-aware Codex responses over custom session streams", () => {
+    expect(
+      describeEmbeddedAgentStreamStrategy({
+        currentStreamFn: vi.fn() as never,
+        shouldUseWebSocketTransport: false,
+        model: {
+          api: "openai-chatgpt-responses",
+          provider: "openai",
+          id: "gpt-5.5",
+        } as never,
+        resolvedApiKey: "oauth-bearer-token",
+      }),
+    ).toBe("boundary-aware:openai-chatgpt-responses");
   });
 });
 
@@ -213,6 +257,7 @@ describe("resolveEmbeddedAgentStreamFn", () => {
     useNativeStreamFn(nativeStreamFn as never);
     const streamFn = resolveEmbeddedAgentStreamFn({
       currentStreamFn: undefined,
+      shouldUseWebSocketTransport: false,
       sessionId: "session-1",
       model: {
         api: "openai-chatgpt-responses",
@@ -234,6 +279,29 @@ describe("resolveEmbeddedAgentStreamFn", () => {
     expect(requireRecord(result.context, "codex native context").systemPrompt).toBe("intro\ntail");
     expect(requireRecord(result.options, "codex native options").apiKey).toBe("oauth-bearer-token");
     expect(nativeStreamFn).toHaveBeenCalledTimes(1);
+  });
+
+  it("routes custom Codex responses streams through boundary-aware transports", async () => {
+    const sessionStreamFn = vi.fn(async (_model, _context, options) => options);
+    const innerStreamFn = vi.fn(async (_model, _context, options) => options);
+    overrideBoundaryAwareStreamFnOnce(innerStreamFn as never);
+    const streamFn = resolveEmbeddedAgentStreamFn({
+      currentStreamFn: sessionStreamFn as never,
+      shouldUseWebSocketTransport: false,
+      sessionId: "session-1",
+      model: {
+        api: "openai-chatgpt-responses",
+        provider: "openai",
+        id: "gpt-5.5",
+      } as never,
+      resolvedApiKey: "oauth-bearer-token",
+    });
+
+    await expect(
+      streamFn({ provider: "openai", id: "gpt-5.5" } as never, {} as never, {}),
+    ).resolves.toMatchObject({ apiKey: "oauth-bearer-token" });
+    expect(innerStreamFn).toHaveBeenCalledTimes(1);
+    expect(sessionStreamFn).not.toHaveBeenCalled();
   });
 
   it("routes GitHub Copilot fallbacks through boundary-aware transports", () => {
@@ -522,6 +590,53 @@ describe("resolveEmbeddedAgentStreamFn", () => {
     );
     expect(result.apiKey).toBe("oauth-bearer-token");
     expect(nativeStreamFn).toHaveBeenCalledTimes(1);
+  });
+
+  it("keeps explicit provider streams ahead of the Codex Responses fallback", async () => {
+    const nativeStreamFn = vi.fn(async (_model, _context, options) => options);
+    const providerStreamFn = vi.fn(async (_model, _context, options) => options);
+    useNativeStreamFn(nativeStreamFn as never);
+    const streamFn = resolveEmbeddedAgentStreamFn({
+      currentStreamFn: undefined,
+      providerStreamFn,
+      sessionId: "session-1",
+      model: {
+        api: "openai-chatgpt-responses",
+        provider: "openai",
+        id: "gpt-5.5",
+      } as never,
+      resolvedApiKey: "oauth-bearer-token",
+    });
+
+    const result = await expectStreamResultRecord(
+      streamFn({ provider: "openai", id: "gpt-5.5" } as never, {} as never, {}),
+      "explicit codex provider result",
+    );
+    expect(result.apiKey).toBe("oauth-bearer-token");
+    expect(providerStreamFn).toHaveBeenCalledTimes(1);
+    expect(nativeStreamFn).not.toHaveBeenCalled();
+  });
+
+  it("keeps explicit provider streams ahead of the Anthropic Vertex fallback", async () => {
+    const providerStreamFn = vi.fn(async (_model, _context, options) => options);
+    const streamFn = resolveEmbeddedAgentStreamFn({
+      currentStreamFn: undefined,
+      providerStreamFn,
+      sessionId: "session-1",
+      model: {
+        api: "anthropic-messages",
+        provider: "anthropic-vertex",
+        id: "claude-sonnet-4-5",
+      } as never,
+      resolvedApiKey: "provider-key",
+    });
+
+    const result = await expectStreamResultRecord(
+      streamFn({ provider: "anthropic-vertex", id: "claude-sonnet-4-5" } as never, {} as never, {}),
+      "explicit Anthropic Vertex provider result",
+    );
+    expect(result.apiKey).toBe("provider-key");
+    expect(providerStreamFn).toHaveBeenCalledTimes(1);
   });
 
   it("falls back to authStorage when no resolved api key is available for OpenClaw native fallback", async () => {

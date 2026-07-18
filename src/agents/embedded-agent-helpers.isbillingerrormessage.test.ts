@@ -1433,7 +1433,6 @@ describe("classifyFailoverReason provider messages", () => {
       ),
     ).toBe("auth_permanent");
   });
-
   it("classifies Chinese provider error messages correctly", () => {
     // ZhipuAI/GLM error code 1234: "网络错误" (network error) — real production error
     // from https://github.com/openclaw/openclaw/issues/56242
@@ -1491,6 +1490,14 @@ describe("classifyFailoverReason provider messages", () => {
     expect(classifyFailoverReason("服务过载，请稍后重试")).toBe("overloaded");
     expect(classifyFailoverReason("当前负载过高")).toBe("overloaded");
   });
+
+  it("preserves provider-prefixed JSON server_error classifications", () => {
+    expect(
+      classifyFailoverReason(
+        'Codex error: {"type":"error","error":{"type":"server_error","message":"An error occurred while processing your request."},"request_id":"req_123"}',
+      ),
+    ).toBe("server_error");
+  });
 });
 
 describe("classifyProviderRuntimeFailureKind", () => {
@@ -1537,6 +1544,9 @@ describe("classifyProviderRuntimeFailureKind", () => {
   it("classifies OAuth refresh failures", () => {
     const refreshFailures = [
       "OAuth token refresh failed for openai: invalid_grant. Please try again or re-authenticate.",
+      "OAuth token refresh failed for openai (openai:default): invalid_grant. Please try again or re-authenticate.",
+      "OAuth token refresh failed for openai-codex: invalid_grant. Please try again or re-authenticate.",
+      "OAuth token refresh failed for openai-codex (openai-codex:default): invalid_grant. Please try again or re-authenticate.",
       "Your access token could not be refreshed because you have since logged out or signed in to another account. Please sign in again.",
       "Your authentication session could not be refreshed automatically. Please log out and sign in again.",
     ];
@@ -1566,6 +1576,10 @@ describe("classifyProviderRuntimeFailureKind", () => {
   });
 
   it("classifies OAuth refresh timeouts and lock contention distinctly", () => {
+    expect(classifyFailoverReason("auth refresh request timed out after 10s")).toBe("auth");
+    expect(classifyProviderRuntimeFailureKind("auth refresh request timed out after 10s")).toBe(
+      "refresh_timeout",
+    );
     expect(
       classifyProviderRuntimeFailureKind(
         'OAuth refresh call "refreshProviderOAuthCredentialWithPlugin(openai)" exceeded hard timeout (120000ms)',

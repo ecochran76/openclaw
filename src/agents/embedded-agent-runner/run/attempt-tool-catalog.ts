@@ -150,6 +150,7 @@ export function prepareEmbeddedAttemptToolCatalog(input: {
           runId: attempt.runId,
           catalogRef: preparedToolBase.toolSearchCatalogRef,
           toolHookContext: catalogToolHookContext,
+          visibleToolNames: directoryRequiredToolNames,
           shouldCatalogTool:
             localModelLeanEnabled && toolSearchConfig.mode === "tools"
               ? shouldCatalogToolForLocalModelLean

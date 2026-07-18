@@ -21,6 +21,7 @@ export {
   parseApiErrorInfo,
 } from "../../shared/assistant-error-format.js";
 import { classifyOAuthRefreshFailure } from "../auth-profiles/oauth-refresh-failure.js";
+import { formatAuthRecoveryHint } from "../auth-profiles/reauth-guidance.js";
 import { formatExecDeniedUserMessage } from "../exec-approval-result.js";
 import { isModelNotFoundErrorMessage } from "../live-model-errors.js";
 import { formatSandboxToolPolicyBlockedMessage } from "../sandbox/runtime-status.js";
@@ -82,6 +83,28 @@ const MODEL_NOT_FOUND_USER_TEXT =
 const MAX_FAILOVER_DETAIL_CANDIDATES = 12;
 const MAX_FAILOVER_DETAIL_CHARS = 1_000;
 
+function formatAuthFailureMessage(params: {
+  provider?: string;
+  model?: string;
+  authProfileId?: string;
+}): string {
+  const provider = params.provider?.trim();
+  const model = params.model?.trim();
+  const profileId = params.authProfileId?.trim();
+  const target = provider && model ? `${provider}/${model}` : provider || "the selected model";
+  const recoveryHint = formatAuthRecoveryHint({
+    provider,
+    authProfileId: profileId,
+  });
+
+  if (provider && profileId) {
+    return [`🔐 Auth failed for ${profileId} on ${target}.`, recoveryHint].join(" ");
+  }
+  if (provider) {
+    return [`🔐 Auth failed for ${target}.`, recoveryHint].join(" ");
+  }
+  return `🔐 Authentication failed. ${recoveryHint}`;
+}
 /** Detect provider errors that require reasoning to stay enabled. */
 export function isReasoningConstraintErrorMessage(raw: string): boolean {
   if (!raw) {
@@ -613,8 +636,15 @@ function isTimeoutTransportErrorMessage(raw: string, status?: number): boolean {
   return false;
 }
 
+function isAuthRefreshRequestTimeoutMessage(raw: string): boolean {
+  return /\bauth refresh request timed out\b/i.test(raw);
+}
+
 function isOAuthRefreshTimeoutMessage(raw: string): boolean {
-  return /\boauth refresh call\b.*\bexceeded hard timeout\b/i.test(raw);
+  return (
+    isAuthRefreshRequestTimeoutMessage(raw) ||
+    /\boauth refresh call\b.*\bexceeded hard timeout\b/i.test(raw)
+  );
 }
 
 function isOAuthRefreshContentionMessage(raw: string): boolean {
@@ -1007,6 +1037,9 @@ function classifyFailoverClassificationFromMessage(
   if (isContextOverflowError(raw)) {
     return { kind: "context_overflow" };
   }
+  if (isAuthRefreshRequestTimeoutMessage(raw)) {
+    return toReasonClassification("auth");
+  }
   const reasonFrom402Text = classifyFailoverReasonFrom402Text(raw);
   if (reasonFrom402Text) {
     return toReasonClassification(reasonFrom402Text);
@@ -1227,6 +1260,9 @@ export function classifyProviderRuntimeFailureKind(
   if (message && isOAuthCallbackValidationMessage(message)) {
     return "callback_validation";
   }
+  if (message && isReplayInvalidErrorMessage(message)) {
+    return "replay_invalid";
+  }
   if (message && classifyOAuthRefreshFailure(message)) {
     return "auth_refresh";
   }
@@ -1265,9 +1301,6 @@ export function classifyProviderRuntimeFailureKind(
   }
   if (message && isSandboxBlockedErrorMessage(message)) {
     return "sandbox_blocked";
-  }
-  if (message && isReplayInvalidErrorMessage(message)) {
-    return "replay_invalid";
   }
   if (message && isSchemaErrorMessage(message)) {
     return "schema";
@@ -1341,6 +1374,7 @@ export function formatAssistantErrorText(
     /** Credential auth mode (e.g. "oauth", "token", "api_key", "aws-sdk").
      * When "oauth" or "token", billing copy omits API-key language (#80877). */
     authMode?: string;
+    authProfileId?: string;
   },
 ): string | undefined {
   // Also format errors if errorMessage is present, even if stopReason isn't "error"
@@ -1382,7 +1416,13 @@ export function formatAssistantErrorText(
   }
 
   if (providerRuntimeFailureKind === "auth_refresh") {
-    return "Authentication refresh failed. Re-authenticate this provider and try again.";
+    if (!opts?.provider && !opts?.authProfileId) {
+      return "Authentication refresh failed. Re-authenticate this provider and try again.";
+    }
+    return `Authentication refresh failed. ${formatAuthRecoveryHint({
+      provider: opts?.provider,
+      authProfileId: opts?.authProfileId,
+    })}`;
   }
 
   if (providerRuntimeFailureKind === "refresh_contention") {
@@ -1523,7 +1563,7 @@ export function formatAssistantErrorText(
   }
 
   if (providerRuntimeFailureKind === "schema") {
-    return PROVIDER_SCHEMA_REJECTION_USER_TEXT;
+    return "LLM request failed: provider rejected the request schema or tool payload.";
   }
 
   if (providerRuntimeFailureKind === "replay_invalid") {
@@ -1531,6 +1571,14 @@ export function formatAssistantErrorText(
       "Session history or replay state is invalid. " +
       "Use /new to start a fresh session and try again."
     );
+  }
+
+  if (isAuthPermanentErrorMessage(raw) || isAuthErrorMessage(raw)) {
+    return formatAuthFailureMessage({
+      provider: opts?.provider,
+      model: opts?.model ?? msg.model,
+      authProfileId: opts?.authProfileId,
+    });
   }
 
   if (isLikelyHttpErrorText(raw) || isRawApiErrorPayload(raw)) {
@@ -1580,6 +1628,7 @@ export function formatUserFacingAssistantErrorText(
     model?: string;
     /** Credential auth mode for billing copy (#80877). */
     authMode?: string;
+    authProfileId?: string;
   },
 ): string {
   const friendlyError = formatAssistantErrorText(msg, opts);
@@ -1639,22 +1688,35 @@ function isJsonApiInternalServerError(raw: string): boolean {
   if (!raw) {
     return false;
   }
-  const value = normalizeLowercaseStringOrEmpty(raw);
-  // Providers wrap transient 5xx errors in JSON payloads like:
-  // {"type":"error","error":{"type":"api_error","message":"Internal server error"}}
-  // Non-standard providers (e.g. MiniMax) may use different message text:
-  // {"type":"api_error","message":"unknown error, 520 (1000)"}
-  if (!value.includes('"type":"api_error"')) {
-    return false;
-  }
-  // Billing and auth errors can also carry "type":"api_error". Exclude them so
-  // the more specific classifiers further down the chain handle them correctly.
+  const info = parseApiErrorInfo(raw);
+  // Billing and auth errors can also carry api_error/server_error wrappers.
+  // Let the more specific classifiers handle those instead of treating them as
+  // transient infrastructure failures.
   if (isBillingErrorMessage(raw) || isAuthErrorMessage(raw) || isAuthPermanentErrorMessage(raw)) {
     return false;
   }
-  // Only match when the message contains a transient signal. api_error payloads
-  // with non-transient messages (e.g. context overflow, schema validation) should
-  // fall through to more specific classifiers or remain unclassified.
+  if (info) {
+    const type = info.type?.toLowerCase();
+    const message = info.message ?? "";
+    // Providers often wrap transient 5xx failures in JSON payloads like:
+    // {"type":"error","error":{"type":"api_error","message":"Internal server error"}}
+    // {"type":"error","error":{"type":"server_error","message":"An error occurred ..."}}
+    // Non-standard providers (e.g. MiniMax) may use broader text such as:
+    // {"type":"api_error","message":"unknown error, 520 (1000)"}
+    if (type === "server_error") {
+      return true;
+    }
+    if (type === "api_error") {
+      return (
+        /internal server error|internal error/i.test(message) ||
+        API_ERROR_TRANSIENT_SIGNALS_RE.test(message)
+      );
+    }
+  }
+  const value = raw.toLowerCase();
+  if (!value.includes('"type":"api_error"')) {
+    return false;
+  }
   return API_ERROR_TRANSIENT_SIGNALS_RE.test(raw);
 }
 
