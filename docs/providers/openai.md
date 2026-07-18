@@ -305,6 +305,12 @@ for the full example.
         ```bash
         openclaw models auth login --provider openai --device-code
         ```
+
+        To store the login under an explicit shared profile id:
+
+        ```bash
+        openclaw models auth login --provider openai --profile-id work
+        ```
       </Step>
       <Step title="Use the canonical OpenAI model route">
         ```bash
