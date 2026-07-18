@@ -152,6 +152,89 @@ describe("resolveProviderAuths plugin boundary", () => {
     expect(ensureAuthProfileStoreMock).not.toHaveBeenCalled();
   });
 
+  it("resolves usage auth from the explicitly selected profile", async () => {
+    const store = {
+      profiles: {
+        "openai:first": {
+          type: "oauth",
+          provider: "openai",
+          access: "first-token",
+          refresh: "first-refresh",
+          expires: Date.now() + 60_000,
+        },
+        "openai:selected": {
+          type: "oauth",
+          provider: "openai",
+          access: "selected-token",
+          refresh: "selected-refresh",
+          expires: Date.now() + 60_000,
+        },
+      },
+    };
+    ensureAuthProfileStoreMock.mockReturnValue(store as never);
+    resolveAuthProfileOrderMock.mockReturnValue(["openai:first", "openai:selected"]);
+    resolveApiKeyForProfileMock.mockImplementation(async (rawParams) => {
+      const params = rawParams as { profileId?: string };
+      return params.profileId === "openai:selected"
+        ? { apiKey: "selected-token", provider: "openai" }
+        : { apiKey: "first-token", provider: "openai" };
+    });
+    resolveProviderUsageAuthWithPluginMock.mockImplementationOnce(async (rawParams) => {
+      const params = rawParams as {
+        context: {
+          resolveOAuthToken?: () => Promise<{ token: string } | null>;
+        };
+      };
+      return (await params.context.resolveOAuthToken?.()) ?? null;
+    });
+
+    await expect(
+      resolveProviderAuthsForTest({
+        providers: ["openai"],
+        profileId: "openai:selected",
+        agentDir: "/tmp/openclaw-agent",
+      }),
+    ).resolves.toEqual([{ provider: "openai", token: "selected-token" }]);
+    expect(resolveApiKeyForProfileMock).toHaveBeenCalledOnce();
+    expect(resolveApiKeyForProfileMock).toHaveBeenCalledWith({
+      cfg: {},
+      store,
+      profileId: "openai:selected",
+      agentDir: "/tmp/openclaw-agent",
+    });
+  });
+
+  it("does not use an explicitly selected profile owned by another provider", async () => {
+    ensureAuthProfileStoreMock.mockReturnValue({
+      profiles: {
+        "anthropic:selected": {
+          type: "oauth",
+          provider: "anthropic",
+          access: "wrong-provider-token",
+          refresh: "wrong-provider-refresh",
+          expires: Date.now() + 60_000,
+        },
+      },
+    } as never);
+    resolveAuthProfileOrderMock.mockReturnValue(["anthropic:selected"]);
+    resolveProviderUsageAuthWithPluginMock.mockImplementationOnce(async (rawParams) => {
+      const params = rawParams as {
+        context: {
+          resolveOAuthToken?: () => Promise<{ token: string } | null>;
+        };
+      };
+      return (await params.context.resolveOAuthToken?.()) ?? null;
+    });
+
+    await expect(
+      resolveProviderAuthsForTest({
+        providers: ["openai"],
+        profileId: "anthropic:selected",
+      }),
+    ).resolves.toEqual([]);
+    expect(resolveApiKeyForProfileMock).not.toHaveBeenCalled();
+  });
+
   it("resolves SecretRef-backed profiles before provider credential classification", async () => {
     const store = {
       profiles: {

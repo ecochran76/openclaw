@@ -294,6 +294,7 @@ function resolveUsageCredentialProviderIds(params: {
 async function resolveOAuthToken(params: {
   state: UsageAuthState;
   provider: string;
+  profileId?: string;
 }): Promise<ProviderAuth | null> {
   if (!params.state.allowAuthProfileStore) {
     return null;
@@ -305,10 +306,14 @@ async function resolveOAuthToken(params: {
     provider: params.provider,
   });
   const deduped = dedupeProfileIds(order);
+  const profileIds = params.profileId ? [params.profileId] : deduped;
 
-  for (const profileId of deduped) {
+  for (const profileId of dedupeProfileIds(profileIds)) {
     const cred = store.profiles[profileId];
     if (!cred || (cred.type !== "oauth" && cred.type !== "token")) {
+      continue;
+    }
+    if (normalizeProviderId(cred.provider) !== normalizeProviderId(params.provider)) {
       continue;
     }
     try {
@@ -354,6 +359,7 @@ async function resolveOAuthToken(params: {
 async function resolveProviderUsageAuthViaPlugin(params: {
   state: UsageAuthState;
   provider: UsageProviderId;
+  profileId?: string;
 }): Promise<{ handled: boolean; auth: ProviderAuth | null }> {
   const resolved = await resolveProviderUsageAuthWithPlugin({
     provider: params.provider,
@@ -382,6 +388,7 @@ async function resolveProviderUsageAuthViaPlugin(params: {
         const auth = await resolveOAuthToken({
           state: params.state,
           provider: options?.provider ?? params.provider,
+          profileId: params.profileId,
         });
         return auth
           ? {
@@ -417,10 +424,12 @@ async function resolveProviderUsageAuthViaPlugin(params: {
 async function resolveProviderUsageAuthFallback(params: {
   state: UsageAuthState;
   provider: UsageProviderId;
+  profileId?: string;
 }): Promise<ProviderAuth | null> {
   const oauthToken = await resolveOAuthToken({
     state: params.state,
     provider: params.provider,
+    profileId: params.profileId,
   });
   if (oauthToken) {
     return oauthToken;
@@ -478,6 +487,7 @@ export async function resolveProviderAuths(params: {
   providers: UsageProviderId[];
   auth?: ProviderAuth[];
   agentDir?: string;
+  profileId?: string;
   config?: OpenClawConfig;
   env?: NodeJS.ProcessEnv;
   skipPluginAuthWithoutCredentialSource?: boolean;
@@ -505,6 +515,7 @@ export async function resolveProviderAuths(params: {
       const pluginAuth = await resolveProviderUsageAuthViaPlugin({
         state: authProfileSourceState,
         provider,
+        profileId: params.profileId,
       });
       if (pluginAuth.auth) {
         auths.push(pluginAuth.auth);
@@ -516,6 +527,7 @@ export async function resolveProviderAuths(params: {
       const fallbackAuth = await resolveProviderUsageAuthFallback({
         state: authProfileSourceState,
         provider,
+        profileId: params.profileId,
       });
       if (fallbackAuth) {
         auths.push(fallbackAuth);
@@ -560,6 +572,7 @@ export async function resolveProviderAuths(params: {
       const pluginAuth = await resolveProviderUsageAuthViaPlugin({
         state,
         provider,
+        profileId: params.profileId,
       });
       if (pluginAuth.auth) {
         auths.push(pluginAuth.auth);
@@ -572,6 +585,7 @@ export async function resolveProviderAuths(params: {
     const fallbackAuth = await resolveProviderUsageAuthFallback({
       state,
       provider,
+      profileId: params.profileId,
     });
     if (fallbackAuth) {
       auths.push(fallbackAuth);

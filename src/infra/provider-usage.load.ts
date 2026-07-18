@@ -36,12 +36,13 @@ async function fetchProviderUsageSnapshotFallback(params: {
   };
 }
 
-type UsageSummaryOptions = {
+export type UsageSummaryOptions = {
   now?: number;
   timeoutMs?: number;
   providers?: UsageProviderId[];
   auth?: ProviderAuth[];
   agentDir?: string;
+  profileId?: string;
   workspaceDir?: string;
   config?: OpenClawConfig;
   env?: NodeJS.ProcessEnv;
@@ -126,6 +127,7 @@ export async function loadProviderUsageSummary(
     providers: descriptors.map((descriptor) => descriptor.provider),
     auth: opts.auth,
     agentDir: opts.agentDir,
+    profileId: opts.profileId,
     config,
     env,
     skipPluginAuthWithoutCredentialSource: opts.skipPluginAuthWithoutCredentialSource,
