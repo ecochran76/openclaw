@@ -26,4 +26,5 @@ export type BundledChannelLegacyStateMigrationDetector = (params: {
 /** Test hook for swapping the source-module loader used by bundled entry imports. */
 export type BundledEntryModuleLoadOptions = {
   createLoaderForTest?: PluginModuleLoaderFactory;
+  installRuntimeDeps?: boolean;
 };

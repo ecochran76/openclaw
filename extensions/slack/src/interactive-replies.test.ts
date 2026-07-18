@@ -1,8 +1,43 @@
 // Slack tests cover interactive replies plugin behavior.
 import { describe, expect, it } from "vitest";
-import { compileSlackInteractiveReplies } from "./interactive-replies.js";
+import {
+  compileSlackA2AApprovalInteractive,
+  compileSlackInteractiveReplies,
+} from "./interactive-replies.js";
 
 describe("compileSlackInteractiveReplies", () => {
+  it("renders A2A approval metadata as Slack-owned interactive buttons", () => {
+    const result = compileSlackA2AApprovalInteractive({
+      text: "Permission required",
+      channelData: {
+        a2aApproval: {
+          approvalId: "approval-123",
+        },
+      },
+    });
+
+    expect(result.interactive).toEqual({
+      blocks: [
+        { type: "text", text: "Permission required" },
+        {
+          type: "buttons",
+          buttons: [
+            {
+              label: "Approve",
+              value: "a2aapproval:approval-123:a",
+              style: "success",
+            },
+            {
+              label: "Deny",
+              value: "a2aapproval:approval-123:d",
+              style: "danger",
+            },
+          ],
+        },
+      ],
+    });
+  });
+
   it("compiles inline Slack button directives into shared interactive blocks", () => {
     const result = compileSlackInteractiveReplies({
       text: "[bot] hello [[slack_buttons: Retry:retry, Ignore:ignore]]",
@@ -32,6 +67,39 @@ describe("compileSlackInteractiveReplies", () => {
     });
   });
 
+  it("combines A2A approval and legacy buttons without exposing the directive", () => {
+    const result = compileSlackInteractiveReplies({
+      text: "Permission required [[slack_buttons: Retry:retry, Ignore:ignore]]",
+      channelData: {
+        a2aApproval: {
+          approvalId: "approval-123",
+        },
+      },
+    });
+
+    expect(result.text).toBe("Permission required");
+    expect(result.interactive).toEqual({
+      blocks: [
+        { type: "text", text: "Permission required" },
+        {
+          type: "buttons",
+          buttons: [
+            { label: "Retry", value: "retry" },
+            { label: "Ignore", value: "ignore" },
+          ],
+        },
+        {
+          type: "buttons",
+          buttons: [
+            { label: "Approve", value: "a2aapproval:approval-123:a", style: "success" },
+            { label: "Deny", value: "a2aapproval:approval-123:d", style: "danger" },
+          ],
+        },
+      ],
+    });
+    expect(JSON.stringify(result.interactive)).not.toContain("[[slack_buttons");
+  });
+
   it("compiles simple trailing Options lines into Slack buttons", () => {
     const result = compileSlackInteractiveReplies({
       text: "Current verbose level: off.\nOptions: on, full, off.",
@@ -54,6 +122,37 @@ describe("compileSlackInteractiveReplies", () => {
         },
       ],
     });
+  });
+
+  it("combines A2A approval and trailing Options without exposing the options line", () => {
+    const result = compileSlackInteractiveReplies({
+      text: "Permission required\nOptions: retry, ignore.",
+      channelData: {
+        a2aApproval: {
+          approvalId: "approval-123",
+        },
+      },
+    });
+
+    expect(result.text).toBe("Permission required");
+    expect(result.interactive?.blocks).toEqual([
+      { type: "text", text: "Permission required" },
+      {
+        type: "buttons",
+        buttons: [
+          { label: "retry", value: "retry" },
+          { label: "ignore", value: "ignore" },
+        ],
+      },
+      {
+        type: "buttons",
+        buttons: [
+          { label: "Approve", value: "a2aapproval:approval-123:a", style: "success" },
+          { label: "Deny", value: "a2aapproval:approval-123:d", style: "danger" },
+        ],
+      },
+    ]);
+    expect(JSON.stringify(result.interactive)).not.toContain("Options:");
   });
 
   it("uses a Slack select when Options lines exceed button capacity", () => {
