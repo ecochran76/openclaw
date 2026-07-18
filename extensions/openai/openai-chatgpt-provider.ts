@@ -440,33 +440,21 @@ function buildOpenAICodexAuthConfigPatch(): NonNullable<ProviderAuthResult["conf
 }
 
 async function refreshOpenAICodexOAuthCredential(cred: OAuthCredential) {
-  try {
-    const { refreshOpenAICodexToken } = await import("./openai-chatgpt-provider.runtime.js");
-    const refreshed = await refreshOpenAICodexToken(cred.refresh);
-    const identity = resolveCodexAuthIdentity({
-      accessToken: refreshed.access,
-      email: cred.email,
-    });
-    return {
-      ...cred,
-      ...refreshed,
-      type: "oauth" as const,
-      provider: PROVIDER_ID,
-      email: identity.email ?? cred.email,
-      displayName: cred.displayName,
-      ...buildCodexCredentialExtra(identity),
-    };
-  } catch (error) {
-    const message = formatErrorMessage(error);
-    if (
-      /extract\s+accountid\s+from\s+token/i.test(message) &&
-      typeof cred.access === "string" &&
-      cred.access.trim().length > 0
-    ) {
-      return cred;
-    }
-    throw error;
-  }
+  const { refreshOpenAICodexToken } = await import("./openai-chatgpt-provider.runtime.js");
+  const refreshed = await refreshOpenAICodexToken(cred.refresh);
+  const identity = resolveCodexAuthIdentity({
+    accessToken: refreshed.access,
+    email: cred.email,
+  });
+  return {
+    ...cred,
+    ...refreshed,
+    type: "oauth" as const,
+    provider: PROVIDER_ID,
+    email: identity.email ?? cred.email,
+    displayName: cred.displayName,
+    ...buildCodexCredentialExtra(identity),
+  };
 }
 
 type OpenAICodexOAuthContext = ProviderAuthContext & {
@@ -612,6 +600,29 @@ export function buildOpenAIChatGPTAuthMethods(): ProviderAuthMethod[] {
   ];
 }
 
+function formatOpenAICodexApiKey(credential: OAuthCredential): string {
+  const accountId = readStringValue(credential.accountId);
+  return accountId ? JSON.stringify({ token: credential.access, accountId }) : credential.access;
+}
+
+function normalizeOpenAICodexUsageAuth(
+  auth: Awaited<ReturnType<typeof resolveOpenAIUsageAuth>>,
+): Awaited<ReturnType<typeof resolveOpenAIUsageAuth>> {
+  if (!("token" in auth) || typeof auth.token !== "string") {
+    return auth;
+  }
+  try {
+    const parsed = JSON.parse(auth.token) as { token?: unknown; accountId?: unknown };
+    if (typeof parsed.token !== "string" || !parsed.token.trim()) {
+      return auth;
+    }
+    const accountId = readStringValue(parsed.accountId) ?? auth.accountId;
+    return { token: parsed.token, ...(accountId ? { accountId } : {}) };
+  } catch {
+    return auth;
+  }
+}
+
 export function buildOpenAICodexProviderHooks(): Pick<
   ProviderPlugin,
   | "resolveDynamicModel"
@@ -623,6 +634,7 @@ export function buildOpenAICodexProviderHooks(): Pick<
   | "normalizeTransport"
   | "resolveUsageAuth"
   | "fetchUsageSnapshot"
+  | "formatApiKey"
   | "refreshOAuth"
   | "augmentModelCatalog"
   | "resolveReasoningOutputMode"
@@ -665,8 +677,13 @@ export function buildOpenAICodexProviderHooks(): Pick<
       }
       return normalized;
     },
-    resolveUsageAuth: resolveOpenAIUsageAuth,
+    resolveUsageAuth: async (ctx) =>
+      normalizeOpenAICodexUsageAuth(await resolveOpenAIUsageAuth(ctx)),
     fetchUsageSnapshot: fetchOpenAIUsage,
+    formatApiKey: (credential) =>
+      credential.type === "oauth" && credential.provider === PROVIDER_ID
+        ? formatOpenAICodexApiKey(credential)
+        : "",
     refreshOAuth: async (cred) => await refreshOpenAICodexOAuthCredential(cred),
     augmentModelCatalog: (ctx) => {
       const gpt54Template = findCatalogTemplate({

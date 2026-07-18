@@ -1234,6 +1234,44 @@ describe("google transport stream", () => {
     expect(new Headers(guardedInit.headers).has("x-goog-api-key")).toBe(false);
   });
 
+  it("preserves Google Vertex ADC when a Gemini API key is also configured", async () => {
+    const tempDir = await mkdtemp(path.join(os.tmpdir(), "openclaw-google-vertex-adc-priority-"));
+    vi.stubEnv("GOOGLE_APPLICATION_CREDENTIALS", "");
+    vi.stubEnv("HOME", path.join(tempDir, "home"));
+    vi.stubEnv("APPDATA", "");
+    vi.stubEnv("GOOGLE_CLOUD_PROJECT", "vertex-project");
+    vi.stubEnv("GOOGLE_CLOUD_LOCATION", "us-central1");
+    vi.stubEnv("GOOGLE_CLOUD_API_KEY", "");
+    vi.stubEnv("GEMINI_API_KEY", "gemini-key-must-not-cross-into-vertex");
+    googleAuthGetAccessTokenMock.mockResolvedValueOnce("ya29.vertex-adc-token");
+    guardedFetchMock.mockResolvedValueOnce(
+      buildSseResponse([
+        {
+          candidates: [{ content: { parts: [{ text: "ok" }] }, finishReason: "STOP" }],
+        },
+      ]),
+    );
+
+    const streamFn = createGoogleVertexTransportStreamFn();
+    const stream = await Promise.resolve(
+      streamFn(
+        buildGoogleVertexModel(),
+        {
+          messages: [{ role: "user", content: "hello", timestamp: 0 }],
+        } as Parameters<typeof streamFn>[1],
+        {} as Parameters<typeof streamFn>[2],
+      ),
+    );
+    await stream.result();
+
+    const guardedInit = requireRequestInit(
+      requireMockCall(guardedFetchMock, 0, "guarded fetch"),
+      "guarded fetch",
+    );
+    expectHeaders(guardedInit, { Authorization: "Bearer ya29.vertex-adc-token" });
+    expect(new Headers(guardedInit.headers).has("x-goog-api-key")).toBe(false);
+  });
+
   it("strips redundant google provider prefixes from Google Vertex model paths", async () => {
     const tempDir = await mkdtemp(path.join(os.tmpdir(), "openclaw-google-vertex-prefix-"));
     vi.stubEnv("HOME", path.join(tempDir, "home"));
@@ -1608,6 +1646,84 @@ describe("google transport stream", () => {
     expectHeaders(requireRequestInit(guardedCall, "guarded fetch"), {
       Authorization: "Bearer ya29.appdata-token",
     });
+  });
+
+  it("falls back to GEMINI_API_KEY for Google provider transport auth", async () => {
+    vi.stubEnv("GEMINI_API_KEY", "env-gemini-key");
+    guardedFetchMock.mockResolvedValueOnce(buildSseResponse([]));
+
+    const streamFn = createGoogleGenerativeAiTransportStreamFn();
+    const stream = await Promise.resolve(
+      streamFn(buildGeminiModel(), {
+        messages: [{ role: "user", content: "hello", timestamp: 0 }],
+      } as Parameters<typeof streamFn>[1]),
+    );
+    await stream.result();
+
+    expect(guardedFetchMock).toHaveBeenCalledWith(
+      expect.any(String),
+      expect.objectContaining({
+        headers: expect.objectContaining({
+          "x-goog-api-key": "env-gemini-key",
+        }),
+      }),
+    );
+  });
+
+  it("uses the pinned live Gemini key when no primary API key is configured", async () => {
+    vi.stubEnv("GEMINI_API_KEY", "");
+    vi.stubEnv("GOOGLE_API_KEY", "");
+    vi.stubEnv("OPENCLAW_LIVE_GEMINI_KEY", "live-gemini-key");
+    vi.stubEnv("GEMINI_API_KEYS", "ignored-list-key");
+    vi.stubEnv("GEMINI_API_KEY_2", "ignored-numbered-key");
+    guardedFetchMock.mockResolvedValueOnce(buildSseResponse([]));
+
+    const streamFn = createGoogleGenerativeAiTransportStreamFn();
+    const stream = await Promise.resolve(
+      streamFn(buildGeminiModel(), {
+        messages: [{ role: "user", content: "hello", timestamp: 0 }],
+      } as Parameters<typeof streamFn>[1]),
+    );
+    await stream.result();
+
+    expect(guardedFetchMock).toHaveBeenCalledTimes(1);
+    expectHeaders(
+      requireRequestInit(requireMockCall(guardedFetchMock, 0, "guarded fetch"), "guarded fetch"),
+      { "x-goog-api-key": "live-gemini-key" },
+    );
+  });
+
+  it("rotates list and numbered Gemini keys when no primary API key is configured", async () => {
+    vi.stubEnv("GEMINI_API_KEY", "");
+    vi.stubEnv("GOOGLE_API_KEY", "");
+    vi.stubEnv("OPENCLAW_LIVE_GEMINI_KEY", "");
+    vi.stubEnv("GEMINI_API_KEYS", "gemini-list-key");
+    vi.stubEnv("GEMINI_API_KEY_2", "gemini-numbered-key");
+    guardedFetchMock.mockResolvedValueOnce(buildRateLimitResponse()).mockResolvedValueOnce(
+      buildSseResponse([
+        {
+          candidates: [{ content: { parts: [{ text: "recovered" }] }, finishReason: "STOP" }],
+        },
+      ]),
+    );
+
+    const streamFn = createGoogleGenerativeAiTransportStreamFn();
+    const stream = await Promise.resolve(
+      streamFn(buildGeminiModel(), {
+        messages: [{ role: "user", content: "hello", timestamp: 0 }],
+      } as Parameters<typeof streamFn>[1]),
+    );
+    await stream.result();
+
+    expect(guardedFetchMock).toHaveBeenCalledTimes(2);
+    expectHeaders(
+      requireRequestInit(requireMockCall(guardedFetchMock, 0, "guarded fetch"), "guarded fetch"),
+      { "x-goog-api-key": "gemini-list-key" },
+    );
+    expectHeaders(
+      requireRequestInit(requireMockCall(guardedFetchMock, 1, "guarded fetch"), "guarded fetch"),
+      { "x-goog-api-key": "gemini-numbered-key" },
+    );
   });
 
   it("coerces replayed malformed tool-call args to an object for Google payloads", () => {

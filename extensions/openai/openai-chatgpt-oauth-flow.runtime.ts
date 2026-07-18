@@ -39,7 +39,8 @@ const CALLBACK_HOST = resolveCallbackHost();
 const REDIRECT_URI = resolveRedirectUri(CALLBACK_HOST);
 const MANUAL_PROMPT_FALLBACK_MS = 15_000;
 const TOKEN_REQUEST_TIMEOUT_MS = 30_000;
-const SCOPE = "openid profile email offline_access";
+export const openAICodexOAuthScope =
+  "openid profile email offline_access api.connectors.read api.connectors.invoke";
 const OAUTH_TOKEN_RESPONSE_BODY_LIMIT_BYTES = 1 * 1024 * 1024;
 
 type TokenSuccess = { type: "success"; access: string; refresh: string; expires: number };
@@ -320,7 +321,7 @@ async function createAuthorizationFlow(
   url.searchParams.set("client_id", CLIENT_ID);
   const redirectUri = REDIRECT_URI;
   url.searchParams.set("redirect_uri", redirectUri);
-  url.searchParams.set("scope", SCOPE);
+  url.searchParams.set("scope", openAICodexOAuthScope);
   url.searchParams.set("code_challenge", challenge);
   url.searchParams.set("code_challenge_method", "S256");
   url.searchParams.set("state", state);
@@ -571,15 +572,12 @@ export async function refreshOpenAICodexToken(refreshToken: string): Promise<OAu
   }
 
   const accountId = getAccountId(result.access);
-  if (!accountId) {
-    throw new Error("Failed to extract accountId from token");
-  }
 
   return {
     access: result.access,
     refresh: result.refresh,
     expires: result.expires,
-    accountId,
+    ...(accountId ? { accountId } : {}),
   };
 }
 
@@ -599,7 +597,10 @@ export const openaiCodexOAuthProvider: OAuthProviderInterface = {
   },
 
   async refreshToken(credentials: OAuthCredentials): Promise<OAuthCredentials> {
-    return refreshOpenAICodexToken(credentials.refresh);
+    return {
+      ...credentials,
+      ...(await refreshOpenAICodexToken(credentials.refresh)),
+    };
   },
 
   getApiKey(credentials: OAuthCredentials): string {

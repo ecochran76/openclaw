@@ -1,6 +1,7 @@
 // Openai tests cover openai chatgpt oauth plugin behavior.
 import { MAX_TIMER_TIMEOUT_MS } from "openclaw/plugin-sdk/number-runtime";
 import { afterEach, describe, expect, it, vi } from "vitest";
+import { openAICodexOAuthScope } from "./openai-chatgpt-oauth-flow.runtime.js";
 import { testing } from "./openai-chatgpt-oauth.runtime.js";
 
 describe("OpenAI Codex OAuth runtime", () => {
@@ -36,5 +37,16 @@ describe("OpenAI Codex OAuth runtime", () => {
     ).resolves.toEqual({ ok: true });
 
     expect(cancel).toHaveBeenCalledOnce();
+  });
+
+  it("requests the scopes Codex app-server expects", () => {
+    expect(openAICodexOAuthScope.split(" ")).toEqual([
+      "openid",
+      "profile",
+      "email",
+      "offline_access",
+      "api.connectors.read",
+      "api.connectors.invoke",
+    ]);
   });
 });

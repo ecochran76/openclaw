@@ -1710,14 +1710,12 @@ describe("buildOpenAIProvider", () => {
   it("keeps chat-latest and gpt-5.5 out of synthetic catalog metadata", () => {
     const provider = buildOpenAIProvider();
 
-    expect(
-      provider
-        .resolveThinkingProfile?.({
-          provider: "openai",
-          modelId: "gpt-5.5",
-        } as never)
-        ?.levels.map((level) => level.id),
-    ).toContain("xhigh");
+    const thinkingProfile = provider.resolveThinkingProfile?.({
+      provider: "openai",
+      modelId: "gpt-5.5",
+    } as never);
+    expect(thinkingProfile?.levels.some((level) => level.id === "xhigh")).toBe(true);
+    expect(thinkingProfile?.defaultLevel).toBeUndefined();
 
     const entries = provider.augmentModelCatalog?.({
       env: process.env,
@@ -2203,7 +2201,7 @@ describe("buildOpenAIProvider", () => {
     expect(result.payload.reasoning).toEqual({ effort: "none" });
   });
 
-  it("falls back to cached codex oauth credentials on accountId extraction failures", async () => {
+  it("preserves codex account metadata while retaining refreshed and rotated tokens", async () => {
     const provider = buildOpenAIProvider();
     const credential = {
       type: "oauth" as const,
@@ -2211,14 +2209,23 @@ describe("buildOpenAIProvider", () => {
       access: "cached-access-token",
       refresh: "refresh-token",
       expires: Date.now() - 60_000,
+      accountId: "acct-openai-workspace",
     };
 
     mocks.refreshOpenAICodexToken.mockReset();
-    mocks.refreshOpenAICodexToken.mockRejectedValueOnce(
-      new Error("Failed to extract accountId from token"),
-    );
+    mocks.refreshOpenAICodexToken.mockResolvedValueOnce({
+      access: "opaque-refreshed-access-token",
+      refresh: "rotated-refresh-token",
+      expires: Date.now() + 60_000,
+    });
 
-    await expect(provider.refreshOAuth?.(credential)).resolves.toEqual(credential);
+    await expect(provider.refreshOAuth?.(credential)).resolves.toMatchObject({
+      type: "oauth",
+      provider: "openai",
+      access: "opaque-refreshed-access-token",
+      refresh: "rotated-refresh-token",
+      accountId: "acct-openai-workspace",
+    });
   });
 });
 /* oxlint-disable max-lines -- TODO: split this grandfathered oversized file. */

@@ -168,8 +168,8 @@ async function writeCodexCliAuthFile(codexHome: string): Promise<void> {
     path.join(codexHome, "auth.json"),
     `${JSON.stringify({
       tokens: {
-        access_token: "cli-access-token",
-        refresh_token: "cli-refresh-token",
+        access_token: "test-token-placeholder",
+        refresh_token: "test-token-placeholder",
         account_id: "account-cli",
       },
     })}\n`,
@@ -591,6 +591,36 @@ describe("bridgeCodexAppServerStartOptions", () => {
         ? handoff.preparedAuth.snapshot?.secretFreeCacheKey
         : undefined,
     ).toMatch(/^prepared@example\.test:token:sha256:[a-f0-9]{64}$/u);
+  });
+
+  it("uses one normalized wrapped-token identity for prepared login and shared-client caching", async () => {
+    const fixture = JSON.stringify({
+      tokens: { access_token: "test-token-placeholder", account_id: "wrapper-account" },
+    });
+    const snapshot = await resolveCodexAppServerPreparedAuthProfileSnapshot({
+      authProfileId: "openai:work",
+      authProfileStore: {
+        version: 1,
+        profiles: {
+          "openai:work": {
+            type: "token",
+            provider: "openai",
+            token: fixture,
+            email: "stored@example.test",
+          },
+        },
+      },
+    });
+
+    expect(snapshot?.loginParams).toEqual({
+      type: "chatgptAuthTokens",
+      accessToken: "test-token-placeholder",
+      chatgptAccountId: "wrapper-account",
+      chatgptPlanType: null,
+    });
+    expect(snapshot?.secretFreeCacheKey).toMatch(/^wrapper-account:token:sha256:[a-f0-9]{64}$/u);
+    expect(snapshot?.secretFreeCacheKey).not.toContain("test-token-placeholder");
+    expect(snapshot?.secretFreeCacheKey).not.toContain("stored@example.test");
   });
 
   it("isolates prepared OAuth snapshots without a stable account identity", async () => {
@@ -1689,7 +1719,7 @@ describe("bridgeCodexAppServerStartOptions", () => {
     }
   });
 
-  it("applies native Codex CLI OAuth when no OpenClaw auth profile exists", async () => {
+  it("does not apply native Codex CLI OAuth without an OpenClaw auth profile", async () => {
     const root = await fs.mkdtemp(path.join(os.tmpdir(), "openclaw-codex-app-server-"));
     const agentDir = path.join(root, "agent");
     const codexHome = path.join(root, "codex-cli");
@@ -1703,12 +1733,7 @@ describe("bridgeCodexAppServerStartOptions", () => {
         agentDir,
       });
 
-      expect(request).toHaveBeenCalledWith("account/login/start", {
-        type: "chatgptAuthTokens",
-        accessToken: "cli-access-token",
-        chatgptAccountId: "account-cli",
-        chatgptPlanType: null,
-      });
+      expect(request).not.toHaveBeenCalled();
       expect(loadAuthProfileStoreForSecretsRuntime(agentDir).profiles).not.toHaveProperty(
         "openai:default",
       );
@@ -1717,7 +1742,7 @@ describe("bridgeCodexAppServerStartOptions", () => {
     }
   });
 
-  it("finds native Codex OAuth in the OS home when OpenClaw uses an isolated home", async () => {
+  it("does not read native Codex OAuth from the OS home used outside OpenClaw", async () => {
     const root = await fs.mkdtemp(path.join(os.tmpdir(), "openclaw-codex-app-server-"));
     const osHome = path.join(root, "os-home");
     const openClawHome = path.join(root, "openclaw-home");
@@ -1734,47 +1759,40 @@ describe("bridgeCodexAppServerStartOptions", () => {
         agentDir,
       });
 
-      expect(request).toHaveBeenCalledWith("account/login/start", {
-        type: "chatgptAuthTokens",
-        accessToken: "cli-access-token",
-        chatgptAccountId: "account-cli",
-        chatgptPlanType: null,
-      });
+      expect(request).not.toHaveBeenCalled();
       await expectPathMissing(path.join(agentDir, "auth-profiles.json"));
     } finally {
       await fs.rm(root, { recursive: true, force: true });
     }
   });
 
-  it("answers refresh from native Codex CLI OAuth without persisting an OpenClaw profile", async () => {
+  it("requires an OpenClaw OAuth profile for refresh even when native Codex OAuth exists", async () => {
     const root = await fs.mkdtemp(path.join(os.tmpdir(), "openclaw-codex-app-server-"));
     const agentDir = path.join(root, "agent");
     const codexHome = path.join(root, "codex-cli");
     const authProfileStorePath = path.join(agentDir, "auth-profiles.json");
     vi.stubEnv("CODEX_HOME", codexHome);
     oauthMocks.refreshOpenAICodexToken.mockResolvedValueOnce({
-      access: "fresh-cli-access-token",
-      refresh: "fresh-cli-refresh-token",
+      access: "test-token-placeholder",
+      refresh: "test-token-placeholder",
       expires: Date.now() + 60_000,
       accountId: "account-cli-refreshed",
     });
     try {
       await writeCodexCliAuthFile(codexHome);
 
-      await expect(refreshCodexAppServerAuthTokens({ agentDir })).resolves.toEqual({
-        accessToken: "fresh-cli-access-token",
-        chatgptAccountId: "account-cli-refreshed",
-        chatgptPlanType: null,
-      });
+      await expect(refreshCodexAppServerAuthTokens({ agentDir })).rejects.toThrow(
+        "requires an OAuth auth profile",
+      );
 
       await expectPathMissing(authProfileStorePath);
-      expect(oauthMocks.refreshOpenAICodexToken).toHaveBeenCalledWith("cli-refresh-token");
+      expect(oauthMocks.refreshOpenAICodexToken).not.toHaveBeenCalled();
     } finally {
       await fs.rm(root, { recursive: true, force: true });
     }
   });
 
-  it("uses native Codex CLI OAuth when deriving cache keys without a supplied store", async () => {
+  it("does not derive shared-client cache identity from native Codex CLI OAuth", async () => {
     const root = await fs.mkdtemp(path.join(os.tmpdir(), "openclaw-codex-app-server-"));
     const agentDir = path.join(root, "agent");
     const codexHome = path.join(root, "codex-cli");
@@ -1786,7 +1804,7 @@ describe("bridgeCodexAppServerStartOptions", () => {
         resolveCodexAppServerAuthAccountCacheKey({
           agentDir,
         }),
-      ).resolves.toBe("account-cli");
+      ).resolves.toBeUndefined();
     } finally {
       await fs.rm(root, { recursive: true, force: true });
     }

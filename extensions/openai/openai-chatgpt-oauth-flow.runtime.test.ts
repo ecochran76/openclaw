@@ -10,7 +10,11 @@ vi.mock("openclaw/plugin-sdk/ssrf-runtime", () => ({
   fetchWithSsrFGuard: ssrfMocks.fetchWithSsrFGuard,
 }));
 
-import { openaiCodexOAuthProvider, testing } from "./openai-chatgpt-oauth-flow.runtime.js";
+import {
+  openaiCodexOAuthProvider,
+  refreshOpenAICodexToken,
+  testing,
+} from "./openai-chatgpt-oauth-flow.runtime.js";
 
 function timeoutError(): Error {
   return new DOMException("timed out", "TimeoutError");
@@ -173,6 +177,42 @@ describe("OpenAI Codex OAuth flow", () => {
     expect(result).toEqual({
       type: "failed",
       message: "OpenAI Codex token refresh response missing fields: expires_in",
+    });
+  });
+
+  it("retains refreshed and rotated tokens when the access token has no account claim", async () => {
+    mockTokenResponse({
+      access_token: "opaque-refreshed-access-token",
+      refresh_token: "rotated-refresh-token",
+      expires_in: 3600,
+    });
+
+    await expect(refreshOpenAICodexToken("old-refresh-token")).resolves.toMatchObject({
+      access: "opaque-refreshed-access-token",
+      refresh: "rotated-refresh-token",
+      expires: expect.any(Number),
+    });
+  });
+
+  it("preserves prior account metadata when the provider refresh receives an opaque token", async () => {
+    mockTokenResponse({
+      access_token: "opaque-refreshed-access-token",
+      refresh_token: "rotated-refresh-token",
+      expires_in: 3600,
+    });
+
+    await expect(
+      openaiCodexOAuthProvider.refreshToken({
+        access: "expired-access-token",
+        refresh: "old-refresh-token",
+        expires: Date.now() - 60_000,
+        accountId: "acct-123",
+      }),
+    ).resolves.toMatchObject({
+      access: "opaque-refreshed-access-token",
+      refresh: "rotated-refresh-token",
+      expires: expect.any(Number),
+      accountId: "acct-123",
     });
   });
 });
