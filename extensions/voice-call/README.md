@@ -80,6 +80,7 @@ Put under `plugins.entries.voice-call.config`:
     enabled: true,
     // optional; if omitted, Voice Call picks the first registered
     // realtime-transcription provider by autoSelectOrder
+    // Use "media-audio" to buffer speech through tools.media.audio.
     provider: "<realtime-transcription-provider-id>",
     streamPath: "/voice/stream",
     providers: {

@@ -15,6 +15,7 @@ import {
   type OpenClawPluginApi,
 } from "./api.js";
 import { createVoiceCallRuntime, type VoiceCallRuntime } from "./runtime-entry.js";
+import { buildBufferedMediaRealtimeTranscriptionProvider } from "./src/buffered-media-transcription.js";
 import { registerVoiceCallCli } from "./src/cli.js";
 import {
   VoiceCallConfigSchema,
@@ -292,6 +293,12 @@ export default definePluginEntry({
   register(api: OpenClawPluginApi) {
     const config = resolveVoiceCallConfig(voiceCallConfigSchema.parse(api.pluginConfig));
     const validation = validateProviderConfig(config);
+
+    api.registerRealtimeTranscriptionProvider(
+      buildBufferedMediaRealtimeTranscriptionProvider({
+        resolveAgentDir: (cfg) => api.runtime.agent.resolveAgentDir(cfg, config.agentId ?? "main"),
+      }),
+    );
 
     const runtimeState = getVoiceCallRuntimeGlobalState();
     const continueOperationStore = createVoiceCallContinueOperationStore({

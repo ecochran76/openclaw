@@ -9,7 +9,8 @@
     "onCommands": ["voicecall"]
   },
   "contracts": {
-    "tools": ["voice_call"]
+    "tools": ["voice_call"],
+    "realtimeTranscriptionProviders": ["media-audio"]
   },
   "uiHints": {
     "provider": {

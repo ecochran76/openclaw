@@ -35,6 +35,9 @@ type Registered = {
   methods: Map<string, unknown>;
   methodScopes: Map<string, string | undefined>;
   tools: unknown[];
+  realtimeTranscriptionProviders: Array<
+    Parameters<OpenClawPluginApi["registerRealtimeTranscriptionProvider"]>[0]
+  >;
   service?: Parameters<OpenClawPluginApi["registerService"]>[0];
 };
 type MockCallSource = {
@@ -132,6 +135,7 @@ function setup(
   const methods = new Map<string, unknown>();
   const methodScopes = new Map<string, string | undefined>();
   const tools: unknown[] = [];
+  const realtimeTranscriptionProviders: Registered["realtimeTranscriptionProviders"] = [];
   let service: Registered["service"];
   const api = createTestPluginApi({
     id: "voice-call",
@@ -153,6 +157,8 @@ function setup(
           ? (tool as (context: Record<string, unknown>) => unknown)(toolContext)
           : tool,
       ),
+    registerRealtimeTranscriptionProvider: (provider) =>
+      realtimeTranscriptionProviders.push(provider),
     registerCli: () => {},
     registerService: (registeredService) => {
       service = registeredService;
@@ -160,7 +166,7 @@ function setup(
     resolvePath: (p: string) => p,
   });
   plugin.register(api);
-  return { methods, methodScopes, tools, service };
+  return { methods, methodScopes, tools, realtimeTranscriptionProviders, service };
 }
 
 function envRef(id: string) {
@@ -225,6 +231,7 @@ async function registerVoiceCallCli(
     logger: noopLogger,
     registerGatewayMethod: () => {},
     registerTool: () => {},
+    registerRealtimeTranscriptionProvider: () => {},
     registerCli: (fn: (ctx: RegisterCliContext) => void) =>
       fn({
         program,
@@ -272,6 +279,12 @@ describe("voice-call plugin", () => {
       enabled: true,
       provider: "mock",
     });
+  });
+
+  it("registers the plugin-owned media-audio transcription adapter", () => {
+    const { realtimeTranscriptionProviders } = setup({ provider: "mock" });
+
+    expect(realtimeTranscriptionProviders.map((provider) => provider.id)).toEqual(["media-audio"]);
   });
 
   it.each([
