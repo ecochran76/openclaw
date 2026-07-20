@@ -20,6 +20,7 @@ import {
 import {
   clearSessionAuthProfileOverride,
   resolveSessionAuthProfileOverride,
+  setSessionAuthProfileOverride,
 } from "./session-override.js";
 import type { AuthProfileStore } from "./types.js";
 
@@ -665,6 +666,35 @@ describe("resolveSessionAuthProfileOverride", () => {
       expect(persisted?.authProfileOverride).toBe(TEST_SECONDARY_PROFILE_ID);
       expect(sessionStore[sessionKey]?.label).toBe("renamed");
       expect(sessionStore[sessionKey]?.pinnedAt).toBeUndefined();
+    });
+  });
+});
+
+describe("setSessionAuthProfileOverride", () => {
+  it("pins only the auth override fields while preserving concurrent persisted fields", async () => {
+    await withAuthState(async (state) => {
+      const storePath = path.join(state.sessionsDir(), "sessions.json");
+      const sessionKey = "agent:main:main";
+      const initial: SessionEntry = { sessionId: "s1", updatedAt: 1, label: "before" };
+      await replaceSessionEntry({ storePath, sessionKey }, initial);
+      const sessionEntry = { ...initial };
+      const sessionStore = { [sessionKey]: sessionEntry };
+      await patchSessionEntry({ storePath, sessionKey }, () => ({ label: "concurrent" }));
+
+      await setSessionAuthProfileOverride({
+        sessionEntry,
+        sessionStore,
+        sessionKey,
+        profileId: TEST_PRIMARY_PROFILE_ID,
+        storePath,
+      });
+
+      expect(loadSessionEntry({ storePath, sessionKey })).toMatchObject({
+        label: "concurrent",
+        authProfileOverride: TEST_PRIMARY_PROFILE_ID,
+        authProfileOverrideSource: "user",
+      });
+      expect(sessionStore[sessionKey]?.label).toBe("concurrent");
     });
   });
 });

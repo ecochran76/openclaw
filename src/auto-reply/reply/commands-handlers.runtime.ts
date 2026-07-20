@@ -27,6 +27,7 @@ import { handleModelsCommand } from "./commands-models.js";
 import { handleNameCommand } from "./commands-name.js";
 import { handlePluginCommand } from "./commands-plugin.js";
 import { handlePluginsCommand } from "./commands-plugins.js";
+import { handleProfileCommand, handleProfilesCommand } from "./commands-profiles.js";
 import {
   handleAbortTrigger,
   handleActivationCommand,
@@ -72,6 +73,9 @@ const commandHandlersById = {
   name: handleNameCommand,
   plugin: handlePluginCommand,
   plugins: handlePluginsCommand,
+  profiles: async (params, allowTextCommands) =>
+    (await handleProfilesCommand(params, allowTextCommands)) ??
+    handleProfileCommand(params, allowTextCommands),
   restart: handleRestartCommand,
   "send-policy": handleSendPolicyCommand,
   session: handleSessionCommand,

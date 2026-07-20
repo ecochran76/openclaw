@@ -146,6 +146,28 @@ export async function clearSessionAuthProfileOverride(params: {
   });
 }
 
+/** Pins an auth-profile override for a session and persists it when possible. */
+export async function setSessionAuthProfileOverride(params: {
+  sessionEntry: SessionEntry;
+  sessionStore: Record<string, SessionEntry>;
+  sessionKey: string;
+  profileId: string;
+  storePath?: string;
+}) {
+  const { sessionEntry, sessionStore, sessionKey, profileId, storePath } = params;
+  await persistSessionAuthProfileOverrideState({
+    sessionEntry,
+    sessionStore,
+    sessionKey,
+    state: {
+      authProfileOverride: profileId,
+      authProfileOverrideSource: "user",
+      authProfileOverrideCompactionCount: undefined,
+    },
+    storePath,
+  });
+}
+
 /** Resolves and optionally rotates the session auth-profile override. */
 export async function resolveSessionAuthProfileOverride(params: {
   cfg: OpenClawConfig;
