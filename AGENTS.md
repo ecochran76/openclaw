@@ -361,3 +361,53 @@ Skills own workflows; root owns hard policy and routing.
 - Local-only `.agents` ignores: `.git/info/exclude`, not repo `.gitignore`.
 - Provider tool schemas: prefer flat string enum helpers over `Type.Union([Type.Literal(...)])`; some providers reject `anyOf`.
 - External messaging: no token-delta channel messages. Follow `docs/concepts/streaming.md`.
+
+## Policy Loading Contract
+
+- `AGENTS.md` is a routing surface, not a one-time pointer.
+- Re-read the relevant policy files under `docs/dev/policies/` at the start of any non-trivial turn.
+- Re-read the relevant policy files when task scope changes mid-session.
+- When behavior is ambiguous, prefer re-reading policy over improvising from stale assumptions.
+
+## Policy Re-read Triggers
+
+- re-read planning-related policy before opening, revising, or closing a substantive plan
+- re-read documentation-related policy before changing docs, contracts, or canonical authorities
+- re-read validation and closeout policy before claiming work complete
+- re-read runtime or environment-boundary policy before touching live state, tenant state, deploy state, or off-repo operator data
+
+## Policy Entry
+
+This repo keeps its durable repo-local policy under `docs/dev/policies/`.
+
+Read and follow:
+
+- `docs/dev/policies/0001-policy-management.md`
+- `docs/dev/policies/0002-policy-upgrade-management.md`
+- `docs/dev/policies/0003-policy-adoption-feedback-loop.md`
+- `docs/dev/policies/0004-notes-and-memories.md`
+- `docs/dev/policies/0005-graph-backed-memory-usage.md`
+- `docs/dev/policies/0006-codegraph-usage.md`
+- `docs/dev/policies/0007-planning-discipline.md`
+- `docs/dev/policies/0008-website-surface-targeting.md`
+- `docs/dev/policies/0009-db-backed-state-governance.md`
+- `docs/dev/policies/0010-live-drift-reconciliation.md`
+- `docs/dev/policies/0011-backup-and-recovery-operations.md`
+- `docs/dev/policies/0012-visual-release-qa.md`
+- `docs/dev/policies/0013-web-interface-quality.md`
+- `docs/dev/policies/0014-documentation-change-control.md`
+- `docs/dev/policies/0015-git-worktree-hygiene.md`
+- `docs/dev/policies/0016-commit-history-discipline.md`
+- `docs/dev/policies/0017-branch-and-integration-strategy.md`
+- `docs/dev/policies/0018-commit-and-push-cadence.md`
+- `docs/dev/policies/0019-versioning-and-release.md`
+- `docs/dev/policies/0020-turn-closeout.md`
+- `docs/dev/policies/0021-validation-and-handoff.md`
+- `docs/dev/policies/0022-subagent-workflow-optimization.md`
+- `docs/dev/policies/0023-architecture-guardrails.md`
+
+## Scope
+
+- `AGENTS.md` includes repo-local guidance plus the policy entry section.
+- The durable policy body lives under `docs/dev/policies/`.
+- Keep repo-specific commands, environment details, and operational caveats in this file or adjacent local docs.
