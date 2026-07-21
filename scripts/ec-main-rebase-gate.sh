@@ -1,0 +1,255 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+ROOT_DIR="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")/.." && pwd)"
+
+usage() {
+  cat <<'EOF'
+Usage: scripts/ec-main-rebase-gate.sh [options]
+
+Run focused ec-main local-feature preservation gates.
+
+Options:
+  --family <name>       Feature family to validate: profiles, slack-a2a,
+                        slack-responsiveness, automation, voice, all (default: all)
+  --check               Also run the repo-prescribed changed-surface checks
+  --build               Also run pnpm build
+  --live-patch          Run scripts/patch-live-openclaw.sh after gates/check/build
+  --list                Print available families and commands without running them
+  -h, --help            Show this help
+
+Examples:
+  scripts/ec-main-rebase-gate.sh --family automation
+  scripts/ec-main-rebase-gate.sh --family voice --check --build
+  scripts/ec-main-rebase-gate.sh --family profiles
+  scripts/ec-main-rebase-gate.sh --family slack-a2a
+  scripts/ec-main-rebase-gate.sh --family slack-responsiveness
+  scripts/ec-main-rebase-gate.sh --family all --check --build --live-patch
+EOF
+}
+
+family="all"
+run_check=0
+run_build=0
+run_live_patch=0
+list_only=0
+
+while [[ $# -gt 0 ]]; do
+  case "$1" in
+    --family)
+      if [[ $# -lt 2 ]]; then
+        echo "error: --family requires a value" >&2
+        exit 2
+      fi
+      family="$2"
+      shift 2
+      ;;
+    --check)
+      run_check=1
+      shift
+      ;;
+    --build)
+      run_build=1
+      shift
+      ;;
+    --live-patch)
+      run_live_patch=1
+      run_build=1
+      shift
+      ;;
+    --list)
+      list_only=1
+      shift
+      ;;
+    -h | --help)
+      usage
+      exit 0
+      ;;
+    *)
+      echo "error: unknown option: $1" >&2
+      usage >&2
+      exit 2
+      ;;
+  esac
+done
+
+profiles_tests=(
+  src/auto-reply/reply/commands-profiles.test.ts
+  src/agents/auth-profiles/session-override.test.ts
+  src/agents/auth-profiles/profiles.test.ts
+  src/agents/auth-profiles.sqlite-store.test.ts
+  src/commands/doctor-auth-flat-profiles.test.ts
+  src/commands/doctor-auth-oauth-sidecar.test.ts
+  src/commands/models/auth.test.ts
+  src/commands/models/auth.login-profiles.test.ts
+  src/cli/models-cli.test.ts
+  src/infra/provider-usage.policy.test.ts
+  src/infra/provider-usage.cache.test.ts
+  src/infra/provider-usage.auth.normalizes-keys.test.ts
+  ui/src/lib/agents/display.test.ts
+)
+
+slack_a2a_tests=(
+  src/agents/openclaw-tools.sessions.test.ts
+  src/gateway/server.sessions-send.test.ts
+  src/agents/a2a/permission-approval-action.test.ts
+  src/agents/embedded-agent-subscribe.handlers.tools.test.ts
+  src/auto-reply/reply/dispatch-stream-delivery.test.ts
+  extensions/slack/src/monitor/events/interactions.test.ts
+  src/commands/models/auth.test.ts
+  src/infra/provider-usage.auth.normalizes-keys.test.ts
+)
+
+slack_responsiveness_tests=(
+  src/auto-reply/reply/dispatch-from-config.test.ts
+  src/auto-reply/reply/commands-turn-status.test.ts
+  src/auto-reply/reply/commands-turns-nudge.test.ts
+  src/auto-reply/reply/commands-why-silent.test.ts
+  src/auto-reply/reply/delivery-observer.test.ts
+  src/auto-reply/reply/dispatch-final-delivery.test.ts
+  src/auto-reply/reply/pending-final-delivery.test.ts
+  src/auto-reply/reply/reply-turn-admission.test.ts
+  src/auto-reply/turn-tracker.test.ts
+  src/channels/account-snapshot-fields.test.ts
+  src/commands/channels/slack-watchdog-scan.test.ts
+  src/commands/channels/why-silent.test.ts
+  src/gateway/channel-health-monitor.test.ts
+  src/gateway/channel-health-policy.test.ts
+  extensions/slack/src/accounts.test.ts
+  extensions/slack/src/streaming.test.ts
+  extensions/slack/src/monitor/admission-ledger.test.ts
+  extensions/slack/src/monitor/message-handler/dispatch.preview-fallback.test.ts
+  extensions/slack/src/monitor.tool-result.test.ts
+  extensions/slack/src/monitor/message-handler/preview-finalize.test.ts
+  extensions/slack/src/monitor/provider.interop.test.ts
+  extensions/slack/src/monitor/provider.reconnect-loop.test.ts
+  extensions/slack/src/monitor/provider.reconnect.test.ts
+  extensions/slack/src/monitor/reconciliation.test.ts
+  extensions/slack/src/monitor/watchdog-scan.test.ts
+)
+
+automation_tests=(
+  src/automation/command-surface.test.ts
+  src/automation/worker-job.test.ts
+  src/automation/worker-result.test.ts
+  src/automation/progress-reporting.test.ts
+  src/automation/runner.test.ts
+  src/automation/status.test.ts
+  src/agents/tools/automation-tool.test.ts
+  src/auto-reply/reply/commands-automation.test.ts
+  src/auto-reply/reply/commands-automation-status.test.ts
+  src/automation/config.test.ts
+)
+
+voice_tests=(
+  extensions/voice-call/index.test.ts
+  extensions/voice-call/src/config.test.ts
+  extensions/voice-call/src/config-migration.test.ts
+  extensions/voice-call/src/media-stream.test.ts
+  extensions/voice-call/src/webhook.test.ts
+  extensions/voice-call/src/providers/stt-provider-config.test.ts
+  extensions/voice-call/src/providers/stt-openai-realtime.test.ts
+  extensions/voice-call/src/providers/stt-buffered-media-transcriber.test.ts
+  extensions/voice-call/src/providers/stt-buffered-media.test.ts
+  extensions/voice-call/src/providers/stt-factory.test.ts
+  src/media-understanding/apply.test.ts
+)
+
+print_family() {
+  local name="$1"
+  shift
+  echo "$name:"
+  printf '  %s\n' "$@"
+}
+
+run_tests() {
+  local name="$1"
+  shift
+  if [[ $# -eq 0 ]]; then
+    return
+  fi
+  echo "==> $name"
+  node scripts/run-vitest.mjs "$@"
+}
+
+case "$family" in
+  profiles | slack-a2a | slack-responsiveness | automation | voice | all) ;;
+  *)
+    echo "error: unsupported --family '$family' (expected profiles, slack-a2a, slack-responsiveness, automation, voice, or all)" >&2
+    exit 2
+    ;;
+esac
+
+cd "$ROOT_DIR"
+
+if [[ "$list_only" -eq 1 ]]; then
+  case "$family" in
+    profiles)
+      print_family profiles "${profiles_tests[@]}"
+      ;;
+    slack-a2a)
+      print_family slack-a2a "${slack_a2a_tests[@]}"
+      ;;
+    slack-responsiveness)
+      print_family slack-responsiveness "${slack_responsiveness_tests[@]}"
+      ;;
+    automation)
+      print_family automation "${automation_tests[@]}"
+      ;;
+    voice)
+      print_family voice "${voice_tests[@]}"
+      ;;
+    all)
+      print_family profiles "${profiles_tests[@]}"
+      print_family slack-a2a "${slack_a2a_tests[@]}"
+      print_family slack-responsiveness "${slack_responsiveness_tests[@]}"
+      print_family automation "${automation_tests[@]}"
+      print_family voice "${voice_tests[@]}"
+      ;;
+  esac
+  [[ "$run_check" -eq 1 ]] && echo "check: node scripts/check-changed.mjs"
+  [[ "$run_build" -eq 1 ]] && echo "build: pnpm build"
+  [[ "$run_live_patch" -eq 1 ]] &&
+    echo "live-patch: scripts/patch-live-openclaw.sh --expect-branch ec-main --require-expected-branch"
+  exit 0
+fi
+
+case "$family" in
+  profiles)
+    run_tests profiles "${profiles_tests[@]}"
+    ;;
+  slack-a2a)
+    run_tests slack-a2a "${slack_a2a_tests[@]}"
+    ;;
+  slack-responsiveness)
+    run_tests slack-responsiveness "${slack_responsiveness_tests[@]}"
+    ;;
+  automation)
+    run_tests automation "${automation_tests[@]}"
+    ;;
+  voice)
+    run_tests voice "${voice_tests[@]}"
+    ;;
+  all)
+    run_tests profiles "${profiles_tests[@]}"
+    run_tests slack-a2a "${slack_a2a_tests[@]}"
+    run_tests slack-responsiveness "${slack_responsiveness_tests[@]}"
+    run_tests automation "${automation_tests[@]}"
+    run_tests voice "${voice_tests[@]}"
+    ;;
+esac
+
+if [[ "$run_check" -eq 1 ]]; then
+  echo "==> changed-surface checks"
+  node scripts/check-changed.mjs
+fi
+
+if [[ "$run_build" -eq 1 ]]; then
+  echo "==> pnpm build"
+  pnpm build
+fi
+
+if [[ "$run_live_patch" -eq 1 ]]; then
+  echo "==> live patch"
+  scripts/patch-live-openclaw.sh --expect-branch ec-main --require-expected-branch
+fi
