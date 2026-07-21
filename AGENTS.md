@@ -374,14 +374,13 @@ Skills own workflows; root owns hard policy and routing.
 - re-read planning-related policy before opening, revising, or closing a substantive plan
 - re-read documentation-related policy before changing docs, contracts, or canonical authorities
 - re-read validation and closeout policy before claiming work complete
-- re-read runtime or environment-boundary policy before touching live state, tenant state, deploy state, or off-repo operator data
+- re-read branch, commit, and integration policy before starting a multi-file or multi-step implementation slice
 
 ## Policy Entry
 
 This repo keeps its durable repo-local policy under `docs/dev/policies/`.
 
 Read and follow:
-
 - `docs/dev/policies/0001-policy-management.md`
 - `docs/dev/policies/0002-policy-upgrade-management.md`
 - `docs/dev/policies/0003-policy-adoption-feedback-loop.md`
@@ -405,6 +404,18 @@ Read and follow:
 - `docs/dev/policies/0021-validation-and-handoff.md`
 - `docs/dev/policies/0022-subagent-workflow-optimization.md`
 - `docs/dev/policies/0023-architecture-guardrails.md`
+- `docs/dev/policies/README.md`
+- `docs/dev/policies/architecture-and-plugin-survivability.md`
+- `docs/dev/policies/ec-main-integration.md`
+- `docs/dev/policies/graph-backed-memory.md`
+- `docs/dev/policies/planning-notes-memory.md`
+- `docs/dev/policies/policy-adoption-feedback.md`
+- `docs/dev/policies/validation-and-handoff.md`
+- `docs/dev/policies/0024-goal-execution-governance.md`
+- `docs/dev/policies/0025-parallel-plan-design.md`
+- `docs/dev/policies/0026-policy-harvest-loop.md`
+- `docs/dev/policies/0027-subagent-runtime-governance.md`
+- `docs/dev/policies/0028-preview-artifact-review.md`
 
 ## Scope
 
